@@ -67,6 +67,7 @@ previews/
 Built-in presets:
 
 - `default`
+- `no-biters`
 - `rail-world`
 - `death-world`
 - `peaceful-rich`
@@ -86,7 +87,7 @@ The bundled default templates are based on Wube's public `factorio-data` example
 - `DELETE /api/profiles/{name}`
 - `POST /api/profiles/{name}/duplicate` with `{ "name": "copy name" }`
 - `GET /api/profiles/{name}/download.zip`
-- `POST /api/profiles/{name}/preview` with `{ "size": 768, "planet": "nauvis" }`
+- `POST /api/profiles/{name}/preview` with `{ "size": 768, "planet": "nauvis", "mapGen": {...} }`; `mapGen` is optional and lets the server preview unsaved edits from a temporary file
 - `GET /api/profiles/{name}/preview.png`
 
 Profile names may contain letters, numbers, spaces, dots, underscores, and hyphens.

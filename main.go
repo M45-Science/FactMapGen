@@ -73,9 +73,10 @@ type duplicateProfileRequest struct {
 }
 
 type previewRequest struct {
-	Size   int    `json:"size"`
-	Planet string `json:"planet"`
-	Seed   string `json:"seed"`
+	Size   int             `json:"size"`
+	Planet string          `json:"planet"`
+	Seed   string          `json:"seed"`
+	MapGen json.RawMessage `json:"mapGen"`
 }
 
 type previewResponse struct {
@@ -785,6 +786,7 @@ var bundledPresetProfiles = []struct {
 	Key  string
 }{
 	{Name: "Default", Key: "default"},
+	{Name: "No-Biters", Key: "no-biters"},
 	{Name: "Railworld", Key: "rail-world"},
 	{Name: "Deathworld", Key: "death-world"},
 	{Name: "Rich-Peaceful", Key: "peaceful-rich"},
@@ -820,7 +822,46 @@ func (s *server) renderPreview(ctx context.Context, name string, req previewRequ
 	if err != nil {
 		return previewResponse{}, err
 	}
-	return s.previewer.render(ctx, ref, absolutePath(filepath.Join(s.store.profileDir(ref), mapGenFile)), req)
+	mapGenPath, cleanup, err := s.previewMapGenPath(ref, req)
+	if err != nil {
+		return previewResponse{}, err
+	}
+	defer cleanup()
+	return s.previewer.render(ctx, ref, mapGenPath, req)
+}
+
+func (s *server) previewMapGenPath(ref profileRef, req previewRequest) (string, func(), error) {
+	cleanup := func() {}
+	if len(bytes.TrimSpace(req.MapGen)) == 0 {
+		return absolutePath(filepath.Join(s.store.profileDir(ref), mapGenFile)), cleanup, nil
+	}
+
+	normalized, err := normalizeJSON(req.MapGen)
+	if err != nil {
+		return "", cleanup, fmt.Errorf("%s is invalid JSON: %w", mapGenFile, err)
+	}
+
+	tmpDir := filepath.Join(s.previewer.outputRoot, "_tmp")
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+		return "", cleanup, err
+	}
+	tmp, err := os.CreateTemp(tmpDir, "map-gen-*.json")
+	if err != nil {
+		return "", cleanup, err
+	}
+	tmpPath := tmp.Name()
+	cleanup = func() { _ = os.Remove(tmpPath) }
+
+	if _, err := tmp.Write(append(normalized, '\n')); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return "", func() {}, err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	return absolutePath(tmpPath), cleanup, nil
 }
 
 func (s *server) servePreview(w http.ResponseWriter, r *http.Request, name string) error {
@@ -1047,6 +1088,8 @@ func presetDocuments(preset string) ([]byte, []byte, error) {
 
 	switch preset {
 	case "default":
+	case "no-biters":
+		applyNoBitersPreset(mapGen, mapSettings)
 	case "rail-world":
 		setAutoplace(mapGen, []string{"coal", "stone", "copper-ore", "iron-ore", "uranium-ore", "crude-oil"}, 0.45, 2.2, 1.4)
 		setAutoplace(mapGen, []string{"water"}, 0.35, 0.65, 0)
@@ -1063,11 +1106,8 @@ func presetDocuments(preset string) ([]byte, []byte, error) {
 		setNested(mapSettings, []string{"enemy_expansion", "max_expansion_cooldown"}, 72000)
 	case "peaceful-rich":
 		mapGen["starting_area"] = 2
-		mapGen["peaceful_mode"] = true
 		setAutoplace(mapGen, []string{"coal", "stone", "copper-ore", "iron-ore", "uranium-ore", "crude-oil"}, 1.4, 1.8, 3.0)
-		setAutoplace(mapGen, []string{"enemy-base"}, 0, 0, 0)
-		setNested(mapSettings, []string{"enemy_evolution", "enabled"}, false)
-		setNested(mapSettings, []string{"enemy_expansion", "enabled"}, false)
+		applyNoBitersPreset(mapGen, mapSettings)
 	case "island":
 		mapGen["starting_area"] = 1.5
 		setNested(mapGen, []string{"property_expression_names", "elevation"}, "elevation_island")
@@ -1078,12 +1118,10 @@ func presetDocuments(preset string) ([]byte, []byte, error) {
 		mapGen["starting_area"] = 2
 		setAutoplace(mapGen, []string{"coal", "stone", "copper-ore", "iron-ore", "uranium-ore", "crude-oil"}, 1, 1.8, 1.5)
 	case "empty-sandbox":
-		mapGen["peaceful_mode"] = true
 		setAutoplace(mapGen, []string{"coal", "stone", "copper-ore", "iron-ore", "uranium-ore", "crude-oil", "water", "trees", "enemy-base"}, 0, 0, 0)
 		setNested(mapGen, []string{"cliff_settings", "richness"}, 0)
 		setNested(mapSettings, []string{"pollution", "enabled"}, false)
-		setNested(mapSettings, []string{"enemy_evolution", "enabled"}, false)
-		setNested(mapSettings, []string{"enemy_expansion", "enabled"}, false)
+		applyNoBitersPreset(mapGen, mapSettings)
 	default:
 		return nil, nil, fmt.Errorf("unknown preset %q", preset)
 	}
@@ -1097,6 +1135,13 @@ func presetDocuments(preset string) ([]byte, []byte, error) {
 		return nil, nil, err
 	}
 	return mapGenOut, mapSettingsOut, nil
+}
+
+func applyNoBitersPreset(mapGen, mapSettings map[string]any) {
+	mapGen["peaceful_mode"] = true
+	setAutoplace(mapGen, []string{"enemy-base"}, 0, 0, 0)
+	setNested(mapSettings, []string{"enemy_evolution", "enabled"}, false)
+	setNested(mapSettings, []string{"enemy_expansion", "enabled"}, false)
 }
 
 func decodeObject(raw []byte, out any) error {

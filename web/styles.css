@@ -168,7 +168,7 @@ input[type="range"] {
 
 .mapgen-toolbar {
   display: grid;
-  grid-template-columns: minmax(170px, 250px) 38px minmax(280px, 1fr) minmax(300px, auto);
+  grid-template-columns: minmax(240px, 320px) minmax(380px, 1fr) minmax(300px, auto);
   align-items: center;
   gap: 6px;
   padding: 4px 6px;
@@ -176,8 +176,7 @@ input[type="range"] {
   background: #252423;
 }
 
-.preset-box,
-.toolbar-create,
+.toolbar-group,
 .seed-box,
 .preview-tools {
   min-height: 34px;
@@ -186,19 +185,32 @@ input[type="range"] {
   box-shadow: var(--shadow-inset);
 }
 
+.toolbar-label {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.edit-preset-group {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 6px;
+}
+
 .preset-box {
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
-  padding: 0 6px 0 0;
 }
 
 .preset-box select {
   height: 30px;
-  border: 0;
-  background: transparent;
-  color: var(--text);
+  min-width: 0;
   font-weight: 900;
 }
 
@@ -207,26 +219,9 @@ input[type="range"] {
   color: var(--field-text);
 }
 
-.chevron {
-  flex: 0 0 auto;
-  color: #111;
-  font-size: 14px;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.25);
-}
-
-.square-button {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  min-width: 34px;
-  min-height: 34px;
-  padding: 0;
-  font-size: 20px;
-}
-
 .toolbar-create {
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) minmax(120px, 160px) auto;
+  grid-template-columns: auto minmax(140px, 1fr) minmax(120px, 160px) auto;
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -602,11 +597,10 @@ input[type="range"] {
   }
 
   .mapgen-toolbar {
-    grid-template-columns: minmax(0, 1fr) 38px;
+    grid-template-columns: minmax(0, 1fr) minmax(300px, auto);
   }
 
-  .toolbar-create,
-  .seed-box {
+  .toolbar-create {
     grid-column: 1 / -1;
   }
 
@@ -640,6 +634,7 @@ input[type="range"] {
   }
 
   .mapgen-toolbar,
+  .edit-preset-group,
   .toolbar-create,
   .seed-box,
   .preview-tools,

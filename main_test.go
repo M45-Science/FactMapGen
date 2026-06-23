@@ -160,6 +160,48 @@ func TestStoreDefaultProfilesAreReadOnly(t *testing.T) {
 	}
 }
 
+func TestPreviewMapGenPathUsesTemporaryRequestJSON(t *testing.T) {
+	st := newTestStore(t)
+	doc, err := st.createProfile("PreviewTemp", "default")
+	if err != nil {
+		t.Fatalf("createProfile: %v", err)
+	}
+
+	srv := &server{
+		store: st,
+		previewer: &previewer{
+			outputRoot: filepath.Join(t.TempDir(), "previews"),
+		},
+	}
+	ref, err := st.resolveProfile(doc.ID)
+	if err != nil {
+		t.Fatalf("resolveProfile: %v", err)
+	}
+	mapGenPath, cleanup, err := srv.previewMapGenPath(ref, previewRequest{
+		MapGen: json.RawMessage(`{"width": 123, "height": 456}`),
+	})
+	if err != nil {
+		t.Fatalf("previewMapGenPath: %v", err)
+	}
+	defer cleanup()
+
+	body, err := os.ReadFile(mapGenPath)
+	if err != nil {
+		t.Fatalf("read temp map-gen: %v", err)
+	}
+	if !bytes.Contains(body, []byte(`"width": 123`)) {
+		t.Fatalf("temp map-gen did not contain request JSON: %s", body)
+	}
+
+	saved, err := os.ReadFile(filepath.Join(st.customRoot, "PreviewTemp", mapGenFile))
+	if err != nil {
+		t.Fatalf("read saved map-gen: %v", err)
+	}
+	if bytes.Contains(saved, []byte(`"width": 123`)) {
+		t.Fatalf("preview request JSON was written to saved preset: %s", saved)
+	}
+}
+
 func TestDefaultPresetUsesRandomSeedZero(t *testing.T) {
 	mapGenRaw, _, err := presetDocuments("default")
 	if err != nil {
@@ -171,6 +213,35 @@ func TestDefaultPresetUsesRandomSeedZero(t *testing.T) {
 	}
 	if seed, ok := mapGen["seed"].(float64); !ok || seed != 0 {
 		t.Fatalf("default seed = %#v, want 0", mapGen["seed"])
+	}
+}
+
+func TestNoBitersPresetDisablesEnemiesAndForcesPeaceful(t *testing.T) {
+	mapGenRaw, mapSettingsRaw, err := presetDocuments("no-biters")
+	if err != nil {
+		t.Fatalf("presetDocuments: %v", err)
+	}
+	var mapGen map[string]any
+	if err := json.Unmarshal(mapGenRaw, &mapGen); err != nil {
+		t.Fatalf("unmarshal map gen: %v", err)
+	}
+	var mapSettings map[string]any
+	if err := json.Unmarshal(mapSettingsRaw, &mapSettings); err != nil {
+		t.Fatalf("unmarshal map settings: %v", err)
+	}
+
+	if peaceful, ok := mapGen["peaceful_mode"].(bool); !ok || !peaceful {
+		t.Fatalf("peaceful_mode = %#v, want true", mapGen["peaceful_mode"])
+	}
+	enemyBase := mapGen["autoplace_controls"].(map[string]any)["enemy-base"].(map[string]any)
+	if enemyBase["frequency"].(float64) != 0 || enemyBase["size"].(float64) != 0 {
+		t.Fatalf("enemy-base autoplace = %#v, want frequency/size 0", enemyBase)
+	}
+	if enabled := mapSettings["enemy_evolution"].(map[string]any)["enabled"]; enabled != false {
+		t.Fatalf("enemy evolution enabled = %#v, want false", enabled)
+	}
+	if enabled := mapSettings["enemy_expansion"].(map[string]any)["enabled"]; enabled != false {
+		t.Fatalf("enemy expansion enabled = %#v, want false", enabled)
 	}
 }
 

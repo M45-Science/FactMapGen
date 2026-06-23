@@ -12,6 +12,11 @@ const state = {
 };
 
 const defaultPreviewSize = 768;
+const autoPreviewDelay = 900;
+
+let autoPreviewTimer = null;
+let autoPreviewPending = false;
+let previewInFlight = false;
 
 const resources = [
   { key: "coal", label: "Coal", color: "#2b2d2a", richness: true },
@@ -22,7 +27,6 @@ const resources = [
   { key: "crude-oil", label: "Crude oil", color: "#141414", richness: true },
   { key: "water", label: "Water", color: "#4b89a6", richness: false },
   { key: "trees", label: "Trees", color: "#4f7e3e", richness: false },
-  { key: "enemy-base", label: "Enemy bases", color: "#a33a32", richness: false },
 ];
 
 const $ = (selector) => document.querySelector(selector);
@@ -42,7 +46,6 @@ const els = {
   mapgenBody: $(".mapgen-body"),
   previewPlanet: $("#previewPlanet"),
   autoRefreshPreview: $("#autoRefreshPreview"),
-  reloadPresetBtn: $("#reloadPresetBtn"),
   seedValue: $("#seedValue"),
   seedRandom: $("#seedRandom"),
   previewImage: $("#previewImage"),
@@ -69,12 +72,20 @@ async function init() {
   els.createForm.addEventListener("submit", createProfile);
   els.profileSelect.addEventListener("change", () => loadProfile(els.profileSelect.value));
   els.saveBtn.addEventListener("click", saveProfile);
-  els.previewBtn.addEventListener("click", generatePreview);
-  els.previewSize.addEventListener("change", () => updatePreviewFrameSize());
-  els.downloadBtn.addEventListener("click", downloadPreset);
-  els.reloadPresetBtn.addEventListener("click", () => {
-    if (state.selected) loadProfile(state.selected);
+  els.previewBtn.addEventListener("click", () => generatePreview());
+  els.previewSize.addEventListener("change", () => {
+    updatePreviewFrameSize();
+    scheduleAutoPreview(0);
   });
+  els.previewPlanet.addEventListener("input", () => scheduleAutoPreview());
+  els.autoRefreshPreview.addEventListener("change", () => {
+    if (els.autoRefreshPreview.checked) {
+      scheduleAutoPreview(0);
+    } else {
+      cancelAutoPreview();
+    }
+  });
+  els.downloadBtn.addEventListener("click", downloadPreset);
   els.seedValue.addEventListener("input", syncSeedFromToolbar);
   els.seedRandom.addEventListener("change", syncSeedFromToolbar);
   els.deleteBtn.addEventListener("click", deleteProfile);
@@ -150,12 +161,14 @@ async function loadProfile(name) {
   if (!name) return;
   try {
     const body = await api(`/api/profiles/${encodeURIComponent(name)}`);
+    cancelAutoPreview();
     state.selected = body.name;
     state.mapGen = body.mapGen;
     state.mapSettings = body.mapSettings;
     ensureRandomSeedDefault();
     state.dirty = false;
     renderAll();
+    scheduleAutoPreview(0);
   } catch (error) {
     showToast(error.message, true);
   }
@@ -208,13 +221,14 @@ async function saveCurrentProfile(silent) {
     ensureRandomSeedDefault();
     state.dirty = false;
     renderHeader();
-    await loadProfiles(true);
+    if (!silent) await loadProfiles(true);
     if (!silent) showToast("Saved to server files.");
     if (!silent && els.autoRefreshPreview.checked && state.config.previewEnabled) {
-      generatePreview();
+      scheduleAutoPreview(0);
     }
     return true;
   } catch (error) {
+    if (silent) throw error;
     showToast(error.message, true);
     return false;
   }
@@ -264,41 +278,76 @@ function downloadPreset() {
   window.location.href = `/api/profiles/${encodeURIComponent(state.selected)}/download.zip`;
 }
 
-async function generatePreview() {
-  if (!state.selected) return;
-  if (!state.config.previewEnabled) {
-    showToast("Factorio preview is not configured.", true);
+function canAutoRefreshPreview() {
+  return Boolean(state.selected && state.config.previewEnabled && els.autoRefreshPreview.checked);
+}
+
+function cancelAutoPreview() {
+  window.clearTimeout(autoPreviewTimer);
+  autoPreviewTimer = null;
+  autoPreviewPending = false;
+}
+
+function scheduleAutoPreview(delay = autoPreviewDelay) {
+  if (!canAutoRefreshPreview()) return;
+  if (previewInFlight) {
+    autoPreviewPending = true;
     return;
   }
-  if (state.dirty) {
-    const saved = await saveCurrentProfile(true);
-    if (!saved) return;
-  }
+  window.clearTimeout(autoPreviewTimer);
+  autoPreviewTimer = window.setTimeout(() => {
+    autoPreviewTimer = null;
+    generatePreview({ automatic: true });
+  }, delay);
+}
 
-  const size = currentPreviewSize();
-  const planet = els.previewPlanet.value.trim() || "nauvis";
-  updatePreviewFrameSize(size);
-  els.previewBtn.disabled = true;
-  els.previewStatus.classList.remove("error");
-  els.previewStatus.textContent = "Generating preview...";
+async function generatePreview(options = {}) {
+  const automatic = Boolean(options.automatic);
+  if (!state.selected || !state.mapGen) return false;
+  if (automatic && !canAutoRefreshPreview()) return false;
+  if (!state.config.previewEnabled) {
+    if (!automatic) showToast("Factorio preview is not configured.", true);
+    return false;
+  }
+  if (previewInFlight) {
+    if (automatic) autoPreviewPending = true;
+    return false;
+  }
+  previewInFlight = true;
+  const previewProfile = state.selected;
 
   try {
-    const body = await api(`/api/profiles/${encodeURIComponent(state.selected)}/preview`, {
+    const size = currentPreviewSize();
+    const planet = els.previewPlanet.value.trim() || "nauvis";
+    updatePreviewFrameSize(size);
+    els.previewBtn.disabled = true;
+    els.previewStatus.classList.remove("error");
+    els.previewStatus.textContent = "Generating preview...";
+
+    const body = await api(`/api/profiles/${encodeURIComponent(previewProfile)}/preview`, {
       method: "POST",
-      body: JSON.stringify({ size, planet }),
+      body: JSON.stringify({ size, planet, mapGen: state.mapGen }),
     });
+    if (state.selected !== previewProfile) return true;
     updatePreviewFrameSize(body.size);
     showPreviewImage(body.url);
     els.previewStatus.classList.remove("error");
-    els.previewStatus.textContent = `Generated ${body.size}px ${body.planet} preview.`;
-    showToast("Preview generated.");
+    els.previewStatus.textContent = "";
+    if (!automatic) showToast("Preview generated.");
   } catch (error) {
     els.previewStatus.classList.add("error");
     els.previewStatus.textContent = clippedClientMessage(error.message, 1200);
-    showToast("Preview failed.", true);
+    if (!automatic) showToast("Preview failed.", true);
+    return false;
   } finally {
+    previewInFlight = false;
     els.previewBtn.disabled = !state.selected || !state.config.previewEnabled;
+    if (autoPreviewPending) {
+      autoPreviewPending = false;
+      scheduleAutoPreview();
+    }
   }
+  return true;
 }
 
 function setMapgenTab(tabName) {
@@ -351,9 +400,7 @@ function renderHeader() {
     return;
   }
   els.profileSelect.value = state.selected;
-  const summary = state.profiles.find((profile) => profile.name === state.selected);
-  const folder = summary ? summary.directory : `${state.config.presetDir}/${state.selected}`;
-  els.statusLine.textContent = `${state.dirty ? "Unsaved changes" : "Saved"} | ${folder}`;
+  els.statusLine.textContent = state.dirty ? "Unsaved changes" : "";
 }
 
 function setControlsEnabled(enabled) {
@@ -362,7 +409,6 @@ function setControlsEnabled(enabled) {
     els.deleteBtn,
     els.duplicateBtn,
     els.downloadBtn,
-    els.reloadPresetBtn,
   ]) {
     button.disabled = !enabled;
   }
@@ -394,7 +440,6 @@ function renderVisualControls() {
   addNumberField(els.worldControls, "Width", state.mapGen, ["width"], 0, 1000000, 1);
   addNumberField(els.worldControls, "Height", state.mapGen, ["height"], 0, 1000000, 1);
   addNumberField(els.worldControls, "Starting area", state.mapGen, ["starting_area"], 0, 10, 0.1);
-  addCheckboxField(els.worldControls, "Peaceful mode", state.mapGen, ["peaceful_mode"]);
   updateSeedToolbar();
 
   addSliderField(els.terrainControls, "Cliff elevation", state.mapGen, ["cliff_settings", "cliff_elevation_0"], -100, 100, 1);
@@ -408,11 +453,14 @@ function renderVisualControls() {
 
   renderAutoplace();
 
-  addCheckboxField(els.enemyControls, "Evolution", state.mapSettings, ["enemy_evolution", "enabled"]);
+  addNoBitersField(els.enemyControls);
+  addEnemyBasesField(els.enemyControls);
+  addCheckboxField(els.enemyControls, "Peaceful mode", state.mapGen, ["peaceful_mode"], { rerender: true });
+  addCheckboxField(els.enemyControls, "Evolution", state.mapSettings, ["enemy_evolution", "enabled"], { rerender: true });
   addNumberField(els.enemyControls, "Time factor", state.mapSettings, ["enemy_evolution", "time_factor"], 0, 1, 0.000001);
   addNumberField(els.enemyControls, "Destroy factor", state.mapSettings, ["enemy_evolution", "destroy_factor"], 0, 1, 0.0001);
   addNumberField(els.enemyControls, "Pollution factor", state.mapSettings, ["enemy_evolution", "pollution_factor"], 0, 1, 0.0000001);
-  addCheckboxField(els.enemyControls, "Expansion", state.mapSettings, ["enemy_expansion", "enabled"]);
+  addCheckboxField(els.enemyControls, "Expansion", state.mapSettings, ["enemy_expansion", "enabled"], { rerender: true });
   addNumberField(els.enemyControls, "Min cooldown", state.mapSettings, ["enemy_expansion", "min_expansion_cooldown"], 0, 1000000, 60);
   addNumberField(els.enemyControls, "Max cooldown", state.mapSettings, ["enemy_expansion", "max_expansion_cooldown"], 0, 1000000, 60);
 
@@ -531,6 +579,85 @@ function renderAutoplace() {
   }
 }
 
+function addNoBitersField(parent) {
+  const wrap = document.createElement("label");
+  wrap.className = "check-field";
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.checked = noBitersEnabled();
+  const text = document.createElement("span");
+  text.textContent = "No biters";
+  input.addEventListener("change", () => {
+    applyNoBiters(input.checked);
+    afterVisualEdit();
+    renderVisualControls();
+  });
+  wrap.append(input, text);
+  parent.append(wrap);
+}
+
+function addEnemyBasesField(parent) {
+  const wrap = document.createElement("label");
+  wrap.className = "check-field";
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.checked = enemyBasesEnabled();
+  const text = document.createElement("span");
+  text.textContent = "Enemy bases";
+  input.addEventListener("change", () => {
+    setEnemyBasesEnabled(input.checked);
+    afterVisualEdit();
+    renderVisualControls();
+  });
+  wrap.append(input, text);
+  parent.append(wrap);
+}
+
+function noBitersEnabled() {
+  return (
+    getPath(state.mapGen, ["peaceful_mode"], false) === true &&
+    !enemyBasesEnabled() &&
+    getPath(state.mapSettings, ["enemy_evolution", "enabled"], true) === false &&
+    getPath(state.mapSettings, ["enemy_expansion", "enabled"], true) === false
+  );
+}
+
+function applyNoBiters(enabled) {
+  if (enabled) {
+    setEnemyBasesEnabled(false);
+    state.mapGen.peaceful_mode = true;
+    setPath(state.mapSettings, ["enemy_evolution", "enabled"], false);
+    setPath(state.mapSettings, ["enemy_expansion", "enabled"], false);
+    return;
+  }
+
+  setEnemyBasesEnabled(true);
+  state.mapGen.peaceful_mode = false;
+  setPath(state.mapSettings, ["enemy_evolution", "enabled"], true);
+  setPath(state.mapSettings, ["enemy_expansion", "enabled"], true);
+}
+
+function enemyBasesEnabled() {
+  const base = getPath(state.mapGen, ["autoplace_controls", "enemy-base"], null);
+  if (!base || typeof base !== "object") return true;
+  return numericValue(base.frequency ?? 1) > 0 || numericValue(base.size ?? 1) > 0;
+}
+
+function setEnemyBasesEnabled(enabled) {
+  const base = ensurePath(state.mapGen, ["autoplace_controls", "enemy-base"], {});
+  if (enabled) {
+    if (numericValue(base.frequency ?? 0) <= 0 && numericValue(base.size ?? 0) <= 0) {
+      base.frequency = 1;
+      base.size = 1;
+    }
+    return;
+  }
+
+  base.frequency = 0;
+  base.size = 0;
+  if ("richness" in base) base.richness = 0;
+}
+
 function addNumberField(parent, labelText, root, path, min, max, step) {
   const wrap = document.createElement("div");
   wrap.className = "field";
@@ -566,7 +693,7 @@ function addTextField(parent, labelText, root, path, fallback = "0") {
   parent.append(wrap);
 }
 
-function addCheckboxField(parent, labelText, root, path) {
+function addCheckboxField(parent, labelText, root, path, options = {}) {
   const wrap = document.createElement("label");
   wrap.className = "check-field";
   const input = document.createElement("input");
@@ -577,6 +704,7 @@ function addCheckboxField(parent, labelText, root, path) {
   input.addEventListener("change", () => {
     setPath(root, path, input.checked);
     afterVisualEdit();
+    if (options.rerender) renderVisualControls();
   });
   wrap.append(input, text);
   parent.append(wrap);
@@ -659,6 +787,7 @@ function addExpressionSliderField(parent, labelText, root, path, min, max, step)
 function afterVisualEdit() {
   state.dirty = true;
   renderHeader();
+  scheduleAutoPreview();
 }
 
 function numericValue(value) {

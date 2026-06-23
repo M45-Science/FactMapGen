@@ -16,16 +16,19 @@
           </div>
 
           <div class="mapgen-toolbar">
-            <div class="preset-box">
-              <select id="profileSelect" aria-label="Preset"></select>
-              <span class="chevron">▾</span>
+            <div class="toolbar-group edit-preset-group">
+              <span class="toolbar-label">Edit preset</span>
+              <div class="preset-box">
+                <select id="profileSelect" aria-label="Preset"></select>
+              </div>
             </div>
-            <button id="reloadPresetBtn" type="button" class="square-button" title="Refresh preset" aria-label="Refresh preset">↻</button>
 
-            <form id="createForm" class="toolbar-create">
+            <form id="createForm" class="toolbar-group toolbar-create">
+              <span class="toolbar-label">New preset</span>
               <input id="profileName" name="profileName" autocomplete="off" maxlength="64" placeholder="New preset name" />
               <select id="presetSelect" name="presetSelect" aria-label="Template">
                 <option value="default">Default</option>
+                <option value="no-biters">No biters</option>
                 <option value="rail-world">Rail world</option>
                 <option value="death-world">Death world</option>
                 <option value="peaceful-rich">Peaceful rich</option>
