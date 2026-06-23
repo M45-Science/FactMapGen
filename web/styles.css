@@ -1,0 +1,675 @@
+:root {
+  color-scheme: dark;
+  --bg: #11110f;
+  --panel: #454743;
+  --panel-dark: #282826;
+  --panel-darker: #181917;
+  --line: #111;
+  --line-soft: #30302e;
+  --text: #eee6d0;
+  --muted: #bcb4a4;
+  --field: #a7a7a1;
+  --field-text: #111;
+  --accent: #f2a12a;
+  --accent-strong: #ffc24f;
+  --danger: #ff7468;
+  --danger-soft: rgba(255, 116, 104, 0.14);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.1), inset 0 -1px 0 rgba(0, 0, 0, 0.5);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  overflow: hidden;
+  color: var(--text);
+  background: var(--bg);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  min-height: 32px;
+  border: 2px solid var(--line);
+  border-radius: 2px;
+  background: linear-gradient(#777872, #4b4c47);
+  color: #111;
+  font-weight: 900;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.32);
+  cursor: pointer;
+}
+
+button:hover {
+  filter: brightness(1.08);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.4);
+  opacity: 0.55;
+}
+
+button.primary {
+  background: linear-gradient(#79d76f, #43aa46);
+  color: #0d1b0b;
+}
+
+button.danger {
+  color: #2a0704;
+  background: linear-gradient(#ff958b, #d95449);
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  height: 30px;
+  border: 2px solid var(--line);
+  border-radius: 2px;
+  background: var(--field);
+  color: var(--field-text);
+  font-weight: 800;
+}
+
+input,
+select {
+  padding: 0 8px;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+input[type="range"] {
+  height: 24px;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.main,
+.single-screen,
+.panel.active {
+  min-width: 0;
+  min-height: 0;
+  height: 100vh;
+}
+
+.panel {
+  display: none;
+}
+
+.panel.active {
+  display: block;
+}
+
+.main.single-screen {
+  min-height: 100vh;
+}
+
+#visualPanel {
+  background: #20201e;
+}
+
+.mapgen-window {
+  display: grid;
+  grid-template-rows: 36px auto minmax(0, 1fr);
+  height: 100vh;
+  border-top: 2px solid var(--line);
+  background: #242422;
+}
+
+.mapgen-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  border-bottom: 2px solid var(--line);
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.28), transparent 42%),
+    repeating-linear-gradient(90deg, #3c3d3a 0, #3c3d3a 2px, #30312f 2px, #30312f 5px);
+}
+
+.mapgen-title {
+  padding: 0 12px;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 900;
+  text-shadow: 0 1px 0 #000;
+}
+
+.mapgen-status {
+  overflow: hidden;
+  padding: 0 12px;
+  color: var(--muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mapgen-toolbar {
+  display: grid;
+  grid-template-columns: minmax(170px, 250px) 38px minmax(280px, 1fr) minmax(300px, auto);
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-bottom: 2px solid var(--line);
+  background: #252423;
+}
+
+.preset-box,
+.toolbar-create,
+.seed-box,
+.preview-tools {
+  min-height: 34px;
+  border: 2px solid var(--line);
+  background: #3d3e3a;
+  box-shadow: var(--shadow-inset);
+}
+
+.preset-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 6px 0 0;
+}
+
+.preset-box select {
+  height: 30px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-weight: 900;
+}
+
+.preset-box select option {
+  background: var(--field);
+  color: var(--field-text);
+}
+
+.chevron {
+  flex: 0 0 auto;
+  color: #111;
+  font-size: 14px;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.square-button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+  font-size: 20px;
+}
+
+.toolbar-create {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(120px, 160px) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 6px;
+}
+
+.toolbar-create button {
+  min-height: 28px;
+  background: linear-gradient(#ffc24f, #e38a1f);
+}
+
+.seed-box {
+  display: grid;
+  grid-template-columns: auto minmax(92px, 150px) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+}
+
+.seed-box > label:first-child,
+.preview-tools > label,
+.preview-tools .check-field span {
+  color: var(--text);
+  font-weight: 900;
+}
+
+.seed-random {
+  white-space: nowrap;
+}
+
+.check-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+}
+
+.check-field span {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.preview-tools {
+  display: grid;
+  grid-template-columns: auto 110px 104px minmax(96px, auto);
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px;
+}
+
+.preview-button {
+  min-width: 96px;
+  min-height: 30px;
+  padding: 0 14px;
+  background: linear-gradient(#ffc24f, #e38a1f);
+  color: #17100a;
+}
+
+.mapgen-body {
+  display: grid;
+  grid-template-columns: minmax(420px, 1fr) minmax(0, min(max(calc(var(--preview-size, 768px) + 16px), 430px), calc(100vw - 420px)));
+  min-height: 0;
+}
+
+.mapgen-controls {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
+  border-right: 3px solid var(--line);
+  background: #2a2928;
+}
+
+.mapgen-subtabs {
+  display: flex;
+  gap: 2px;
+  padding: 12px 10px 0;
+  border-bottom: 2px solid var(--line);
+  background: #282625;
+}
+
+.mapgen-subtab {
+  min-height: 40px;
+  padding: 0 22px;
+  border: 2px solid var(--line);
+  border-bottom: 0;
+  border-radius: 5px 5px 0 0;
+  background: linear-gradient(#d8d6d0, #8f8f88);
+  color: #111;
+}
+
+.mapgen-subtab.active {
+  background: linear-gradient(#ffc24f, #e38a1f);
+  color: #111;
+}
+
+.mapgen-subpanel {
+  display: none;
+  grid-row: 2;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+  border-top: 2px solid #4e4f4a;
+  background: var(--panel);
+}
+
+.mapgen-subpanel.active {
+  display: block;
+}
+
+.mapgen-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  grid-row: 3;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 8px;
+  border-top: 2px solid var(--line);
+  background: #282625;
+}
+
+.mapgen-editor-actions button {
+  min-height: 30px;
+  padding: 0 10px;
+}
+
+.table-caption {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.5fr) minmax(110px, 1fr) minmax(110px, 1fr) minmax(110px, 1fr);
+  align-items: center;
+  min-height: 42px;
+  border: 1px solid #222;
+  border-bottom: 0;
+  background: #3d3f3b;
+  color: #ddd7c8;
+  font-weight: 900;
+}
+
+.table-caption span {
+  padding: 0 10px;
+  border-left: 1px solid #222;
+}
+
+.table-caption span:first-child {
+  border-left: 0;
+}
+
+#terrainSubpanel .table-caption,
+#enemySubpanel .table-caption,
+#advancedSubpanel .table-caption {
+  grid-template-columns: minmax(180px, 1.5fr) minmax(110px, 1fr);
+}
+
+.advanced-groups {
+  display: grid;
+  gap: 14px;
+}
+
+.field-grid,
+.control-stack,
+.autoplace-grid {
+  display: grid;
+  gap: 0;
+}
+
+.field,
+.slider-field {
+  display: grid;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.field label,
+.slider-field label {
+  color: #ded4c2;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.slider-field {
+  grid-template-columns: minmax(120px, 1fr) minmax(130px, 2fr) 82px;
+}
+
+.slider-field input[type="number"] {
+  text-align: right;
+}
+
+.autoplace-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.5fr) minmax(0, 3fr);
+  gap: 0;
+  min-height: 58px;
+  border: 1px solid #222;
+  border-top: 0;
+  background: #484a46;
+}
+
+.resource-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 0 12px;
+  border-right: 1px solid #222;
+  font-weight: 900;
+}
+
+.resource-name span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.swatch {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 4px;
+}
+
+.resource-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  min-width: 0;
+}
+
+.resource-controls .slider-field {
+  grid-template-columns: minmax(0, 1fr) 64px;
+  min-height: 58px;
+  padding: 0 10px;
+  border-left: 1px solid #222;
+}
+
+.resource-controls .slider-field:first-child {
+  border-left: 0;
+}
+
+.resource-controls .slider-field label {
+  display: none;
+}
+
+.factorio-control-stack .slider-field,
+.factorio-control-stack .field,
+.factorio-field-grid .field,
+.factorio-field-grid .check-field {
+  min-height: 54px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #222;
+  border-top: 0;
+  background: #484a46;
+}
+
+.factorio-control-stack .slider-field {
+  grid-template-columns: minmax(180px, 1.5fr) minmax(120px, 1fr) 82px;
+}
+
+.factorio-control-stack .field,
+.factorio-field-grid .field {
+  grid-template-columns: minmax(180px, 1.5fr) minmax(120px, 1fr);
+}
+
+.factorio-field-grid {
+  grid-template-columns: 1fr;
+}
+
+.mapgen-preview-pane {
+  display: grid;
+  grid-template-rows: auto auto auto;
+  align-content: start;
+  justify-items: start;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+  background: var(--panel-darker);
+}
+
+.mapgen-preview-pane .preview-tools {
+  width: min(100%, max(var(--preview-size, 768px), 414px));
+  margin-bottom: 8px;
+}
+
+.preview-frame {
+  display: block;
+  width: var(--preview-size, 768px);
+  height: var(--preview-size, 768px);
+  min-height: 0;
+  overflow: auto;
+  background: #102326;
+  box-shadow: 0 0 0 3px var(--line);
+}
+
+.preview-frame img {
+  display: none;
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  object-fit: initial;
+}
+
+.preview-empty {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.preview-status {
+  width: min(100%, var(--preview-size, 768px));
+  min-height: 20px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.preview-status.error {
+  max-height: 180px;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 116, 104, 0.34);
+  border-radius: 4px;
+  background: var(--danger-soft);
+  color: #ffb8af;
+  white-space: pre-wrap;
+}
+
+.toast {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  max-width: min(420px, calc(100vw - 44px));
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  background: #20241d;
+  color: var(--text);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
+  opacity: 0;
+  transform: translateY(12px);
+  pointer-events: none;
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.toast.error {
+  border-color: rgba(255, 116, 104, 0.55);
+  background: #261715;
+  color: #ffb8af;
+}
+
+@media (max-width: 1180px) {
+  body {
+    overflow: auto;
+  }
+
+  .single-screen,
+  .panel.active,
+  .mapgen-window {
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .mapgen-toolbar {
+    grid-template-columns: minmax(0, 1fr) 38px;
+  }
+
+  .toolbar-create,
+  .seed-box {
+    grid-column: 1 / -1;
+  }
+
+  .mapgen-editor-actions {
+    justify-content: flex-start;
+  }
+
+  .mapgen-body {
+    grid-template-columns: 1fr;
+  }
+
+  .mapgen-controls {
+    border-right: 0;
+    border-bottom: 3px solid var(--line);
+  }
+
+  .mapgen-preview-pane {
+    min-height: 520px;
+  }
+}
+
+@media (max-width: 680px) {
+  .mapgen-window {
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+
+  .mapgen-titlebar {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 6px 0;
+  }
+
+  .mapgen-toolbar,
+  .toolbar-create,
+  .seed-box,
+  .preview-tools,
+  .table-caption,
+  #terrainSubpanel .table-caption,
+  #enemySubpanel .table-caption,
+  #advancedSubpanel .table-caption,
+  .autoplace-row,
+  .resource-controls,
+  .resource-controls .slider-field,
+  .factorio-control-stack .slider-field,
+  .factorio-control-stack .field,
+  .factorio-field-grid .field {
+    grid-template-columns: 1fr;
+  }
+
+  .mapgen-editor-actions {
+    flex-direction: column;
+  }
+
+  .mapgen-editor-actions button {
+    width: 100%;
+  }
+
+  .mapgen-subtabs {
+    overflow-x: auto;
+  }
+
+  .mapgen-subtab {
+    min-width: 120px;
+    padding: 0 14px;
+  }
+}

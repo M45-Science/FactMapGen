@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FactMapGen</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="main single-screen">
+      <section id="visualPanel" class="panel active" aria-label="Map generator">
+        <div class="mapgen-window">
+          <div class="mapgen-titlebar">
+            <div class="mapgen-title">Map generator</div>
+            <div id="statusLine" class="mapgen-status">Loading presets...</div>
+          </div>
+
+          <div class="mapgen-toolbar">
+            <div class="preset-box">
+              <select id="profileSelect" aria-label="Preset"></select>
+              <span class="chevron">▾</span>
+            </div>
+            <button id="reloadPresetBtn" type="button" class="square-button" title="Refresh preset" aria-label="Refresh preset">↻</button>
+
+            <form id="createForm" class="toolbar-create">
+              <input id="profileName" name="profileName" autocomplete="off" maxlength="64" placeholder="New preset name" />
+              <select id="presetSelect" name="presetSelect" aria-label="Template">
+                <option value="default">Default</option>
+                <option value="rail-world">Rail world</option>
+                <option value="death-world">Death world</option>
+                <option value="peaceful-rich">Peaceful rich</option>
+                <option value="island">Island</option>
+                <option value="ribbon-world">Ribbon world</option>
+                <option value="empty-sandbox">Empty sandbox</option>
+              </select>
+              <button type="submit">Create</button>
+            </form>
+
+            <div class="seed-box">
+              <label for="seedValue">Seed</label>
+              <input id="seedValue" type="number" min="1" step="1" placeholder="Random" />
+              <label class="check-field seed-random">
+                <input id="seedRandom" type="checkbox" checked />
+                <span>Random each new map</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="mapgen-body">
+            <aside class="mapgen-controls" aria-label="Map generator settings">
+              <div class="mapgen-subtabs" aria-label="Map generator categories">
+                <button type="button" class="mapgen-subtab active" data-mapgen-tab="resources">Resources</button>
+                <button type="button" class="mapgen-subtab" data-mapgen-tab="terrain">Terrain</button>
+                <button type="button" class="mapgen-subtab" data-mapgen-tab="enemy">Enemy</button>
+                <button type="button" class="mapgen-subtab" data-mapgen-tab="advanced">Advanced</button>
+              </div>
+
+              <section id="resourcesSubpanel" class="mapgen-subpanel active">
+                <div class="table-caption">
+                  <span>Resource</span>
+                  <span>Frequency</span>
+                  <span>Size</span>
+                  <span>Richness</span>
+                </div>
+                <div id="autoplaceGrid" class="autoplace-grid"></div>
+              </section>
+
+              <section id="terrainSubpanel" class="mapgen-subpanel">
+                <div class="table-caption">
+                  <span>Terrain</span>
+                  <span>Value</span>
+                  <span></span>
+                </div>
+                <div class="control-stack factorio-control-stack" id="terrainControls"></div>
+              </section>
+
+              <section id="enemySubpanel" class="mapgen-subpanel">
+                <div class="table-caption">
+                  <span>Enemy</span>
+                  <span>Value</span>
+                  <span></span>
+                </div>
+                <div class="field-grid factorio-field-grid" id="enemyControls"></div>
+              </section>
+
+              <section id="advancedSubpanel" class="mapgen-subpanel">
+                <div class="advanced-groups">
+                  <div>
+                    <div class="table-caption">
+                      <span>World</span>
+                      <span>Value</span>
+                    </div>
+                    <div class="field-grid factorio-field-grid" id="worldControls"></div>
+                  </div>
+                  <div>
+                    <div class="table-caption">
+                      <span>Simulation</span>
+                      <span>Value</span>
+                    </div>
+                    <div class="field-grid factorio-field-grid" id="simulationControls"></div>
+                  </div>
+                </div>
+              </section>
+
+              <div class="mapgen-editor-actions">
+                <button id="duplicateBtn" type="button">Duplicate</button>
+                <button id="downloadBtn" type="button">Download ZIP</button>
+                <button id="deleteBtn" type="button" class="danger">Delete</button>
+                <button id="saveBtn" type="button" class="primary">Save</button>
+              </div>
+            </aside>
+
+            <section class="mapgen-preview-pane" aria-label="Preview">
+              <div class="preview-tools">
+                <label class="check-field">
+                  <input id="autoRefreshPreview" type="checkbox" checked />
+                  <span>Auto-refresh</span>
+                </label>
+                <input id="previewPlanet" type="text" value="nauvis" title="Preview planet" aria-label="Preview planet" />
+                <select id="previewSize" title="Preview size" aria-label="Preview size">
+                  <option value="256">Tiny</option>
+                  <option value="512">Small</option>
+                  <option value="768" selected>Normal</option>
+                  <option value="1024">Large</option>
+                  <option value="1536">Huge</option>
+                </select>
+                <button id="previewBtn" type="button" class="preview-button" title="Generate preview" aria-label="Generate preview">Preview</button>
+              </div>
+              <div class="preview-frame">
+                <img id="previewImage" alt="Factorio map preview" />
+                <div id="previewEmpty" class="preview-empty">No preview image</div>
+              </div>
+              <div id="previewStatus" class="preview-status"></div>
+            </section>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="/app.js"></script>
+  </body>
+</html>
