@@ -9,6 +9,7 @@ const state = {
   mapGen: null,
   mapSettings: null,
   dirty: false,
+  session: null,
 };
 
 const defaultPreviewSize = 768;
@@ -63,12 +64,33 @@ const els = {
   autoplaceGrid: $("#autoplaceGrid"),
   enemyControls: $("#enemyControls"),
   simulationControls: $("#simulationControls"),
+  loginDialog: $("#loginDialog"),
+  loginForm: $("#loginForm"),
+  loginUsername: $("#loginUsername"),
+  loginPassword: $("#loginPassword"),
+  loginError: $("#loginError"),
+  currentUser: $("#currentUser"),
+  adminBtn: $("#adminBtn"),
+  logoutBtn: $("#logoutBtn"),
+  adminPanel: $("#adminPanel"),
+  closeAdminBtn: $("#closeAdminBtn"),
+  userCreateForm: $("#userCreateForm"),
+  newUsername: $("#newUsername"),
+  newPassword: $("#newPassword"),
+  newIsAdmin: $("#newIsAdmin"),
+  usersList: $("#usersList"),
+  auditList: $("#auditList"),
   toast: $("#toast"),
 };
 
 document.addEventListener("DOMContentLoaded", init);
 
 async function init() {
+  els.loginForm.addEventListener("submit", login);
+  els.logoutBtn.addEventListener("click", logout);
+  els.adminBtn.addEventListener("click", openAdminPanel);
+  els.closeAdminBtn.addEventListener("click", closeAdminPanel);
+  els.userCreateForm.addEventListener("submit", createUser);
   els.createForm.addEventListener("submit", createProfile);
   els.profileSelect.addEventListener("change", () => loadProfile(els.profileSelect.value));
   els.saveBtn.addEventListener("click", saveProfile);
@@ -98,7 +120,13 @@ async function init() {
   setControlsEnabled(false);
   updatePreviewFrameSize();
   await loadConfig();
-  loadProfiles(false);
+  const authenticated = await loadSession();
+  if (authenticated) {
+    hideLogin();
+    loadProfiles(false);
+  } else {
+    showLogin();
+  }
 }
 
 async function api(path, options = {}) {
@@ -114,10 +142,206 @@ async function api(path, options = {}) {
     } catch {
       // Keep the HTTP status text.
     }
+    if (response.status === 401 && path !== "/api/session") {
+      state.session = null;
+      renderSession();
+      showLogin();
+    }
     throw new Error(message);
   }
   if (response.status === 204) return null;
   return response.json();
+}
+
+async function loadSession() {
+  try {
+    const body = await api("/api/session");
+    state.session = body.authenticated ? body.user : null;
+    renderSession();
+    return Boolean(state.session);
+  } catch (error) {
+    state.session = null;
+    renderSession();
+    return false;
+  }
+}
+
+async function login(event) {
+  event.preventDefault();
+  els.loginError.textContent = "";
+  try {
+    const body = await api("/api/session", {
+      method: "POST",
+      body: JSON.stringify({
+        username: els.loginUsername.value,
+        password: els.loginPassword.value,
+      }),
+    });
+    state.session = body.user;
+    els.loginPassword.value = "";
+    hideLogin();
+    renderSession();
+    await loadProfiles(false);
+  } catch (error) {
+    els.loginError.textContent = error.message;
+  }
+}
+
+async function logout() {
+  try {
+    await api("/api/session", { method: "DELETE" });
+  } catch {
+    // Expire local UI state even if the server already dropped the session.
+  }
+  state.session = null;
+  state.selected = null;
+  state.mapGen = null;
+  state.mapSettings = null;
+  state.profiles = [];
+  state.dirty = false;
+  closeAdminPanel();
+  renderAll();
+  renderSession();
+  showLogin();
+}
+
+function showLogin() {
+  els.loginDialog.classList.add("active");
+  els.loginUsername.focus();
+  els.statusLine.textContent = "Login required";
+}
+
+function hideLogin() {
+  els.loginDialog.classList.remove("active");
+}
+
+function renderSession() {
+  const user = state.session;
+  els.currentUser.textContent = user ? user.username : "";
+  els.adminBtn.hidden = !user || !user.isAdmin;
+  els.logoutBtn.hidden = !user;
+}
+
+async function openAdminPanel() {
+  if (!state.session?.isAdmin) return;
+  els.adminPanel.hidden = false;
+  await refreshAdminPanel();
+}
+
+function closeAdminPanel() {
+  els.adminPanel.hidden = true;
+}
+
+async function refreshAdminPanel() {
+  try {
+    const [usersBody, auditBody] = await Promise.all([api("/api/users"), api("/api/audit?limit=200")]);
+    renderUsers(usersBody.users || []);
+    renderAudit(auditBody.audit || []);
+  } catch (error) {
+    showToast(error.message, true);
+  }
+}
+
+async function createUser(event) {
+  event.preventDefault();
+  try {
+    await api("/api/users", {
+      method: "POST",
+      body: JSON.stringify({
+        username: els.newUsername.value,
+        password: els.newPassword.value,
+        isAdmin: els.newIsAdmin.checked,
+      }),
+    });
+    els.newUsername.value = "";
+    els.newPassword.value = "";
+    els.newIsAdmin.checked = true;
+    await refreshAdminPanel();
+    showToast("Account added.");
+  } catch (error) {
+    showToast(error.message, true);
+  }
+}
+
+function renderUsers(users) {
+  els.usersList.innerHTML = "";
+  for (const user of users) {
+    const row = document.createElement("div");
+    row.className = "user-row";
+
+    const name = document.createElement("input");
+    name.value = user.username;
+    name.autocomplete = "off";
+
+    const adminLabel = document.createElement("label");
+    adminLabel.className = "check-field";
+    const admin = document.createElement("input");
+    admin.type = "checkbox";
+    admin.checked = user.isAdmin;
+    const adminText = document.createElement("span");
+    adminText.textContent = "Admin";
+    adminLabel.append(admin, adminText);
+
+    const password = document.createElement("input");
+    password.type = "password";
+    password.placeholder = "New password";
+    password.autocomplete = "new-password";
+
+    const save = document.createElement("button");
+    save.type = "button";
+    save.textContent = "Save";
+    save.addEventListener("click", async () => {
+      try {
+        await api(`/api/users/${user.id}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            username: name.value,
+            password: password.value,
+            isAdmin: admin.checked,
+          }),
+        });
+        password.value = "";
+        await refreshAdminPanel();
+        showToast("Account saved.");
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    });
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "danger";
+    del.textContent = "Delete";
+    del.addEventListener("click", async () => {
+      if (!window.confirm(`Delete account ${user.username}?`)) return;
+      try {
+        await api(`/api/users/${user.id}`, { method: "DELETE" });
+        await refreshAdminPanel();
+        showToast("Account deleted.");
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    });
+
+    row.append(name, adminLabel, password, save, del);
+    els.usersList.append(row);
+  }
+}
+
+function renderAudit(entries) {
+  els.auditList.innerHTML = "";
+  for (const entry of entries) {
+    const row = document.createElement("div");
+    row.className = "audit-row";
+    const when = new Date(entry.createdAt).toLocaleString();
+    row.textContent = `${when}  ${entry.actorUsername}  ${entry.action} ${entry.targetType}:${entry.targetId}`;
+    if (entry.detail) {
+      const detail = document.createElement("span");
+      detail.textContent = entry.detail;
+      row.append(detail);
+    }
+    els.auditList.append(row);
+  }
 }
 
 async function loadConfig() {
@@ -473,9 +697,8 @@ function renderVisualControls() {
 }
 
 function ensureRandomSeedDefault() {
-  if (!state.mapGen || state.mapGen.seed === undefined || state.mapGen.seed === null) {
-    state.mapGen.seed = 0;
-  }
+  if (!state.mapGen || state.mapGen.seed !== undefined) return;
+  state.mapGen.seed = null;
 }
 
 function updateSeedToolbar() {
@@ -494,7 +717,7 @@ function updateSeedToolbar() {
 function syncSeedFromToolbar() {
   if (!state.mapGen) return;
   if (els.seedRandom.checked) {
-    state.mapGen.seed = 0;
+    state.mapGen.seed = null;
     els.seedValue.value = "";
     els.seedValue.disabled = true;
   } else {

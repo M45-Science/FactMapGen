@@ -35,6 +35,7 @@ var embedded embed.FS
 type server struct {
 	store     *store
 	previewer *previewer
+	auth      *authStore
 	config    appConfig
 }
 
@@ -143,6 +144,7 @@ func main() {
 	factorioBin := flag.String("factorio-bin", "", "optional path to a Factorio/headless binary for map previews")
 	factorioDir := flag.String("factorio-dir", "tools/factorio", "directory used to discover Factorio headless")
 	previewTimeout := flag.Duration("preview-timeout", 2*time.Minute, "maximum time allowed for one map preview render")
+	authDB := flag.String("auth-db", "factmapgen-auth.db", "SQLite database path for users, sessions, and audit logs")
 	flag.Parse()
 
 	if *factorioBin == "" {
@@ -165,6 +167,12 @@ func main() {
 		log.Fatalf("prepare preview directory: %v", err)
 	}
 
+	auth, initialAdminPassword, err := openAuthStore(*authDB)
+	if err != nil {
+		log.Fatalf("prepare auth database: %v", err)
+	}
+	defer auth.close()
+
 	uiFS, err := fs.Sub(embedded, "web")
 	if err != nil {
 		log.Fatalf("prepare embedded UI: %v", err)
@@ -179,6 +187,7 @@ func main() {
 	srv := &server{
 		store:     st,
 		previewer: p,
+		auth:      auth,
 		config: appConfig{
 			PresetDir:        customPresetDir,
 			DefaultPresetDir: defaultPresetDir,
@@ -190,6 +199,10 @@ func main() {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/config", srv.handleConfig)
+	mux.HandleFunc("/api/session", srv.handleSession)
+	mux.HandleFunc("/api/users", srv.handleUsers)
+	mux.HandleFunc("/api/users/", srv.handleUser)
+	mux.HandleFunc("/api/audit", srv.handleAudit)
 	mux.HandleFunc("/api/profiles", srv.handleProfiles)
 	mux.HandleFunc("/api/profiles/", srv.handleProfile)
 	mux.Handle("/", http.FileServer(http.FS(uiFS)))
@@ -203,6 +216,10 @@ func main() {
 	log.Printf("FactMapGen listening on %s", listenURL(*addr))
 	log.Printf("Default preset directory: %s", st.defaultRoot)
 	log.Printf("Custom preset directory: %s", st.customRoot)
+	log.Printf("Auth database: %s", *authDB)
+	if initialAdminPassword != "" {
+		log.Printf("Created initial admin login: username=admin password=%s", initialAdminPassword)
+	}
 	if p.factorioBin != "" {
 		log.Printf("Factorio preview binary: %s", p.factorioBin)
 	} else {
@@ -306,6 +323,11 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleProfiles(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		profiles, err := s.store.listProfiles()
@@ -325,6 +347,7 @@ func (s *server) handleProfiles(w http.ResponseWriter, r *http.Request) {
 			writeStoreError(w, err)
 			return
 		}
+		s.auth.logAudit(actor, "create", "profile", doc.ID, auditDetail(map[string]any{"preset": req.Preset}))
 		writeJSON(w, http.StatusCreated, doc)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -345,6 +368,11 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	actor, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+
 	if len(parts) == 2 && parts[1] == "preview" {
 		if r.Method != http.MethodPost {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -360,6 +388,7 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 			writeStoreError(w, err)
 			return
 		}
+		s.auth.logAudit(actor, "preview", "profile", name, auditDetail(map[string]any{"size": resp.Size, "planet": resp.Planet}))
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
@@ -401,6 +430,7 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 			writeStoreError(w, err)
 			return
 		}
+		s.auth.logAudit(actor, "duplicate", "profile", doc.ID, auditDetail(map[string]any{"source": name}))
 		writeJSON(w, http.StatusCreated, doc)
 		return
 	}
@@ -429,12 +459,14 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 			writeStoreError(w, err)
 			return
 		}
+		s.auth.logAudit(actor, "update", "profile", doc.ID, "saved map-gen-settings.json and map-settings.json")
 		writeJSON(w, http.StatusOK, doc)
 	case http.MethodDelete:
 		if err := s.store.deleteProfile(name); err != nil {
 			writeStoreError(w, err)
 			return
 		}
+		s.auth.logAudit(actor, "delete", "profile", name, "")
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -793,14 +825,18 @@ var bundledPresetProfiles = []struct {
 	{Name: "Island", Key: "island"},
 	{Name: "Ribbon-World", Key: "ribbon-world"},
 	{Name: "Empty-Sandbox", Key: "empty-sandbox"},
+	{Name: "Marathon-Frontier", Key: "marathon-frontier"},
+	{Name: "Dense-Forest", Key: "dense-forest"},
+	{Name: "Desert-Scarcity", Key: "desert-scarcity"},
+	{Name: "Cliffside-Lakes", Key: "cliffside-lakes"},
+	{Name: "Oil-Baron", Key: "oil-baron"},
+	{Name: "Tiny-Death-Spiral", Key: "tiny-death-spiral"},
 }
 
 func (s *store) seedDefaultProfiles() error {
 	for _, preset := range bundledPresetProfiles {
 		ref := profileRef{Source: profileSourceDefault, Name: preset.Name}
-		if _, err := os.Stat(s.profileDir(ref)); err == nil {
-			continue
-		} else if !errors.Is(err, os.ErrNotExist) {
+		if _, err := os.Stat(s.profileDir(ref)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 		mapGen, mapSettings, err := presetDocuments(preset.Key)
@@ -1122,6 +1158,59 @@ func presetDocuments(preset string) ([]byte, []byte, error) {
 		setNested(mapGen, []string{"cliff_settings", "richness"}, 0)
 		setNested(mapSettings, []string{"pollution", "enabled"}, false)
 		applyNoBitersPreset(mapGen, mapSettings)
+	case "marathon-frontier":
+		mapGen["starting_area"] = 0.85
+		setAutoplace(mapGen, []string{"coal", "stone", "copper-ore", "iron-ore"}, 0.55, 1.25, 0.7)
+		setAutoplace(mapGen, []string{"uranium-ore", "crude-oil"}, 0.45, 1.0, 0.6)
+		setAutoplace(mapGen, []string{"enemy-base"}, 1.35, 1.2, 0)
+		setNested(mapSettings, []string{"difficulty_settings", "technology_price_multiplier"}, 4)
+		setNested(mapSettings, []string{"enemy_evolution", "time_factor"}, 0.000008)
+		setNested(mapSettings, []string{"enemy_expansion", "min_expansion_cooldown"}, 7200)
+	case "dense-forest":
+		mapGen["starting_area"] = 1.25
+		setAutoplace(mapGen, []string{"trees"}, 2.8, 2.5, 0)
+		setAutoplace(mapGen, []string{"water"}, 1.25, 1.35, 0)
+		setAutoplace(mapGen, []string{"coal", "stone", "copper-ore", "iron-ore", "uranium-ore", "crude-oil"}, 0.8, 0.9, 1.1)
+		setNested(mapGen, []string{"cliff_settings", "richness"}, 2.2)
+		setNested(mapGen, []string{"property_expression_names", "control:moisture:bias"}, "0.35")
+		setNested(mapGen, []string{"property_expression_names", "control:moisture:frequency"}, "0.65")
+	case "desert-scarcity":
+		mapGen["starting_area"] = 0.75
+		setAutoplace(mapGen, []string{"water"}, 0.25, 0.35, 0)
+		setAutoplace(mapGen, []string{"trees"}, 0.12, 0.25, 0)
+		setAutoplace(mapGen, []string{"coal", "stone", "copper-ore", "iron-ore"}, 0.45, 0.75, 0.8)
+		setAutoplace(mapGen, []string{"uranium-ore", "crude-oil"}, 0.35, 0.55, 0.7)
+		setNested(mapGen, []string{"property_expression_names", "control:moisture:bias"}, "-0.75")
+		setNested(mapGen, []string{"property_expression_names", "control:aux:bias"}, "0.45")
+		setNested(mapSettings, []string{"pollution", "ageing"}, 0.75)
+	case "cliffside-lakes":
+		mapGen["starting_area"] = 1.75
+		setAutoplace(mapGen, []string{"water"}, 2.0, 1.8, 0)
+		setAutoplace(mapGen, []string{"trees"}, 1.4, 1.2, 0)
+		setAutoplace(mapGen, []string{"enemy-base"}, 0.8, 1.1, 0)
+		setNested(mapGen, []string{"cliff_settings", "cliff_elevation_interval"}, 24)
+		setNested(mapGen, []string{"cliff_settings", "richness"}, 3.5)
+		setNested(mapGen, []string{"property_expression_names", "control:moisture:bias"}, "0.25")
+	case "oil-baron":
+		mapGen["starting_area"] = 1.2
+		setAutoplace(mapGen, []string{"crude-oil"}, 2.5, 2.2, 4.0)
+		setAutoplace(mapGen, []string{"coal"}, 0.55, 0.8, 0.8)
+		setAutoplace(mapGen, []string{"stone", "copper-ore", "iron-ore"}, 0.85, 1.0, 1.0)
+		setAutoplace(mapGen, []string{"uranium-ore"}, 0.7, 0.8, 1.3)
+		setAutoplace(mapGen, []string{"enemy-base"}, 1.2, 1.1, 0)
+		setNested(mapSettings, []string{"pollution", "diffusion_ratio"}, 0.035)
+		setNested(mapSettings, []string{"enemy_evolution", "pollution_factor"}, 0.0000012)
+	case "tiny-death-spiral":
+		mapGen["width"] = 768
+		mapGen["height"] = 768
+		mapGen["starting_area"] = 0.55
+		setAutoplace(mapGen, []string{"coal", "stone", "copper-ore", "iron-ore", "uranium-ore", "crude-oil"}, 1.35, 1.15, 1.4)
+		setAutoplace(mapGen, []string{"water"}, 0.75, 0.9, 0)
+		setAutoplace(mapGen, []string{"enemy-base"}, 2.5, 2.3, 0)
+		setNested(mapSettings, []string{"enemy_evolution", "time_factor"}, 0.00002)
+		setNested(mapSettings, []string{"enemy_evolution", "destroy_factor"}, 0.004)
+		setNested(mapSettings, []string{"enemy_expansion", "min_expansion_cooldown"}, 1800)
+		setNested(mapSettings, []string{"enemy_expansion", "max_expansion_cooldown"}, 18000)
 	default:
 		return nil, nil, fmt.Errorf("unknown preset %q", preset)
 	}

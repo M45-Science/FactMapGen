@@ -12,7 +12,12 @@
         <div class="mapgen-window">
           <div class="mapgen-titlebar">
             <div class="mapgen-title">Map generator</div>
-            <div id="statusLine" class="mapgen-status">Loading presets...</div>
+            <div class="session-bar">
+              <div id="statusLine" class="mapgen-status">Loading session...</div>
+              <span id="currentUser" class="current-user"></span>
+              <button id="adminBtn" type="button" class="small-button">Admin</button>
+              <button id="logoutBtn" type="button" class="small-button">Logout</button>
+            </div>
           </div>
 
           <div class="mapgen-toolbar">
@@ -35,6 +40,12 @@
                 <option value="island">Island</option>
                 <option value="ribbon-world">Ribbon world</option>
                 <option value="empty-sandbox">Empty sandbox</option>
+                <option value="marathon-frontier">Marathon frontier</option>
+                <option value="dense-forest">Dense forest</option>
+                <option value="desert-scarcity">Desert scarcity</option>
+                <option value="cliffside-lakes">Cliffside lakes</option>
+                <option value="oil-baron">Oil baron</option>
+                <option value="tiny-death-spiral">Tiny death spiral</option>
               </select>
               <button type="submit">Create</button>
             </form>
@@ -44,7 +55,7 @@
               <input id="seedValue" type="number" min="1" step="1" placeholder="Random" />
               <label class="check-field seed-random">
                 <input id="seedRandom" type="checkbox" checked />
-                <span>Random each new map</span>
+                <span>Random seed for each new map</span>
               </label>
             </div>
           </div>
@@ -139,6 +150,43 @@
         </div>
       </section>
     </main>
+
+    <div id="loginDialog" class="auth-overlay">
+      <form id="loginForm" class="auth-dialog">
+        <h1>FactMapGen</h1>
+        <label>
+          Username
+          <input id="loginUsername" autocomplete="username" required />
+        </label>
+        <label>
+          Password
+          <input id="loginPassword" type="password" autocomplete="current-password" required />
+        </label>
+        <button type="submit" class="primary">Login</button>
+        <div id="loginError" class="form-error"></div>
+      </form>
+    </div>
+
+    <div id="adminPanel" class="admin-overlay" hidden>
+      <section class="admin-dialog" aria-label="Admin">
+        <div class="admin-header">
+          <h2>Admin</h2>
+          <button id="closeAdminBtn" type="button" class="small-button">Close</button>
+        </div>
+        <form id="userCreateForm" class="admin-create">
+          <input id="newUsername" placeholder="Username" autocomplete="off" />
+          <input id="newPassword" type="password" placeholder="Password" autocomplete="new-password" />
+          <label class="check-field">
+            <input id="newIsAdmin" type="checkbox" checked />
+            <span>Admin</span>
+          </label>
+          <button type="submit">Add account</button>
+        </form>
+        <div id="usersList" class="admin-list"></div>
+        <h3>Audit log</h3>
+        <div id="auditList" class="audit-list"></div>
+      </section>
+    </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <script src="/app.js"></script>

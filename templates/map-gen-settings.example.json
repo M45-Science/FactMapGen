@@ -84,6 +84,6 @@
       "y": 0
     }
   ],
-  "_seed_comment": "Use 0 for a random seed each time a new map is generated, or a positive number for a fixed seed.",
-  "seed": 0
+  "_seed_comment": "Use null for a random seed, number for a specific seed.",
+  "seed": null
 }
