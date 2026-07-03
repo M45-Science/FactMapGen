@@ -20,6 +20,7 @@
               <span id="currentUser" class="current-user"></span>
               <button id="loginBtn" type="button" class="small-button">Login</button>
               <button id="adminBtn" type="button" class="small-button">Admin</button>
+              <button id="passwordBtn" type="button" class="small-button">Password</button>
               <button id="logoutBtn" type="button" class="small-button">Logout</button>
             </div>
           </div>
@@ -261,6 +262,32 @@
           <button type="submit" class="primary">Login</button>
         </div>
         <div id="loginError" class="form-error"></div>
+      </form>
+    </div>
+
+    <div id="passwordDialog" class="modal-overlay" hidden>
+      <form id="passwordForm" class="modal-dialog password-dialog" aria-label="Change password">
+        <div class="modal-header">
+          <h2>Change password</h2>
+          <button id="closePasswordBtn" type="button" class="small-button">Close</button>
+        </div>
+        <label>
+          Current password
+          <input id="currentPassword" type="password" autocomplete="current-password" required />
+        </label>
+        <label>
+          New password
+          <input id="newSelfPassword" type="password" autocomplete="new-password" minlength="8" required />
+        </label>
+        <label>
+          Confirm new password
+          <input id="confirmSelfPassword" type="password" autocomplete="new-password" minlength="8" required />
+        </label>
+        <div class="modal-actions">
+          <button id="cancelPasswordBtn" type="button">Cancel</button>
+          <button type="submit" class="primary">Save password</button>
+        </div>
+        <div id="passwordError" class="form-error"></div>
       </form>
     </div>
 

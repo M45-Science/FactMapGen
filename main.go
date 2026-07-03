@@ -246,6 +246,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/config", srv.handleConfig)
 	mux.HandleFunc("/api/session", srv.handleSession)
+	mux.HandleFunc("/api/session/password", srv.handlePassword)
 	mux.HandleFunc("/api/users", srv.handleUsers)
 	mux.HandleFunc("/api/users/", srv.handleUser)
 	mux.HandleFunc("/api/audit", srv.handleAudit)

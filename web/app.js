@@ -189,7 +189,16 @@ const els = {
   currentUser: $("#currentUser"),
   loginBtn: $("#loginBtn"),
   adminBtn: $("#adminBtn"),
+  passwordBtn: $("#passwordBtn"),
   logoutBtn: $("#logoutBtn"),
+  passwordDialog: $("#passwordDialog"),
+  passwordForm: $("#passwordForm"),
+  closePasswordBtn: $("#closePasswordBtn"),
+  cancelPasswordBtn: $("#cancelPasswordBtn"),
+  currentPassword: $("#currentPassword"),
+  newSelfPassword: $("#newSelfPassword"),
+  confirmSelfPassword: $("#confirmSelfPassword"),
+  passwordError: $("#passwordError"),
   adminPanel: $("#adminPanel"),
   closeAdminBtn: $("#closeAdminBtn"),
   userCreateForm: $("#userCreateForm"),
@@ -213,8 +222,15 @@ async function init() {
   els.guestBtn.addEventListener("click", continueAsGuest);
   els.loginBtn.addEventListener("click", showLogin);
   els.logoutBtn.addEventListener("click", logout);
+  els.passwordBtn.addEventListener("click", openPasswordDialog);
   els.adminBtn.addEventListener("click", openAdminPanel);
   els.closeAdminBtn.addEventListener("click", closeAdminPanel);
+  els.closePasswordBtn.addEventListener("click", closePasswordDialog);
+  els.cancelPasswordBtn.addEventListener("click", closePasswordDialog);
+  els.passwordForm.addEventListener("submit", changePassword);
+  els.passwordDialog.addEventListener("click", (event) => {
+    if (event.target === els.passwordDialog) closePasswordDialog();
+  });
   els.userCreateForm.addEventListener("submit", createUser);
   els.toastClose.addEventListener("click", hideToast);
   els.refreshFactorioBtn.addEventListener("click", () => refreshFactorioStatus({ toast: true }));
@@ -227,7 +243,8 @@ async function init() {
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !els.createPresetDialog.hidden) closeCreateDialog();
-		if (event.key === "Escape" && !els.importPresetDialog.hidden) closeImportDialog();
+    if (event.key === "Escape" && !els.importPresetDialog.hidden) closeImportDialog();
+    if (event.key === "Escape" && !els.passwordDialog.hidden) closePasswordDialog();
   });
   els.createForm.addEventListener("submit", createProfile);
   els.profileSelect.addEventListener("change", () => loadProfile(els.profileSelect.value));
@@ -338,6 +355,7 @@ async function logout() {
   state.session = null;
   state.dirty = false;
   closeAdminPanel();
+  closePasswordDialog();
   hideLogin();
   renderSession();
   await loadProfiles(true);
@@ -369,9 +387,52 @@ function renderSession() {
   els.currentUser.classList.toggle("guest-user", !user);
   els.loginBtn.hidden = Boolean(user);
   els.adminBtn.hidden = !user || !user.isAdmin;
+  els.passwordBtn.hidden = !user;
   els.logoutBtn.hidden = !user;
   els.openCreateBtn.hidden = !user;
   notifyFactorioUpdate();
+}
+
+function openPasswordDialog() {
+  if (!state.session) {
+    showLogin();
+    return;
+  }
+  els.passwordError.textContent = "";
+  els.passwordForm.reset();
+  els.passwordDialog.hidden = false;
+  window.setTimeout(() => els.currentPassword.focus(), 0);
+}
+
+function closePasswordDialog() {
+  els.passwordDialog.hidden = true;
+  els.passwordError.textContent = "";
+  els.passwordForm.reset();
+}
+
+async function changePassword(event) {
+  event.preventDefault();
+  els.passwordError.textContent = "";
+  const next = els.newSelfPassword.value;
+  if (next !== els.confirmSelfPassword.value) {
+    els.passwordError.textContent = "New passwords do not match.";
+    return;
+  }
+  try {
+    const body = await api("/api/session/password", {
+      method: "PUT",
+      body: JSON.stringify({
+        currentPassword: els.currentPassword.value,
+        newPassword: next,
+      }),
+    });
+    state.session = body.user;
+    closePasswordDialog();
+    renderSession();
+    showToast("Password changed.");
+  } catch (error) {
+    els.passwordError.textContent = error.message;
+  }
 }
 
 async function openAdminPanel() {

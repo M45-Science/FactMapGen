@@ -53,6 +53,11 @@ type userWriteRequest struct {
 	IsAdmin  *bool  `json:"isAdmin"`
 }
 
+type passwordChangeRequest struct {
+	CurrentPassword string `json:"currentPassword"`
+	NewPassword     string `json:"newPassword"`
+}
+
 type auditEntry struct {
 	ID            int64  `json:"id"`
 	ActorUserID   int64  `json:"actorUserId"`
@@ -326,6 +331,31 @@ func (a *authStore) updateUser(id int64, req userWriteRequest, actorID int64) (*
 	return a.getUser(id)
 }
 
+func (a *authStore) changePassword(id int64, currentPassword, newPassword string) (*authUser, error) {
+	var hash string
+	if err := a.db.QueryRow(`SELECT password_hash FROM users WHERE id = ?`, id).Scan(&hash); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errAuthRequired
+		}
+		return nil, err
+	}
+	if !verifyPassword(currentPassword, hash) {
+		return nil, errInvalidCredentials
+	}
+	if err := validatePassword(newPassword); err != nil {
+		return nil, err
+	}
+	nextHash, err := hashPassword(newPassword)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := a.db.Exec(`UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?`, nextHash, now, id); err != nil {
+		return nil, err
+	}
+	return a.getUser(id)
+}
+
 func (a *authStore) deleteUser(id, actorID int64) error {
 	if id == actorID {
 		return errDeleteSelf
@@ -496,6 +526,29 @@ func (s *server) handleUser(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+func (s *server) handlePassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	user, ok := s.requireUser(w, r)
+	if !ok {
+		return
+	}
+	var req passwordChangeRequest
+	if err := decodeJSONRequest(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	updated, err := s.auth.changePassword(user.ID, req.CurrentPassword, req.NewPassword)
+	if err != nil {
+		writeAuthError(w, err)
+		return
+	}
+	s.auth.logAudit(user, "change-password", "user", updated.Username, "")
+	writeJSON(w, http.StatusOK, publicSession{Authenticated: true, User: updated})
 }
 
 func (s *server) handleAudit(w http.ResponseWriter, r *http.Request) {

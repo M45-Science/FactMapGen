@@ -73,6 +73,44 @@ func TestAuthStoreUserLifecycleKeepsLastAdmin(t *testing.T) {
 	}
 }
 
+func TestPasswordHandlerChangesOwnPassword(t *testing.T) {
+	auth, password := newTestAuthStore(t)
+	srv := &server{auth: auth}
+
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/session", strings.NewReader(`{"username":"admin","password":"`+password+`"}`))
+	login := httptest.NewRecorder()
+	srv.handleSession(login, loginReq)
+	if login.Code != http.StatusOK {
+		t.Fatalf("login status = %d body=%s", login.Code, login.Body.String())
+	}
+	cookies := login.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("login did not set a cookie")
+	}
+
+	wrongReq := httptest.NewRequest(http.MethodPut, "/api/session/password", strings.NewReader(`{"currentPassword":"wrong-password","newPassword":"new-password-123"}`))
+	wrongReq.AddCookie(cookies[0])
+	wrong := httptest.NewRecorder()
+	srv.handlePassword(wrong, wrongReq)
+	if wrong.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong current password status = %d, want 401", wrong.Code)
+	}
+
+	changeReq := httptest.NewRequest(http.MethodPut, "/api/session/password", strings.NewReader(`{"currentPassword":"`+password+`","newPassword":"new-password-123"}`))
+	changeReq.AddCookie(cookies[0])
+	change := httptest.NewRecorder()
+	srv.handlePassword(change, changeReq)
+	if change.Code != http.StatusOK {
+		t.Fatalf("change password status = %d body=%s", change.Code, change.Body.String())
+	}
+	if _, err := auth.authenticate("admin", password); err != errInvalidCredentials {
+		t.Fatalf("old password auth err = %v, want errInvalidCredentials", err)
+	}
+	if _, err := auth.authenticate("admin", "new-password-123"); err != nil {
+		t.Fatalf("new password auth: %v", err)
+	}
+}
+
 func TestAuthHandlersProtectUsersAndWriteAudit(t *testing.T) {
 	auth, password := newTestAuthStore(t)
 	srv := &server{auth: auth}

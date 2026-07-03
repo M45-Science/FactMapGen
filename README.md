@@ -108,6 +108,7 @@ The bundled default templates are based on Wube's public `factorio-data` example
 - `GET /api/session`
 - `POST /api/session` with `{ "username": "admin", "password": "..." }`
 - `DELETE /api/session`
+- `PUT /api/session/password` with `{ "currentPassword": "...", "newPassword": "..." }`; login required
 - `GET /api/users` admin only
 - `POST /api/users` admin only, with `{ "username": "...", "password": "...", "isAdmin": true }`
 - `PUT /api/users/{id}` admin only
