@@ -1154,7 +1154,7 @@ func presetDocuments(preset string) ([]byte, []byte, error) {
 		mapGen["starting_area"] = 2
 		setAutoplace(mapGen, []string{"coal", "stone", "copper-ore", "iron-ore", "uranium-ore", "crude-oil"}, 1, 1.8, 1.5)
 	case "empty-sandbox":
-		setAutoplace(mapGen, []string{"coal", "stone", "copper-ore", "iron-ore", "uranium-ore", "crude-oil", "water", "trees", "enemy-base"}, 0, 0, 0)
+		setAutoplace(mapGen, []string{"coal", "stone", "copper-ore", "iron-ore", "uranium-ore", "crude-oil", "water", "trees"}, 1, 0, 0)
 		setNested(mapGen, []string{"cliff_settings", "richness"}, 0)
 		setNested(mapSettings, []string{"pollution", "enabled"}, false)
 		applyNoBitersPreset(mapGen, mapSettings)

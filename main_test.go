@@ -267,6 +267,48 @@ func TestNoBitersPresetDisablesEnemiesAndForcesPeaceful(t *testing.T) {
 	}
 }
 
+func TestEmptySandboxPresetKeepsResourceFrequencyPreviewSafe(t *testing.T) {
+	mapGenRaw, mapSettingsRaw, err := presetDocuments("empty-sandbox")
+	if err != nil {
+		t.Fatalf("presetDocuments: %v", err)
+	}
+	var mapGen map[string]any
+	if err := json.Unmarshal(mapGenRaw, &mapGen); err != nil {
+		t.Fatalf("unmarshal map gen: %v", err)
+	}
+	var mapSettings map[string]any
+	if err := json.Unmarshal(mapSettingsRaw, &mapSettings); err != nil {
+		t.Fatalf("unmarshal map settings: %v", err)
+	}
+
+	controls := mapGen["autoplace_controls"].(map[string]any)
+	for _, name := range []string{"coal", "stone", "copper-ore", "iron-ore", "uranium-ore", "crude-oil"} {
+		control := controls[name].(map[string]any)
+		if control["frequency"].(float64) <= 0 {
+			t.Fatalf("%s frequency = %#v, want positive for Factorio preview", name, control["frequency"])
+		}
+		if control["size"].(float64) != 0 || control["richness"].(float64) != 0 {
+			t.Fatalf("%s autoplace = %#v, want size/richness 0", name, control)
+		}
+	}
+	for _, name := range []string{"water", "trees"} {
+		control := controls[name].(map[string]any)
+		if control["frequency"].(float64) <= 0 {
+			t.Fatalf("%s frequency = %#v, want positive for Factorio preview", name, control["frequency"])
+		}
+		if control["size"].(float64) != 0 {
+			t.Fatalf("%s autoplace = %#v, want size 0", name, control)
+		}
+	}
+
+	if richness := mapGen["cliff_settings"].(map[string]any)["richness"]; richness != float64(0) {
+		t.Fatalf("cliff richness = %#v, want 0", richness)
+	}
+	if pollution := mapSettings["pollution"].(map[string]any)["enabled"]; pollution != false {
+		t.Fatalf("pollution enabled = %#v, want false", pollution)
+	}
+}
+
 func TestCoolPresetsHaveDistinctShape(t *testing.T) {
 	tests := []struct {
 		preset string

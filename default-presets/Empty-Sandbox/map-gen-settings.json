@@ -14,17 +14,17 @@
   "_starting_area_comment": "Multiplier for 'biter free zone radius'",
   "autoplace_controls": {
     "coal": {
-      "frequency": 0,
+      "frequency": 1,
       "richness": 0,
       "size": 0
     },
     "copper-ore": {
-      "frequency": 0,
+      "frequency": 1,
       "richness": 0,
       "size": 0
     },
     "crude-oil": {
-      "frequency": 0,
+      "frequency": 1,
       "richness": 0,
       "size": 0
     },
@@ -33,26 +33,26 @@
       "size": 0
     },
     "iron-ore": {
-      "frequency": 0,
+      "frequency": 1,
       "richness": 0,
       "size": 0
     },
     "stone": {
-      "frequency": 0,
+      "frequency": 1,
       "richness": 0,
       "size": 0
     },
     "trees": {
-      "frequency": 0,
+      "frequency": 1,
       "size": 0
     },
     "uranium-ore": {
-      "frequency": 0,
+      "frequency": 1,
       "richness": 0,
       "size": 0
     },
     "water": {
-      "frequency": 0,
+      "frequency": 1,
       "size": 0
     }
   },
