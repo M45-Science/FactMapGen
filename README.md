@@ -66,7 +66,7 @@ The main web page shows the detected Factorio binary version and flags when the 
 
 Preview generation is queued server-side so only one Factorio process runs at a time. The queue defaults to 8 waiting jobs and can be changed with `-preview-queue`. Each preview render is capped at 60 seconds by default and can be changed with `-preview-timeout`. Admin preview jobs are served before regular signed-in users, and signed-in users are served before guests; jobs with the same priority run in request order. If the queue is full, the preview request returns HTTP 429.
 
-Generated preview images are transient. Factorio writes a temporary PNG while a queued job runs, the server applies the requested zoom transform, converts it to AVIF with JPEG fallback unless `lossless` is requested, and the browser receives a short-lived `/api/previews/...` URL. Preview images are kept in memory for up to 30 minutes with a 100-image cap, and are not cached per preset.
+Generated preview images are transient. Factorio writes a temporary PNG while a queued job runs, the server applies the requested zoom transform, converts it to AVIF with JPEG fallback unless `lossless` is requested, and the browser receives a short-lived `/api/previews/...` URL. Preview images are kept in memory for up to 30 minutes with a 100-image cap, and are not cached per preset. On startup, when previews are configured, the server warms a pinned 512px Nauvis preview for the built-in Default preset so first page load can show an immediate image without waiting for autosize rendering.
 
 ## Presets
 
@@ -122,7 +122,7 @@ The bundled default templates are based on Wube's public `factorio-data` example
 - `DELETE /api/profiles/{name}`; login required
 - `POST /api/profiles/{name}/duplicate` with `{ "name": "copy name" }`; login required
 - `GET /api/profiles/{name}/download.zip`; public
-- `POST /api/profiles/{name}/preview` with `{ "size": 768, "planet": "nauvis", "zoom": "1", "lossless": false, "mapGen": {...} }`; public and queued; `zoom` is map scale: `out-4`, `out-3`, and `out-2` show 4, 3, or 2 meters per output pixel; `1` is normal 1 meter per pixel; `in-2`, `in-3`, and `in-4` crop the center to 1/2, 1/3, or 1/4 meter per output pixel with integer scaling; `mapGen` is optional and lets the server preview unsaved edits from a temporary file
+- `POST /api/profiles/{name}/preview` with `{ "size": 768, "planet": "nauvis", "zoom": "1", "lossless": false, "mapGen": {...} }`; public and queued; guests are capped at 512 pixels and normal zoom; `lossless` and custom `zoom` are honored only for signed-in users; `zoom` is map scale: `out-4`, `out-3`, and `out-2` show 4, 3, or 2 meters per output pixel; `1` is normal 1 meter per pixel; `in-2`, `in-3`, and `in-4` crop the center to 1/2, 1/3, or 1/4 meter per output pixel with integer scaling; `mapGen` is optional and lets the server preview unsaved edits from a temporary file
 - `GET /api/previews/{token}.avif`, `.jpg`, or `.png`; public, short-lived preview image returned by a preview request
 
 Profile names may contain letters, numbers, spaces, dots, underscores, and hyphens.

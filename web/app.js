@@ -20,6 +20,7 @@ const state = {
 const defaultPreviewSize = 768;
 const minPreviewSize = 256;
 const maxPreviewSizePx = 4096;
+const guestMaxPreviewSize = 512;
 const safePreviewSizes = [256, 512, 768, 1024, 1536, 2048, 3072, 4096];
 const maxPreviewSeed = 4294967295;
 const minAutoplaceFrequency = 0.1;
@@ -157,6 +158,7 @@ const els = {
   previewPlanet: $("#previewPlanet"),
   previewZoom: $("#previewZoom"),
   previewLossless: $("#previewLossless"),
+  previewLosslessField: $("#previewLosslessField"),
   autoRefreshPreview: $("#autoRefreshPreview"),
   seedValue: $("#seedValue"),
   seedRandom: $("#seedRandom"),
@@ -225,6 +227,7 @@ async function init() {
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !els.createPresetDialog.hidden) closeCreateDialog();
+		if (event.key === "Escape" && !els.importPresetDialog.hidden) closeImportDialog();
   });
   els.createForm.addEventListener("submit", createProfile);
   els.profileSelect.addEventListener("change", () => loadProfile(els.profileSelect.value));
@@ -694,7 +697,7 @@ async function loadProfile(name) {
     ensureRandomSeedDefault();
     state.dirty = false;
     renderAll();
-    scheduleAutoPreview();
+    if (!canUseDefaultCachedPreview()) scheduleAutoPreview();
   } catch (error) {
     showToast(error.message, true);
   }
@@ -911,7 +914,7 @@ async function generatePreview(options = {}) {
     setPreviewUpdating("Generating preview...");
 
     const seed = previewSeedOverride();
-    const payload = { size, planet, zoom: els.previewZoom.value, lossless: els.previewLossless.checked, mapGen: previewMapGenPayload() };
+    const payload = { size, planet, zoom: canUsePreviewZoom() ? els.previewZoom.value : "1", lossless: canUseLosslessPreview() && els.previewLossless.checked, mapGen: previewMapGenPayload() };
     if (seed) payload.seed = seed;
     const body = await api(`/api/profiles/${encodeURIComponent(previewProfile)}/preview`, {
       method: "POST",
@@ -1067,6 +1070,18 @@ function canDuplicateSelectedProfile() {
   return Boolean(state.session && state.selected);
 }
 
+function maxPreviewSizeForSession() {
+  return state.session ? maxPreviewSizePx : guestMaxPreviewSize;
+}
+
+function canUsePreviewZoom() {
+  return Boolean(state.session);
+}
+
+function canUseLosslessPreview() {
+  return Boolean(state.session);
+}
+
 function setControlsEnabled(enabled) {
   const canEdit = canEditSelectedProfile();
   const canDuplicate = canDuplicateSelectedProfile();
@@ -1083,10 +1098,26 @@ function setControlsEnabled(enabled) {
   els.seedRerollBtn.disabled = !enabled || !state.mapGen || !isRandomSeed(state.mapGen.seed);
   els.autoRefreshPreview.disabled = !enabled || !state.config.previewEnabled;
   renderPreviewButtonState();
+  const maxPreviewSize = maxPreviewSizeForSession();
+  for (const option of els.previewSize.options) {
+    const optionSize = Number(option.value);
+    option.disabled = Number.isFinite(optionSize) && optionSize > maxPreviewSize;
+  }
+  const selectedPreviewSize = Number(els.previewSize.value);
+  if (Number.isFinite(selectedPreviewSize) && selectedPreviewSize > maxPreviewSize) els.previewSize.value = String(maxPreviewSize);
+
+  const canUseZoom = canUsePreviewZoom();
+  els.previewZoom.hidden = !canUseZoom;
+  if (!canUseZoom) els.previewZoom.value = "1";
+  els.previewZoom.disabled = !enabled || !state.config.previewEnabled || !canUseZoom;
+
+  const canUseLossless = canUseLosslessPreview();
+  els.previewLosslessField.hidden = !canUseLossless;
+  if (!canUseLossless) els.previewLossless.checked = false;
+  els.previewLossless.disabled = !enabled || !state.config.previewEnabled || !canUseLossless;
+
   els.previewSize.disabled = !enabled || !state.config.previewEnabled;
   els.previewPlanet.disabled = !enabled || !state.config.previewEnabled;
-  els.previewZoom.disabled = !enabled || !state.config.previewEnabled;
-  els.previewLossless.disabled = !enabled || !state.config.previewEnabled;
 }
 
 function clearVisualControls() {
@@ -1374,7 +1405,27 @@ function validAutoplaceFrequency(value) {
   return Math.max(minAutoplaceFrequency, factorioScaleValue(value, 1));
 }
 
+function canUseDefaultCachedPreview() {
+  const preview = state.config.defaultPreview;
+  return Boolean(
+    preview?.url
+    && state.selected === "default:Default"
+    && !state.dirty
+    && knownPlanetName(els.previewPlanet.value) === "nauvis"
+  );
+}
+
+function showDefaultCachedPreview() {
+  if (!canUseDefaultCachedPreview()) return false;
+  const preview = state.config.defaultPreview;
+  updatePreviewFrameSize(preview.size || guestMaxPreviewSize);
+  clearPreviewUpdating();
+  showPreviewImage(preview.url);
+  return true;
+}
+
 function renderPreview() {
+  if (showDefaultCachedPreview()) return;
   if (!state.selected) {
     hidePreview("No preview image");
     return;
@@ -1390,7 +1441,7 @@ function previewSizeIsAuto() {
 }
 
 function currentPreviewSize() {
-  if (previewSizeIsAuto()) return autoPreviewSize();
+  if (previewSizeIsAuto()) return clampPreviewSize(autoPreviewSize());
   const size = Number(els.previewSize.value || defaultPreviewSize);
   if (!Number.isFinite(size)) return defaultPreviewSize;
   return clampPreviewSize(size);
@@ -1434,7 +1485,7 @@ function numericCSSPixels(value) {
 }
 
 function clampPreviewSize(size) {
-  return Math.min(maxPreviewSizePx, Math.max(minPreviewSize, Math.round(size)));
+  return Math.min(maxPreviewSizeForSession(), Math.max(minPreviewSize, Math.round(size)));
 }
 
 function updatePreviewFrameSize(size = currentPreviewSize()) {

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"archive/zip"
 	"bytes"
 	"context"
 	"embed"
@@ -30,15 +29,17 @@ import (
 )
 
 const (
-	mapGenFile             = "map-gen-settings.json"
-	mapSettingsFile        = "map-settings.json"
-	previewJPEGQuality     = 85
-	previewAVIFCRF         = 35
-	previewAVIFCPUUsed     = 6
-	maxPreviewOutputSize   = 4096
-	maxFactorioPreviewSize = 16384
-	previewImageRetention  = 30 * time.Minute
-	maxPreviewImages       = 100
+	guestMaxPreviewSize      = 512
+	defaultCachedPreviewSize = 512
+	mapGenFile               = "map-gen-settings.json"
+	mapSettingsFile          = "map-settings.json"
+	previewJPEGQuality       = 85
+	previewAVIFCRF           = 35
+	previewAVIFCPUUsed       = 6
+	maxPreviewOutputSize     = 4096
+	maxFactorioPreviewSize   = 16384
+	previewImageRetention    = 30 * time.Minute
+	maxPreviewImages         = 100
 )
 
 //go:embed web/* templates/*.json
@@ -59,10 +60,11 @@ type store struct {
 }
 
 type previewer struct {
-	mu          sync.RWMutex
-	factorioBin string
-	timeout     time.Duration
-	images      map[string]previewImage
+	mu             sync.RWMutex
+	factorioBin    string
+	timeout        time.Duration
+	images         map[string]previewImage
+	defaultPreview *previewResponse
 }
 
 type previewImage struct {
@@ -70,15 +72,17 @@ type previewImage struct {
 	contentType string
 	createdAt   time.Time
 	expiresAt   time.Time
+	pinned      bool
 }
 
 type appConfig struct {
-	PresetDir        string         `json:"presetDir"`
-	DefaultPresetDir string         `json:"defaultPresetDir"`
-	CustomPresetDir  string         `json:"customPresetDir"`
-	PreviewEnabled   bool           `json:"previewEnabled"`
-	FactorioBin      string         `json:"factorioBin,omitempty"`
-	Factorio         factorioStatus `json:"factorio"`
+	PresetDir        string           `json:"presetDir"`
+	DefaultPresetDir string           `json:"defaultPresetDir"`
+	CustomPresetDir  string           `json:"customPresetDir"`
+	PreviewEnabled   bool             `json:"previewEnabled"`
+	DefaultPreview   *previewResponse `json:"defaultPreview,omitempty"`
+	FactorioBin      string           `json:"factorioBin,omitempty"`
+	Factorio         factorioStatus   `json:"factorio"`
 }
 
 type createProfileRequest struct {
@@ -91,9 +95,18 @@ type saveProfileRequest struct {
 	MapSettings json.RawMessage `json:"mapSettings"`
 }
 
-type downloadProfileRequest struct {
+type exchangeStringRequest struct {
 	MapGen      json.RawMessage `json:"mapGen"`
 	MapSettings json.RawMessage `json:"mapSettings"`
+}
+
+type importExchangeStringRequest struct {
+	Name           string `json:"name"`
+	ExchangeString string `json:"exchangeString"`
+}
+
+type exchangeStringResponse struct {
+	ExchangeString string `json:"exchangeString"`
 }
 
 type duplicateProfileRequest struct {
@@ -225,6 +238,10 @@ func main() {
 			PreviewEnabled:   p.factorioBin != "",
 			FactorioBin:      *factorioBin,
 		},
+	}
+	if p.factorioBin != "" {
+		log.Printf("Warming default preview cache...")
+		srv.warmDefaultPreview(context.Background())
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/config", srv.handleConfig)
@@ -360,6 +377,11 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		cfg.FactorioBin = s.previewer.factorioBinary()
 		cfg.PreviewEnabled = cfg.FactorioBin != ""
 	}
+	if s.previewer != nil {
+		if preview, ok := s.previewer.defaultCachedPreview(); ok {
+			cfg.DefaultPreview = &preview
+		}
+	}
 	writeJSON(w, http.StatusOK, cfg)
 }
 
@@ -438,6 +460,35 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if rest == "import-exchange" {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		actor, ok := s.requireUser(w, r)
+		if !ok {
+			return
+		}
+		var req importExchangeStringRequest
+		if err := decodeJSONRequest(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		mapGen, mapSettings, err := decodeExchangeString(req.ExchangeString)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		doc, err := s.store.createProfileFromDocuments(req.Name, mapGen, mapSettings)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		s.auth.logAudit(actor, "import", "profile", doc.ID, auditDetail(map[string]any{"exchange": true}))
+		writeJSON(w, http.StatusCreated, doc)
+		return
+	}
+
 	parts := strings.Split(rest, "/")
 	name, err := url.PathUnescape(parts[0])
 	if err != nil {
@@ -456,6 +507,7 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		req = previewRequestForUser(req, user)
 		resp, err := s.renderPreview(r.Context(), name, req, previewPriorityForUser(user))
 		if err != nil {
 			writeStoreError(w, err)
@@ -465,21 +517,27 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(parts) == 2 && parts[1] == "download.zip" {
+	if len(parts) == 2 && parts[1] == "exchange-string" {
 		switch r.Method {
 		case http.MethodGet:
-			if err := s.store.writeProfileZip(w, name); err != nil {
+			exchangeString, err := s.store.profileExchangeString(name)
+			if err != nil {
 				writeStoreError(w, err)
+				return
 			}
+			writeJSON(w, http.StatusOK, exchangeStringResponse{ExchangeString: exchangeString})
 		case http.MethodPost:
-			var req downloadProfileRequest
+			var req exchangeStringRequest
 			if err := decodeJSONRequest(r, &req); err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			if err := s.store.writeProfileZipFromRequest(w, name, req); err != nil {
+			exchangeString, err := exchangeStringFromRequest(req)
+			if err != nil {
 				writeStoreError(w, err)
+				return
 			}
+			writeJSON(w, http.StatusOK, exchangeStringResponse{ExchangeString: exchangeString})
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
@@ -672,6 +730,14 @@ func (s *store) listProfiles() ([]profileSummary, error) {
 }
 
 func (s *store) createProfile(name, preset string) (profileDocument, error) {
+	mapGen, mapSettings, err := presetDocuments(preset)
+	if err != nil {
+		return profileDocument{}, err
+	}
+	return s.createProfileFromDocuments(name, mapGen, mapSettings)
+}
+
+func (s *store) createProfileFromDocuments(name string, mapGen, mapSettings []byte) (profileDocument, error) {
 	name = strings.TrimSpace(name)
 	if err := validateProfileName(name); err != nil {
 		return profileDocument{}, err
@@ -680,11 +746,6 @@ func (s *store) createProfile(name, preset string) (profileDocument, error) {
 	if _, err := os.Stat(s.profileDir(ref)); err == nil {
 		return profileDocument{}, errProfileExists
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return profileDocument{}, err
-	}
-
-	mapGen, mapSettings, err := presetDocuments(preset)
-	if err != nil {
 		return profileDocument{}, err
 	}
 	return s.saveProfile(name, mapGen, mapSettings)
@@ -797,77 +858,95 @@ func (s *store) deleteProfile(identifier string) error {
 	return os.RemoveAll(dir)
 }
 
-func (s *store) writeProfileZip(w http.ResponseWriter, identifier string) error {
-	ref, err := s.resolveProfile(identifier)
+func (s *store) profileExchangeString(identifier string) (string, error) {
+	doc, err := s.readProfile(identifier)
 	if err != nil {
-		return err
+		return "", err
 	}
-	dir := s.profileDir(ref)
-	files := map[string][]byte{}
-	for _, filename := range []string{mapGenFile, mapSettingsFile} {
-		body, err := os.ReadFile(filepath.Join(dir, filename))
-		if err != nil {
-			return err
-		}
-		files[filename] = body
-	}
-	return writeZipFiles(w, ref.Name, files)
+	return encodeExchangeString(doc.MapGen, doc.MapSettings)
 }
 
-func (s *store) writeProfileZipFromRequest(w http.ResponseWriter, identifier string, req downloadProfileRequest) error {
-	ref, err := s.resolveProfile(identifier)
-	if err != nil {
-		return err
-	}
+func exchangeStringFromRequest(req exchangeStringRequest) (string, error) {
 	mapGen, err := normalizeJSON(req.MapGen)
 	if err != nil {
-		return fmt.Errorf("%s is invalid JSON: %w", mapGenFile, err)
+		return "", fmt.Errorf("%s is invalid JSON: %w", mapGenFile, err)
 	}
 	mapSettings, err := normalizeJSON(req.MapSettings)
 	if err != nil {
-		return fmt.Errorf("%s is invalid JSON: %w", mapSettingsFile, err)
+		return "", fmt.Errorf("%s is invalid JSON: %w", mapSettingsFile, err)
 	}
-	return writeZipFiles(w, ref.Name, map[string][]byte{
-		mapGenFile:      append(mapGen, '\n'),
-		mapSettingsFile: append(mapSettings, '\n'),
-	})
+	return encodeExchangeString(mapGen, mapSettings)
 }
 
-func writeZipFiles(w http.ResponseWriter, profileName string, files map[string][]byte) error {
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, downloadZipFilename(profileName)))
-	zw := zip.NewWriter(w)
-	for _, filename := range []string{mapGenFile, mapSettingsFile} {
-		fw, err := zw.Create(filename)
-		if err != nil {
-			_ = zw.Close()
-			return err
-		}
-		if _, err := fw.Write(files[filename]); err != nil {
-			_ = zw.Close()
-			return err
-		}
-	}
-	return zw.Close()
+type exchangeStringDocument struct {
+	Format      string          `json:"format"`
+	Version     int             `json:"version"`
+	MapGen      json.RawMessage `json:"mapGen"`
+	MapSettings json.RawMessage `json:"mapSettings"`
 }
 
-func downloadZipFilename(profileName string) string {
-	base := strings.TrimSpace(profileName)
-	var b strings.Builder
-	for _, r := range base {
-		switch {
-		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-		case r == '.', r == '_', r == '-':
-			b.WriteRune(r)
-		case r == ' ':
-			b.WriteByte('-')
-		}
+func encodeExchangeString(mapGen, mapSettings json.RawMessage) (string, error) {
+	payload := exchangeStringDocument{
+		Format:      "factmapgen-map-exchange",
+		Version:     1,
+		MapGen:      mapGen,
+		MapSettings: mapSettings,
 	}
-	if b.Len() == 0 {
-		b.WriteString("preset")
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
 	}
-	return fmt.Sprintf("%s-%s.zip", b.String(), time.Now().Format("0102-150405"))
+	var compressed bytes.Buffer
+	zw := zlib.NewWriter(&compressed)
+	if _, err := zw.Write(raw); err != nil {
+		_ = zw.Close()
+		return "", err
+	}
+	if err := zw.Close(); err != nil {
+		return "", err
+	}
+	return ">>>FMG" + base64.StdEncoding.EncodeToString(compressed.Bytes()) + "<<<", nil
+}
+
+func decodeExchangeString(value string) ([]byte, []byte, error) {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, ">>>")
+	value = strings.TrimSuffix(value, "<<<")
+	if !strings.HasPrefix(value, "FMG") {
+		return nil, nil, errors.New("exchange string must start with >>>FMG and end with <<<")
+	}
+	compressed, err := base64.StdEncoding.DecodeString(strings.TrimSpace(strings.TrimPrefix(value, "FMG")))
+	if err != nil {
+		return nil, nil, fmt.Errorf("exchange string is not valid base64: %w", err)
+	}
+	zr, err := zlib.NewReader(bytes.NewReader(compressed))
+	if err != nil {
+		return nil, nil, fmt.Errorf("exchange string is not zlib data: %w", err)
+	}
+	decompressed, err := io.ReadAll(io.LimitReader(zr, 4<<20))
+	closeErr := zr.Close()
+	if err != nil {
+		return nil, nil, err
+	}
+	if closeErr != nil {
+		return nil, nil, closeErr
+	}
+	var doc exchangeStringDocument
+	if err := decodeObject(decompressed, &doc); err != nil {
+		return nil, nil, fmt.Errorf("exchange string payload is invalid JSON: %w", err)
+	}
+	if doc.Format != "factmapgen-map-exchange" || doc.Version != 1 {
+		return nil, nil, errors.New("unsupported exchange string format")
+	}
+	mapGen, err := normalizeJSON(doc.MapGen)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s is invalid JSON: %w", mapGenFile, err)
+	}
+	mapSettings, err := normalizeJSON(doc.MapSettings)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s is invalid JSON: %w", mapSettingsFile, err)
+	}
+	return mapGen, mapSettings, nil
 }
 
 func (s *store) rootForSource(source string) string {
@@ -992,6 +1071,48 @@ func (s *store) seedDefaultProfiles() error {
 	return nil
 }
 
+func (p *previewer) defaultCachedPreview() (previewResponse, bool) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.defaultPreview == nil {
+		return previewResponse{}, false
+	}
+	return *p.defaultPreview, true
+}
+
+func (p *previewer) setDefaultCachedPreview(resp previewResponse) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.defaultPreview = &resp
+}
+
+func (s *server) warmDefaultPreview(ctx context.Context) {
+	if s.previewer == nil || s.previewer.factorioBinary() == "" {
+		return
+	}
+	ref := profileRef{Source: profileSourceDefault, Name: "Default"}
+	mapGenPath := absolutePath(filepath.Join(s.store.profileDir(ref), mapGenFile))
+	req := previewRequest{Size: defaultCachedPreviewSize, Planet: "nauvis", Zoom: "1"}
+	resp, err := s.previewer.render(ctx, ref, mapGenPath, req, true)
+	if err != nil {
+		log.Printf("Default preview cache warm failed: %v", err)
+		return
+	}
+	s.previewer.setDefaultCachedPreview(resp)
+	log.Printf("Default preview cache warmed: %s", resp.URL)
+}
+
+func previewRequestForUser(req previewRequest, user *authUser) previewRequest {
+	if user == nil {
+		req.Lossless = false
+		req.Zoom = "1"
+		if req.Size == 0 || req.Size > guestMaxPreviewSize {
+			req.Size = guestMaxPreviewSize
+		}
+	}
+	return req
+}
+
 func previewPriorityForUser(user *authUser) int {
 	if user == nil {
 		return previewPriorityGuest
@@ -1025,7 +1146,7 @@ func (s *server) renderPreviewNow(ctx context.Context, name string, req previewR
 		return previewResponse{}, err
 	}
 	defer cleanup()
-	return s.previewer.render(ctx, ref, mapGenPath, req)
+	return s.previewer.render(ctx, ref, mapGenPath, req, false)
 }
 
 func (s *server) previewMapGenPath(ref profileRef, req previewRequest) (string, func(), error) {
@@ -1080,7 +1201,7 @@ func (s *server) handlePreviewImage(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(img.data)
 }
 
-func (p *previewer) render(ctx context.Context, ref profileRef, mapGenPath string, req previewRequest) (previewResponse, error) {
+func (p *previewer) render(ctx context.Context, ref profileRef, mapGenPath string, req previewRequest, pinned bool) (previewResponse, error) {
 	factorioBin := p.factorioBinary()
 	if factorioBin == "" {
 		return previewResponse{}, errPreviewUnavailable
@@ -1158,7 +1279,12 @@ func (p *previewer) render(ctx context.Context, ref profileRef, mapGenPath strin
 	if err != nil {
 		return previewResponse{}, err
 	}
-	previewName, err := p.storePreviewImage(data, contentType, ext)
+	var previewName string
+	if pinned {
+		previewName, err = p.storePinnedPreviewImage(data, contentType, ext)
+	} else {
+		previewName, err = p.storePreviewImage(data, contentType, ext)
+	}
 	if err != nil {
 		return previewResponse{}, err
 	}
@@ -1351,6 +1477,14 @@ func integerZoomPreviewImage(src image.Image, outputSize int, factor int) image.
 }
 
 func (p *previewer) storePreviewImage(data []byte, contentType string, ext string) (string, error) {
+	return p.storePreviewImageWithOptions(data, contentType, ext, false)
+}
+
+func (p *previewer) storePinnedPreviewImage(data []byte, contentType string, ext string) (string, error) {
+	return p.storePreviewImageWithOptions(data, contentType, ext, true)
+}
+
+func (p *previewer) storePreviewImageWithOptions(data []byte, contentType string, ext string, pinned bool) (string, error) {
 	if ext != ".avif" && ext != ".jpg" && ext != ".png" {
 		return "", errors.New("invalid preview image extension")
 	}
@@ -1360,6 +1494,10 @@ func (p *previewer) storePreviewImage(data []byte, contentType string, ext strin
 	}
 	name := "preview-" + token + ext
 	now := time.Now().UTC()
+	expiresAt := now.Add(previewImageRetention)
+	if pinned {
+		expiresAt = time.Time{}
+	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -1367,13 +1505,13 @@ func (p *previewer) storePreviewImage(data []byte, contentType string, ext strin
 		p.images = map[string]previewImage{}
 	}
 	p.prunePreviewImagesLocked(now, maxPreviewImages-1)
-	p.images[name] = previewImage{data: data, contentType: contentType, createdAt: now, expiresAt: now.Add(previewImageRetention)}
+	p.images[name] = previewImage{data: data, contentType: contentType, createdAt: now, expiresAt: expiresAt, pinned: pinned}
 	return name, nil
 }
 
 func (p *previewer) prunePreviewImagesLocked(now time.Time, maxRemaining int) {
 	for key, image := range p.images {
-		if now.After(image.expiresAt) {
+		if !image.pinned && now.After(image.expiresAt) {
 			delete(p.images, key)
 		}
 	}
@@ -1381,6 +1519,9 @@ func (p *previewer) prunePreviewImagesLocked(now time.Time, maxRemaining int) {
 		var oldestKey string
 		var oldestTime time.Time
 		for key, image := range p.images {
+			if image.pinned {
+				continue
+			}
 			if oldestKey == "" || image.createdAt.Before(oldestTime) {
 				oldestKey = key
 				oldestTime = image.createdAt
@@ -1403,7 +1544,7 @@ func (p *previewer) getPreviewImage(name string) (previewImage, bool) {
 	if !ok {
 		return previewImage{}, false
 	}
-	if time.Now().UTC().After(img.expiresAt) {
+	if !img.pinned && time.Now().UTC().After(img.expiresAt) {
 		delete(p.images, name)
 		return previewImage{}, false
 	}

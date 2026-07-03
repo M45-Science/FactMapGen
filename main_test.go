@@ -267,6 +267,32 @@ func TestStoreDefaultProfilesAreReadOnly(t *testing.T) {
 	}
 }
 
+func TestPreviewRequestForUserLimitsGuestPreviewOptions(t *testing.T) {
+	guest := previewRequestForUser(previewRequest{Size: 4096, Zoom: "out-4", Lossless: true}, nil)
+	if guest.Lossless {
+		t.Fatal("guest preview retained lossless output")
+	}
+	if guest.Size != guestMaxPreviewSize {
+		t.Fatalf("guest preview size = %d, want %d", guest.Size, guestMaxPreviewSize)
+	}
+	if guest.Zoom != "1" {
+		t.Fatalf("guest preview zoom = %q, want normal", guest.Zoom)
+	}
+
+	defaultSizedGuest := previewRequestForUser(previewRequest{}, nil)
+	if defaultSizedGuest.Size != guestMaxPreviewSize {
+		t.Fatalf("default guest preview size = %d, want %d", defaultSizedGuest.Size, guestMaxPreviewSize)
+	}
+
+	signedIn := previewRequestForUser(previewRequest{Size: 4096, Zoom: "out-4", Lossless: true}, &authUser{ID: 1, Username: "user"})
+	if !signedIn.Lossless {
+		t.Fatal("signed-in preview lost lossless output")
+	}
+	if signedIn.Size != 4096 || signedIn.Zoom != "out-4" {
+		t.Fatalf("signed-in preview request = %#v, want unchanged", signedIn)
+	}
+}
+
 func TestPreviewZoomSpec(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -383,6 +409,28 @@ func TestPreviewImagesAreCapped(t *testing.T) {
 	}
 	if _, ok := preview.getPreviewImage(first); ok {
 		t.Fatal("oldest preview was retained after exceeding cap")
+	}
+}
+
+func TestPinnedPreviewImageSurvivesPrune(t *testing.T) {
+	preview := &previewer{}
+	pinnedName, err := preview.storePinnedPreviewImage([]byte("default"), "image/jpeg", ".jpg")
+	if err != nil {
+		t.Fatalf("storePinnedPreviewImage: %v", err)
+	}
+
+	for i := 0; i < maxPreviewImages+1; i++ {
+		if _, err := preview.storePreviewImage([]byte("jpg"), "image/jpeg", ".jpg"); err != nil {
+			t.Fatalf("storePreviewImage %d: %v", i, err)
+		}
+	}
+
+	img, ok := preview.getPreviewImage(pinnedName)
+	if !ok {
+		t.Fatal("pinned preview was pruned")
+	}
+	if got := string(img.data); got != "default" {
+		t.Fatalf("pinned preview body = %q, want default", got)
 	}
 }
 
