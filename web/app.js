@@ -1,7 +1,6 @@
 const state = {
   config: {
     presetDir: "presets",
-    previewDir: "previews",
     previewEnabled: false,
     factorio: {
       previewEnabled: false,
@@ -21,14 +20,14 @@ const state = {
 const defaultPreviewSize = 768;
 const minPreviewSize = 256;
 const maxPreviewSizePx = 4096;
-const safePreviewSizes = [256, 512, 768, 1024, 1536];
-const autoPreviewDelay = 900;
+const safePreviewSizes = [256, 512, 768, 1024, 1536, 2048, 3072, 4096];
 const maxPreviewSeed = 4294967295;
 const minAutoplaceFrequency = 0.1;
 
 let autoPreviewTimer = null;
 let autoPreviewPending = false;
 let previewInFlight = false;
+let previewImageLoadID = 0;
 let factorioUpdateNoticeShown = false;
 
 const resources = [
@@ -156,6 +155,8 @@ const els = {
   previewSize: $("#previewSize"),
   mapgenBody: $(".mapgen-body"),
   previewPlanet: $("#previewPlanet"),
+  previewZoom: $("#previewZoom"),
+  previewLossless: $("#previewLossless"),
   autoRefreshPreview: $("#autoRefreshPreview"),
   seedValue: $("#seedValue"),
   seedRandom: $("#seedRandom"),
@@ -231,17 +232,19 @@ async function init() {
   els.previewBtn.addEventListener("click", () => generatePreview());
   els.previewSize.addEventListener("change", () => {
     updatePreviewFrameSize();
-    scheduleAutoPreview(0);
+    scheduleAutoPreview();
   });
   window.addEventListener("resize", () => {
     const changed = updatePreviewFrameSize();
     if (changed && previewSizeIsAuto()) scheduleAutoPreview();
   });
   els.previewPlanet.addEventListener("change", () => scheduleAutoPreview());
+  els.previewZoom.addEventListener("change", () => scheduleAutoPreview());
+  els.previewLossless.addEventListener("change", () => scheduleAutoPreview());
   els.autoRefreshPreview.addEventListener("change", () => {
     renderPreviewButtonState();
     if (els.autoRefreshPreview.checked) {
-      scheduleAutoPreview(0);
+      scheduleAutoPreview();
     } else {
       cancelAutoPreview();
     }
@@ -691,7 +694,7 @@ async function loadProfile(name) {
     ensureRandomSeedDefault();
     state.dirty = false;
     renderAll();
-    scheduleAutoPreview(0);
+    scheduleAutoPreview();
   } catch (error) {
     showToast(error.message, true);
   }
@@ -760,7 +763,7 @@ async function saveCurrentProfile(silent) {
     if (!silent) await loadProfiles(true);
     if (!silent) showToast("Saved to server files.");
     if (!silent && els.autoRefreshPreview.checked && state.config.previewEnabled) {
-      scheduleAutoPreview(0);
+      scheduleAutoPreview();
     }
     return true;
   } catch (error) {
@@ -870,17 +873,16 @@ function cancelAutoPreview() {
   autoPreviewPending = false;
 }
 
-function scheduleAutoPreview(delay = autoPreviewDelay) {
+function scheduleAutoPreview() {
   if (!canAutoRefreshPreview()) return;
   if (previewInFlight) {
     autoPreviewPending = true;
+    setPreviewUpdating("Generating updated preview...");
     return;
   }
   window.clearTimeout(autoPreviewTimer);
-  autoPreviewTimer = window.setTimeout(() => {
-    autoPreviewTimer = null;
-    generatePreview({ automatic: true });
-  }, delay);
+  autoPreviewTimer = null;
+  generatePreview({ automatic: true });
 }
 
 async function generatePreview(options = {}) {
@@ -892,7 +894,10 @@ async function generatePreview(options = {}) {
     return false;
   }
   if (previewInFlight) {
-    if (automatic) autoPreviewPending = true;
+    if (automatic) {
+      autoPreviewPending = true;
+      setPreviewUpdating("Generating updated preview...");
+    }
     return false;
   }
   previewInFlight = true;
@@ -903,11 +908,10 @@ async function generatePreview(options = {}) {
     const planet = knownPlanetName(els.previewPlanet.value);
     updatePreviewFrameSize(size);
     els.previewBtn.disabled = true;
-    els.previewStatus.classList.remove("error");
-    els.previewStatus.textContent = "Generating preview...";
+    setPreviewUpdating("Generating preview...");
 
     const seed = previewSeedOverride();
-    const payload = { size, planet, mapGen: previewMapGenPayload() };
+    const payload = { size, planet, zoom: els.previewZoom.value, lossless: els.previewLossless.checked, mapGen: previewMapGenPayload() };
     if (seed) payload.seed = seed;
     const body = await api(`/api/profiles/${encodeURIComponent(previewProfile)}/preview`, {
       method: "POST",
@@ -916,10 +920,9 @@ async function generatePreview(options = {}) {
     if (state.selected !== previewProfile) return true;
     updatePreviewFrameSize(body.size);
     showPreviewImage(body.url);
-    els.previewStatus.classList.remove("error");
-    els.previewStatus.textContent = "";
     if (!automatic) showToast("Preview generated.");
   } catch (error) {
+    clearPreviewUpdating();
     els.previewStatus.classList.add("error");
     els.previewStatus.textContent = clippedClientMessage(error.message, 1200);
     if (!automatic) showToast("Preview failed.", true);
@@ -1082,6 +1085,8 @@ function setControlsEnabled(enabled) {
   renderPreviewButtonState();
   els.previewSize.disabled = !enabled || !state.config.previewEnabled;
   els.previewPlanet.disabled = !enabled || !state.config.previewEnabled;
+  els.previewZoom.disabled = !enabled || !state.config.previewEnabled;
+  els.previewLossless.disabled = !enabled || !state.config.previewEnabled;
 }
 
 function clearVisualControls() {
@@ -1315,7 +1320,7 @@ function rerollPreviewSeed() {
   state.previewSeeds[state.selected] = randomPreviewSeed();
   updateSeedToolbar();
   if (els.autoRefreshPreview.checked) {
-    scheduleAutoPreview(0);
+    scheduleAutoPreview();
   } else {
     els.previewStatus.classList.remove("error");
     els.previewStatus.textContent = "Preview seed changed; generate a preview to update the image.";
@@ -1377,7 +1382,7 @@ function renderPreview() {
   els.previewStatus.classList.remove("error");
   els.previewStatus.textContent = state.config.previewEnabled ? "" : "Preview binary unavailable.";
   updatePreviewFrameSize();
-  showPreviewImage(`/api/profiles/${encodeURIComponent(state.selected)}/preview.png?ts=${Date.now()}`);
+  hidePreview("No preview image");
 }
 
 function previewSizeIsAuto() {
@@ -1440,22 +1445,51 @@ function updatePreviewFrameSize(size = currentPreviewSize()) {
   return true;
 }
 
+function setPreviewUpdating(message) {
+  els.previewStatus.classList.remove("error");
+  els.previewStatus.textContent = message;
+  els.previewEmpty.style.display = "grid";
+  els.previewEmpty.textContent = message;
+  els.previewEmpty.classList.add("updating");
+  els.previewImage.classList.add("updating");
+}
+
+function clearPreviewUpdating() {
+  els.previewEmpty.classList.remove("updating");
+  els.previewImage.classList.remove("updating");
+  els.previewStatus.classList.remove("error");
+  els.previewStatus.textContent = "";
+}
+
 function showPreviewImage(url) {
+  const loadID = ++previewImageLoadID;
   els.previewImage.onload = () => {
+    if (loadID !== previewImageLoadID) return;
+    clearPreviewUpdating();
     els.previewEmpty.style.display = "none";
     els.previewImage.style.display = "block";
   };
-  els.previewImage.onerror = () => hidePreview(state.config.previewEnabled ? "No preview image" : "Preview binary unavailable");
-  els.previewImage.style.display = "none";
-  els.previewImage.removeAttribute("src");
+  els.previewImage.onerror = () => {
+    if (loadID !== previewImageLoadID) return;
+    hidePreview(state.config.previewEnabled ? "No preview image" : "Preview binary unavailable");
+  };
+  const hadImage = Boolean(els.previewImage.getAttribute("src"));
+  if (!hadImage) els.previewImage.style.display = "none";
+  els.previewStatus.classList.remove("error");
+  els.previewStatus.textContent = "Loading preview...";
   els.previewEmpty.style.display = "grid";
   els.previewEmpty.textContent = "Loading preview...";
+  els.previewEmpty.classList.add("updating");
+  els.previewImage.classList.toggle("updating", hadImage);
   els.previewImage.src = url;
 }
 
 function hidePreview(message) {
+  previewImageLoadID++;
   els.previewImage.removeAttribute("src");
+  els.previewImage.classList.remove("updating");
   els.previewImage.style.display = "none";
+  els.previewEmpty.classList.remove("updating");
   els.previewEmpty.style.display = "grid";
   els.previewEmpty.textContent = message;
 }
@@ -1776,7 +1810,7 @@ function addPresetSliderField(parent, labelText, root, path, min, max, step, pre
   const buttons = document.createElement("div");
   buttons.className = "preset-buttons";
 
-  const writeRaw = (nextRaw) => {
+  const writeRaw = (nextRaw, editOptions = {}) => {
     const rounded = normalizeStepValue(nextRaw, step);
     const display = displayValue(rounded);
     slider.value = display;
@@ -1785,11 +1819,12 @@ function addPresetSliderField(parent, labelText, root, path, min, max, step, pre
     for (const button of buttons.querySelectorAll("button")) {
       button.classList.toggle("active", sameNumericValue(button.dataset.value, rounded));
     }
-    afterVisualEdit();
+    afterVisualEdit(editOptions);
   };
-  const writeDisplay = (nextDisplay) => writeRaw(rawValue(nextDisplay));
+  const writeDisplay = (nextDisplay, editOptions = {}) => writeRaw(rawValue(nextDisplay), editOptions);
 
-  slider.addEventListener("input", () => writeDisplay(slider.value));
+  slider.addEventListener("input", () => writeDisplay(slider.value, { preview: false }));
+  slider.addEventListener("change", () => scheduleAutoPreview());
   number.addEventListener("input", () => writeDisplay(number.value));
   for (const preset of presets) {
     const button = document.createElement("button");
@@ -2125,16 +2160,17 @@ function addSliderField(parent, labelText, root, path, min, max, step, tooltip =
   number.value = String(value);
   if (tooltip) number.title = tooltip;
 
-  const sync = (source) => {
+  const sync = (source, editOptions = {}) => {
     const next = Math.min(max, Math.max(min, numericValue(source.value)));
     slider.value = String(next);
     number.value = String(next);
     if (options.beforeWrite) options.beforeWrite();
     setPath(root, path, next);
-    afterVisualEdit();
+    afterVisualEdit(editOptions);
   };
 
-  slider.addEventListener("input", () => sync(slider));
+  slider.addEventListener("input", () => sync(slider, { preview: false }));
+  slider.addEventListener("change", () => scheduleAutoPreview());
   number.addEventListener("input", () => sync(number));
   wrap.append(label, slider, number);
   parent.append(wrap);
@@ -2166,24 +2202,25 @@ function addExpressionSliderField(parent, labelText, root, path, min, max, step)
   number.value = String(fallback);
   if (tooltip) number.title = tooltip;
 
-  const sync = (source) => {
+  const sync = (source, editOptions = {}) => {
     const next = numericValue(source.value);
     slider.value = String(next);
     number.value = String(next);
     setPath(root, path, String(next));
-    afterVisualEdit();
+    afterVisualEdit(editOptions);
   };
 
-  slider.addEventListener("input", () => sync(slider));
+  slider.addEventListener("input", () => sync(slider, { preview: false }));
+  slider.addEventListener("change", () => scheduleAutoPreview());
   number.addEventListener("input", () => sync(number));
   wrap.append(label, slider, number);
   parent.append(wrap);
 }
 
-function afterVisualEdit() {
+function afterVisualEdit(options = {}) {
   state.dirty = true;
   renderHeader();
-  scheduleAutoPreview();
+  if (options.preview !== false) scheduleAutoPreview();
 }
 
 function numericValue(value) {

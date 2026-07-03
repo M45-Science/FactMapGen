@@ -6,13 +6,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/color"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidateProfileName(t *testing.T) {
@@ -263,6 +267,125 @@ func TestStoreDefaultProfilesAreReadOnly(t *testing.T) {
 	}
 }
 
+func TestPreviewZoomSpec(t *testing.T) {
+	tests := []struct {
+		name       string
+		zoom       string
+		outputSize int
+		wantMode   string
+		wantFactor int
+		wantRender int
+		wantErr    bool
+	}{
+		{name: "normal", zoom: "", outputSize: 1024, wantMode: "normal", wantFactor: 1, wantRender: 1024},
+		{name: "zoom out max", zoom: "out-4", outputSize: 4096, wantMode: "out", wantFactor: 4, wantRender: 16384},
+		{name: "zoom out too large", zoom: "out-4", outputSize: 4097, wantErr: true},
+		{name: "zoom in divisible", zoom: "in-3", outputSize: 768, wantMode: "in", wantFactor: 3, wantRender: 768},
+		{name: "zoom in not divisible", zoom: "in-3", outputSize: 1024, wantErr: true},
+		{name: "bad", zoom: "sideways-2", outputSize: 1024, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := previewZoomSpec(test.zoom, test.outputSize)
+			if test.wantErr {
+				if err == nil {
+					t.Fatalf("previewZoomSpec(%q, %d) succeeded: %#v", test.zoom, test.outputSize, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("previewZoomSpec(%q, %d): %v", test.zoom, test.outputSize, err)
+			}
+			if got.mode != test.wantMode || got.factor != test.wantFactor || got.renderSize != test.wantRender {
+				t.Fatalf("previewZoomSpec(%q, %d) = %#v, want mode=%s factor=%d render=%d", test.zoom, test.outputSize, got, test.wantMode, test.wantFactor, test.wantRender)
+			}
+		})
+	}
+}
+
+func TestEncodeAVIFImageWithFFmpeg(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	img := image.NewRGBA(image.Rect(0, 0, 8, 8))
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			img.Set(x, y, color.RGBA{R: uint8(x * 24), G: uint8(y * 24), B: 120, A: 255})
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	data, err := encodeAVIFImage(ctx, img)
+	if err != nil {
+		t.Fatalf("encodeAVIFImage: %v", err)
+	}
+	if len(data) < 16 || string(data[4:12]) != "ftypavif" {
+		t.Fatalf("encoded AVIF header = % x", data[:min(len(data), 16)])
+	}
+}
+
+func TestPreviewImagesRemainAvailableForSaving(t *testing.T) {
+	st := newTestStore(t)
+	srv := &server{
+		store:     st,
+		previewer: &previewer{},
+	}
+	name, err := srv.previewer.storePreviewImage([]byte("jpg"), "image/jpeg", ".jpg")
+	if err != nil {
+		t.Fatalf("storePreviewImage: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	srv.handlePreviewImage(rec, httptest.NewRequest(http.MethodGet, "/api/previews/"+name, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preview status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "image/jpeg" {
+		t.Fatalf("Content-Type = %q, want image/jpeg", got)
+	}
+	if got := rec.Header().Get("Content-Disposition"); got != `inline; filename="`+name+`"` {
+		t.Fatalf("Content-Disposition = %q, want inline filename", got)
+	}
+	if got := rec.Body.String(); got != "jpg" {
+		t.Fatalf("preview body = %q, want jpg", got)
+	}
+
+	again := httptest.NewRecorder()
+	srv.handlePreviewImage(again, httptest.NewRequest(http.MethodGet, "/api/previews/"+name, nil))
+	if again.Code != http.StatusOK {
+		t.Fatalf("second preview status = %d body=%s", again.Code, again.Body.String())
+	}
+	if got := again.Body.String(); got != "jpg" {
+		t.Fatalf("second preview body = %q, want jpg", got)
+	}
+
+	bad := httptest.NewRecorder()
+	srv.handlePreviewImage(bad, httptest.NewRequest(http.MethodGet, "/api/previews/preview-render_123.txt", nil))
+	if bad.Code != http.StatusNotFound {
+		t.Fatalf("bad preview filename status = %d body=%s", bad.Code, bad.Body.String())
+	}
+}
+
+func TestPreviewImagesAreCapped(t *testing.T) {
+	preview := &previewer{}
+	var first string
+	for i := 0; i < maxPreviewImages+1; i++ {
+		name, err := preview.storePreviewImage([]byte("jpg"), "image/jpeg", ".jpg")
+		if err != nil {
+			t.Fatalf("storePreviewImage %d: %v", i, err)
+		}
+		if i == 0 {
+			first = name
+		}
+	}
+	if got := len(preview.images); got != maxPreviewImages {
+		t.Fatalf("preview image count = %d, want %d", got, maxPreviewImages)
+	}
+	if _, ok := preview.getPreviewImage(first); ok {
+		t.Fatal("oldest preview was retained after exceeding cap")
+	}
+}
+
 func TestPreviewMapGenPathUsesTemporaryRequestJSON(t *testing.T) {
 	st := newTestStore(t)
 	doc, err := st.createProfile("PreviewTemp", "default")
@@ -271,10 +394,8 @@ func TestPreviewMapGenPathUsesTemporaryRequestJSON(t *testing.T) {
 	}
 
 	srv := &server{
-		store: st,
-		previewer: &previewer{
-			outputRoot: filepath.Join(t.TempDir(), "previews"),
-		},
+		store:     st,
+		previewer: &previewer{},
 	}
 	ref, err := st.resolveProfile(doc.ID)
 	if err != nil {
