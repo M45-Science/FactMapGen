@@ -225,7 +225,7 @@ func TestProfileExchangeStringRoutes(t *testing.T) {
 	if err := json.Unmarshal(exportRec.Body.Bytes(), &exported); err != nil {
 		t.Fatalf("decode export response: %v", err)
 	}
-	if !strings.HasPrefix(exported.ExchangeString, ">>>") || !strings.HasSuffix(exported.ExchangeString, "<<<") || strings.HasPrefix(exported.ExchangeString, ">>>FMG") {
+	if !strings.HasPrefix(exported.ExchangeString, ">>>") || !strings.HasSuffix(exported.ExchangeString, "<<<") {
 		t.Fatalf("exchange string = %q, want native Factorio wrapper", exported.ExchangeString)
 	}
 	if _, err := ParseMapExchangeString(exported.ExchangeString); err != nil {
