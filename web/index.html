@@ -116,6 +116,7 @@
               <div class="mapgen-editor-actions">
                 <button id="duplicateBtn" type="button">Duplicate</button>
                 <button id="downloadBtn" type="button">Export string</button>
+                <button id="downloadZipBtn" type="button">Download zip</button>
                 <button id="deleteBtn" type="button" class="danger">Delete</button>
                 <button id="saveBtn" type="button" class="primary">Save</button>
               </div>
@@ -193,6 +194,22 @@
           <button type="submit" class="primary">Import</button>
         </div>
       </form>
+    </div>
+
+    <div id="exportStringDialog" class="modal-overlay" hidden>
+      <section class="modal-dialog export-dialog" aria-label="Export exchange string">
+        <div class="modal-header">
+          <h2>Export string</h2>
+          <button id="closeExportStringBtn" type="button" class="small-button">Close</button>
+        </div>
+        <label>
+          Exchange string
+          <textarea id="exportStringOutput" spellcheck="false" rows="8" readonly></textarea>
+        </label>
+        <div class="modal-actions">
+          <button id="copyExportStringBtn" type="button" class="primary">Copy</button>
+        </div>
+      </section>
     </div>
 
     <div id="createPresetDialog" class="modal-overlay" hidden>

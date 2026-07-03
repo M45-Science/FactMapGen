@@ -195,6 +195,70 @@ func TestStoreCreateReadAndSave(t *testing.T) {
 	}
 }
 
+func TestProfileExchangeStringRoutes(t *testing.T) {
+	st := newTestStore(t)
+	if _, err := st.createProfile("Source", "default"); err != nil {
+		t.Fatalf("create source profile: %v", err)
+	}
+	srv := &server{store: st}
+
+	exportRec := httptest.NewRecorder()
+	srv.handleProfile(exportRec, httptest.NewRequest(http.MethodGet, "/api/profiles/Source/exchange-string", nil))
+	if exportRec.Code != http.StatusOK {
+		t.Fatalf("export exchange status = %d body=%s", exportRec.Code, exportRec.Body.String())
+	}
+	var exported exchangeStringResponse
+	if err := json.Unmarshal(exportRec.Body.Bytes(), &exported); err != nil {
+		t.Fatalf("decode export response: %v", err)
+	}
+	if !strings.HasPrefix(exported.ExchangeString, ">>>FMG") {
+		t.Fatalf("exchange string = %q, want >>>FMG prefix", exported.ExchangeString)
+	}
+
+	postRec := httptest.NewRecorder()
+	postReq := httptest.NewRequest(http.MethodPost, "/api/profiles/Source/exchange-string", strings.NewReader(`{"mapGen":{"width":77},"mapSettings":{"pollution":{"enabled":false}}}`))
+	srv.handleProfile(postRec, postReq)
+	if postRec.Code != http.StatusOK {
+		t.Fatalf("export posted exchange status = %d body=%s", postRec.Code, postRec.Body.String())
+	}
+	var posted exchangeStringResponse
+	if err := json.Unmarshal(postRec.Body.Bytes(), &posted); err != nil {
+		t.Fatalf("decode posted export response: %v", err)
+	}
+	mapGen, mapSettings, err := decodeExchangeString(posted.ExchangeString)
+	if err != nil {
+		t.Fatalf("decode posted exchange string: %v", err)
+	}
+	if !bytes.Contains(mapGen, []byte(`"width": 77`)) || !bytes.Contains(mapSettings, []byte(`"enabled": false`)) {
+		t.Fatalf("posted exchange did not include current settings: mapGen=%s mapSettings=%s", mapGen, mapSettings)
+	}
+
+	auth, password := newTestAuthStore(t)
+	srv.auth = auth
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/session", strings.NewReader(`{"username":"admin","password":"`+password+`"}`))
+	login := httptest.NewRecorder()
+	srv.handleSession(login, loginReq)
+	if login.Code != http.StatusOK {
+		t.Fatalf("login status = %d body=%s", login.Code, login.Body.String())
+	}
+	cookies := login.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("login did not set a cookie")
+	}
+
+	importBody, _ := json.Marshal(importExchangeStringRequest{Name: "Imported", ExchangeString: exported.ExchangeString})
+	importReq := httptest.NewRequest(http.MethodPost, "/api/profiles/import-exchange", bytes.NewReader(importBody))
+	importReq.AddCookie(cookies[0])
+	importRec := httptest.NewRecorder()
+	srv.handleProfile(importRec, importReq)
+	if importRec.Code != http.StatusCreated {
+		t.Fatalf("import exchange status = %d body=%s", importRec.Code, importRec.Body.String())
+	}
+	if _, err := st.readProfile("Imported"); err != nil {
+		t.Fatalf("read imported profile: %v", err)
+	}
+}
+
 func TestStoreWritesProfileZip(t *testing.T) {
 	st := newTestStore(t)
 	if _, err := st.createProfile("Peaceful", "peaceful-rich"); err != nil {

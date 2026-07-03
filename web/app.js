@@ -151,7 +151,19 @@ const els = {
   duplicateBtn: $("#duplicateBtn"),
   deleteBtn: $("#deleteBtn"),
   downloadBtn: $("#downloadBtn"),
+  downloadZipBtn: $("#downloadZipBtn"),
   saveBtn: $("#saveBtn"),
+  openImportBtn: $("#openImportBtn"),
+  importPresetDialog: $("#importPresetDialog"),
+  importForm: $("#importForm"),
+  closeImportBtn: $("#closeImportBtn"),
+  cancelImportBtn: $("#cancelImportBtn"),
+  importProfileName: $("#importProfileName"),
+  exchangeStringInput: $("#exchangeStringInput"),
+  exportStringDialog: $("#exportStringDialog"),
+  closeExportStringBtn: $("#closeExportStringBtn"),
+  copyExportStringBtn: $("#copyExportStringBtn"),
+  exportStringOutput: $("#exportStringOutput"),
   previewBtn: $("#previewBtn"),
   previewSize: $("#previewSize"),
   mapgenBody: $(".mapgen-body"),
@@ -236,6 +248,18 @@ async function init() {
   els.refreshFactorioBtn.addEventListener("click", () => refreshFactorioStatus({ toast: true }));
   els.installFactorioBtn.addEventListener("click", installFactorio);
   els.openCreateBtn.addEventListener("click", openCreateDialog);
+  els.openImportBtn.addEventListener("click", openImportDialog);
+  els.closeImportBtn.addEventListener("click", closeImportDialog);
+  els.cancelImportBtn.addEventListener("click", closeImportDialog);
+  els.importForm.addEventListener("submit", importPreset);
+  els.importPresetDialog.addEventListener("click", (event) => {
+    if (event.target === els.importPresetDialog) closeImportDialog();
+  });
+  els.closeExportStringBtn.addEventListener("click", closeExportStringDialog);
+  els.copyExportStringBtn.addEventListener("click", copyExportString);
+  els.exportStringDialog.addEventListener("click", (event) => {
+    if (event.target === els.exportStringDialog) closeExportStringDialog();
+  });
   els.closeCreateBtn.addEventListener("click", closeCreateDialog);
   els.cancelCreateBtn.addEventListener("click", closeCreateDialog);
   els.createPresetDialog.addEventListener("click", (event) => {
@@ -244,11 +268,13 @@ async function init() {
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !els.createPresetDialog.hidden) closeCreateDialog();
     if (event.key === "Escape" && !els.importPresetDialog.hidden) closeImportDialog();
+    if (event.key === "Escape" && !els.exportStringDialog.hidden) closeExportStringDialog();
     if (event.key === "Escape" && !els.passwordDialog.hidden) closePasswordDialog();
   });
   els.createForm.addEventListener("submit", createProfile);
   els.profileSelect.addEventListener("change", () => loadProfile(els.profileSelect.value));
   els.saveBtn.addEventListener("click", saveProfile);
+  els.downloadZipBtn.addEventListener("click", downloadPresetZip);
   els.previewBtn.addEventListener("click", () => generatePreview());
   els.previewSize.addEventListener("change", () => {
     updatePreviewFrameSize();
@@ -472,6 +498,51 @@ function createPresetNamePrefix() {
 function closeCreateDialog() {
   els.createPresetDialog.hidden = true;
   els.createForm.reset();
+}
+
+function openImportDialog() {
+  if (!state.session) {
+    showLogin();
+    return;
+  }
+  els.importForm.reset();
+  els.importPresetDialog.hidden = false;
+  window.setTimeout(() => els.importProfileName.focus(), 0);
+}
+
+function closeImportDialog() {
+  els.importPresetDialog.hidden = true;
+  els.importForm.reset();
+}
+
+async function importPreset(event) {
+  event.preventDefault();
+  if (!state.session) {
+    showLogin();
+    return;
+  }
+  const name = els.importProfileName.value.trim();
+  const exchangeString = els.exchangeStringInput.value.trim();
+  if (!name || !exchangeString) {
+    showToast("Enter a preset name and exchange string.", true);
+    return;
+  }
+  try {
+    const body = await api("/api/profiles/import-exchange", {
+      method: "POST",
+      body: JSON.stringify({ name, exchangeString }),
+    });
+    state.selected = body.id || body.name;
+    state.mapGen = body.mapGen;
+    state.mapSettings = body.mapSettings;
+    ensureRandomSeedDefault();
+    state.dirty = false;
+    closeImportDialog();
+    await loadProfiles(true);
+    showToast("Preset imported.");
+  } catch (error) {
+    showToast(error.message, true);
+  }
 }
 
 async function refreshAdminPanel() {
@@ -886,19 +957,37 @@ async function deleteProfile() {
 
 async function downloadPreset() {
   if (!state.selected) return;
+  ensureRandomSeedDefault();
+  try {
+    const path = "/api/profiles/" + encodeURIComponent(state.selected) + "/exchange-string";
+    const body = state.mapGen && state.mapSettings
+      ? await api(path, {
+          method: "POST",
+          body: JSON.stringify({ mapGen: state.mapGen, mapSettings: state.mapSettings }),
+        })
+      : await api(path);
+    showExportString(body.exchangeString);
+    await copyTextToClipboard(body.exchangeString);
+  } catch (error) {
+    showToast(error.message, true);
+  }
+}
+
+async function downloadPresetZip() {
+  if (!state.selected) return;
   if (!state.mapGen || !state.mapSettings) {
-    window.location.href = `/api/profiles/${encodeURIComponent(state.selected)}/download.zip`;
+    window.location.href = "/api/profiles/" + encodeURIComponent(state.selected) + "/download.zip";
     return;
   }
   ensureRandomSeedDefault();
   try {
-    const response = await fetch(`/api/profiles/${encodeURIComponent(state.selected)}/download.zip`, {
+    const response = await fetch("/api/profiles/" + encodeURIComponent(state.selected) + "/download.zip", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mapGen: state.mapGen, mapSettings: state.mapSettings }),
     });
     if (!response.ok) {
-      let message = `${response.status} ${response.statusText}`;
+      let message = response.status + " " + response.statusText;
       try {
         const body = await response.json();
         if (body.error) message = body.error;
@@ -911,7 +1000,7 @@ async function downloadPreset() {
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
     link.href = url;
-    link.download = downloadFilenameFromResponse(response) || `${selectedProfileName() || "preset"}.zip`;
+    link.download = downloadFilenameFromResponse(response) || ((selectedProfileName() || "preset") + ".zip");
     document.body.append(link);
     link.click();
     link.remove();
@@ -925,6 +1014,50 @@ function downloadFilenameFromResponse(response) {
   const header = response.headers.get("Content-Disposition") || "";
   const match = header.match(/filename="?([^";]+)"?/i);
   return match ? match[1] : "";
+}
+
+function showExportString(exchangeString) {
+  els.exportStringOutput.value = exchangeString;
+  els.exportStringDialog.hidden = false;
+  window.setTimeout(() => {
+    els.exportStringOutput.focus();
+    els.exportStringOutput.select();
+  }, 0);
+}
+
+function closeExportStringDialog() {
+  els.exportStringDialog.hidden = true;
+}
+
+async function copyExportString() {
+  const text = els.exportStringOutput.value;
+  if (!text) return;
+  try {
+    await copyTextToClipboard(text);
+    els.exportStringOutput.focus();
+    els.exportStringOutput.select();
+  } catch (error) {
+    showToast(error.message, true);
+  }
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast("Export string copied.");
+      return;
+    } catch {
+      // Fall through to the selected-text fallback.
+    }
+  }
+  els.exportStringOutput.focus();
+  els.exportStringOutput.select();
+  if (document.execCommand && document.execCommand("copy")) {
+    showToast("Export string copied.");
+    return;
+  }
+  showToast("Export string ready to copy.");
 }
 
 function canAutoRefreshPreview() {
@@ -1153,6 +1286,7 @@ function setControlsEnabled(enabled) {
   els.deleteBtn.disabled = !canEdit;
   els.duplicateBtn.disabled = !canDuplicate;
   els.downloadBtn.disabled = !enabled;
+  els.downloadZipBtn.disabled = !enabled;
   els.profileSelect.disabled = state.profiles.length === 0;
   els.seedRandom.disabled = !enabled;
   els.seedValue.disabled = !enabled || !state.mapGen;
