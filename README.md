@@ -23,9 +23,9 @@ go build -o factmapgen .
 
 ## Authentication
 
-All preset APIs require a logged-in user. Admin users can add, edit, and delete accounts from the Admin panel in the browser. Passwords are stored as PBKDF2-SHA256 hashes in SQLite, and sessions use HttpOnly cookies.
+Guests can browse presets, inspect settings, generate previews, and download preset ZIP files without logging in. Creating, saving, duplicating, and deleting presets require a logged-in user. Admin users can add, edit, and delete accounts from the Admin panel in the browser. Passwords are stored as PBKDF2-SHA256 hashes in SQLite, and sessions use HttpOnly cookies.
 
-Preset create, update, delete, duplicate, and preview actions write audit log entries with the acting user, action, target, detail, and timestamp. Account changes are audited too.
+Preset create, update, delete, and duplicate actions write audit log entries with the acting user, action, target, detail, and timestamp. Account changes are audited too.
 
 ## Server Files
 
@@ -38,7 +38,7 @@ presets/
     map-settings.json
 ```
 
-The UI focuses on the visual map generator. Keys not exposed visually are preserved when saving, as long as the preset already contains them.
+The UI focuses on the visual map generator. Frequently tuned settings use sliders, toggles, selects, and named per-setting presets for world size, terrain shape, cliffs, evolution, expansion, pollution, pathfinding pressure, and resources. New presets are created from a modal dialog so the main toolbar stays focused on editing. The built-in per-setting preset buttons are derived from Factorio's bundled `map-gen-presets.lua` and `autoplace-controls.lua` data where those values can be represented directly. Space Age-only autoplace controls are kept in a separate Space Age tab by planet, based on the installed `space-age/prototypes/autoplace-controls.lua` and planet map-gen data. Keys not exposed visually are preserved when saving, as long as the preset already contains them.
 
 In `map-gen-settings.json`, `seed: null` follows Factorio's public example file and is the default. It tells Factorio to choose a unique randomized map seed each time a new map is generated. The editor also treats older `seed: 0` presets as random. Use a positive seed value only when you want repeatable generation.
 
@@ -61,6 +61,10 @@ The server auto-discovers `tools/factorio/bin/x64/factorio`. You can also point 
 ```sh
 go run . -factorio-bin /opt/factorio/bin/x64/factorio
 ```
+
+The main web page shows the detected Factorio binary version and flags when the latest stable headless release is newer. Version and latest-release checks are cached by the server. Admin users can refresh Factorio status from the Admin panel and, when the active binary comes from `-factorio-dir`, delete that managed install and install a fresh stable headless copy. The preview surface selector offers the known Factorio planets: Nauvis plus the Space Age planets Vulcanus, Gleba, Fulgora, and Aquilo.
+
+Preview generation is queued server-side so only one Factorio process runs at a time. The queue defaults to 8 waiting jobs and can be changed with `-preview-queue`. Admin preview jobs are served before regular signed-in users, and signed-in users are served before guests; jobs with the same priority run in request order. If the queue is full, the preview request returns HTTP 429.
 
 Generated previews are stored under:
 
@@ -88,7 +92,6 @@ Built-in presets:
 - `cliffside-lakes`
 - `oil-baron`
 - `tiny-death-spiral`
-
 The bundled default templates are based on Wube's public `factorio-data` example JSON files. `map-gen-settings.example.json` keeps the public random seed form, `seed: null`.
 
 ## API
@@ -102,14 +105,16 @@ The bundled default templates are based on Wube's public `factorio-data` example
 - `PUT /api/users/{id}` admin only
 - `DELETE /api/users/{id}` admin only
 - `GET /api/audit?limit=200` admin only
-- `GET /api/profiles`
-- `POST /api/profiles` with `{ "name": "...", "preset": "default" }`
-- `GET /api/profiles/{name}`
-- `PUT /api/profiles/{name}` with `{ "mapGen": {...}, "mapSettings": {...} }`
-- `DELETE /api/profiles/{name}`
-- `POST /api/profiles/{name}/duplicate` with `{ "name": "copy name" }`
-- `GET /api/profiles/{name}/download.zip`
-- `POST /api/profiles/{name}/preview` with `{ "size": 768, "planet": "nauvis", "mapGen": {...} }`; `mapGen` is optional and lets the server preview unsaved edits from a temporary file
-- `GET /api/profiles/{name}/preview.png`
+- `GET /api/factorio` admin only; returns cached Factorio binary, version, latest stable release, and install status
+- `POST /api/factorio/install` admin only; deletes and reinstalls the managed `-factorio-dir` headless install
+- `GET /api/profiles`; public
+- `POST /api/profiles` with `{ "name": "...", "preset": "default" }`; login required
+- `GET /api/profiles/{name}`; public
+- `PUT /api/profiles/{name}` with `{ "mapGen": {...}, "mapSettings": {...} }`; login required
+- `DELETE /api/profiles/{name}`; login required
+- `POST /api/profiles/{name}/duplicate` with `{ "name": "copy name" }`; login required
+- `GET /api/profiles/{name}/download.zip`; public
+- `POST /api/profiles/{name}/preview` with `{ "size": 768, "planet": "nauvis", "mapGen": {...} }`; public and queued; `mapGen` is optional and lets the server preview unsaved edits from a temporary file
+- `GET /api/profiles/{name}/preview.png`; public
 
 Profile names may contain letters, numbers, spaces, dots, underscores, and hyphens.

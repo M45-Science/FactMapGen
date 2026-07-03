@@ -11,10 +11,14 @@
       <section id="visualPanel" class="panel active" aria-label="Map generator">
         <div class="mapgen-window">
           <div class="mapgen-titlebar">
-            <div class="mapgen-title">Map generator</div>
+            <div class="mapgen-title-group">
+              <div class="mapgen-title">Map generator</div>
+              <div id="factorioVersion" class="factorio-version">Factorio: checking...</div>
+            </div>
             <div class="session-bar">
               <div id="statusLine" class="mapgen-status">Loading session...</div>
               <span id="currentUser" class="current-user"></span>
+              <button id="loginBtn" type="button" class="small-button">Login</button>
               <button id="adminBtn" type="button" class="small-button">Admin</button>
               <button id="logoutBtn" type="button" class="small-button">Logout</button>
             </div>
@@ -26,33 +30,13 @@
               <div class="preset-box">
                 <select id="profileSelect" aria-label="Preset"></select>
               </div>
+              <button id="openCreateBtn" type="button">New preset</button>
             </div>
-
-            <form id="createForm" class="toolbar-group toolbar-create">
-              <span class="toolbar-label">New preset</span>
-              <input id="profileName" name="profileName" autocomplete="off" maxlength="64" placeholder="New preset name" />
-              <select id="presetSelect" name="presetSelect" aria-label="Template">
-                <option value="default">Default</option>
-                <option value="no-biters">No biters</option>
-                <option value="rail-world">Rail world</option>
-                <option value="death-world">Death world</option>
-                <option value="peaceful-rich">Peaceful rich</option>
-                <option value="island">Island</option>
-                <option value="ribbon-world">Ribbon world</option>
-                <option value="empty-sandbox">Empty sandbox</option>
-                <option value="marathon-frontier">Marathon frontier</option>
-                <option value="dense-forest">Dense forest</option>
-                <option value="desert-scarcity">Desert scarcity</option>
-                <option value="cliffside-lakes">Cliffside lakes</option>
-                <option value="oil-baron">Oil baron</option>
-                <option value="tiny-death-spiral">Tiny death spiral</option>
-              </select>
-              <button type="submit">Create</button>
-            </form>
 
             <div class="seed-box">
               <label for="seedValue">Seed</label>
-              <input id="seedValue" type="number" min="1" step="1" placeholder="Random" />
+              <input id="seedValue" type="number" min="1" step="1" placeholder="Random" title="Positive seeds are repeatable; leave random checked to save seed: null." />
+              <button id="seedRerollBtn" type="button" class="seed-reroll" title="Choose a new preview seed while keeping this preset saved as random.">New seed</button>
               <label class="check-field seed-random">
                 <input id="seedRandom" type="checkbox" checked />
                 <span>Random seed for each new map</span>
@@ -66,12 +50,13 @@
                 <button type="button" class="mapgen-subtab active" data-mapgen-tab="resources">Resources</button>
                 <button type="button" class="mapgen-subtab" data-mapgen-tab="terrain">Terrain</button>
                 <button type="button" class="mapgen-subtab" data-mapgen-tab="enemy">Enemy</button>
+                <button type="button" class="mapgen-subtab" data-mapgen-tab="spaceage">Space Age</button>
                 <button type="button" class="mapgen-subtab" data-mapgen-tab="advanced">Advanced</button>
               </div>
 
               <section id="resourcesSubpanel" class="mapgen-subpanel active">
                 <div class="table-caption">
-                  <span>Resource</span>
+                  <span>Autoplace</span>
                   <span>Frequency</span>
                   <span>Size</span>
                   <span>Richness</span>
@@ -95,6 +80,16 @@
                   <span></span>
                 </div>
                 <div class="field-grid factorio-field-grid" id="enemyControls"></div>
+              </section>
+
+              <section id="spaceageSubpanel" class="mapgen-subpanel">
+                <div class="table-caption">
+                  <span>Space Age autoplace</span>
+                  <span>Frequency</span>
+                  <span>Size</span>
+                  <span>Richness</span>
+                </div>
+                <div id="spaceAgeControls" class="space-age-controls"></div>
               </section>
 
               <section id="advancedSubpanel" class="mapgen-subpanel">
@@ -130,15 +125,22 @@
                   <input id="autoRefreshPreview" type="checkbox" checked />
                   <span>Auto-refresh</span>
                 </label>
-                <input id="previewPlanet" type="text" value="nauvis" title="Preview planet" aria-label="Preview planet" />
-                <select id="previewSize" title="Preview size" aria-label="Preview size">
+                <select id="previewPlanet" title="Preview surface. Space Age planets require a Space Age-capable Factorio install." aria-label="Preview surface">
+                  <option value="nauvis" selected>Nauvis</option>
+                  <option value="vulcanus">Vulcanus</option>
+                  <option value="gleba">Gleba</option>
+                  <option value="fulgora">Fulgora</option>
+                  <option value="aquilo">Aquilo</option>
+                </select>
+                <select id="previewSize" title="Preview PNG size in pixels. Auto uses the largest square that fits without scrollbars." aria-label="Preview size">
+                  <option value="auto" selected>Auto</option>
                   <option value="256">Tiny</option>
                   <option value="512">Small</option>
-                  <option value="768" selected>Normal</option>
+                  <option value="768">Normal</option>
                   <option value="1024">Large</option>
                   <option value="1536">Huge</option>
                 </select>
-                <button id="previewBtn" type="button" class="preview-button" title="Generate preview" aria-label="Generate preview">Preview</button>
+                <button id="previewBtn" type="button" class="preview-button" aria-label="Generate preview">Preview</button>
               </div>
               <div class="preview-frame">
                 <img id="previewImage" alt="Factorio map preview" />
@@ -151,6 +153,45 @@
       </section>
     </main>
 
+
+    <div id="createPresetDialog" class="modal-overlay" hidden>
+      <form id="createForm" class="modal-dialog create-dialog" aria-label="New preset">
+        <div class="modal-header">
+          <h2>New preset</h2>
+          <button id="closeCreateBtn" type="button" class="small-button">Close</button>
+        </div>
+        <label>
+          Preset name
+          <input id="profileName" name="profileName" autocomplete="off" maxlength="64" placeholder="New preset name" />
+        </label>
+        <label>
+          Template
+          <select id="presetSelect" name="presetSelect" aria-label="Template">
+            <optgroup label="Base presets">
+              <option value="default">Default</option>
+              <option value="no-biters">No biters</option>
+              <option value="rail-world">Rail world</option>
+              <option value="death-world">Death world</option>
+              <option value="peaceful-rich">Peaceful rich</option>
+              <option value="island">Island</option>
+              <option value="ribbon-world">Ribbon world</option>
+              <option value="empty-sandbox">Empty sandbox</option>
+              <option value="marathon-frontier">Marathon frontier</option>
+              <option value="dense-forest">Dense forest</option>
+              <option value="desert-scarcity">Desert scarcity</option>
+              <option value="cliffside-lakes">Cliffside lakes</option>
+              <option value="oil-baron">Oil baron</option>
+              <option value="tiny-death-spiral">Tiny death spiral</option>
+            </optgroup>
+          </select>
+        </label>
+        <div class="modal-actions">
+          <button id="cancelCreateBtn" type="button">Cancel</button>
+          <button type="submit" class="primary">Create</button>
+        </div>
+      </form>
+    </div>
+
     <div id="loginDialog" class="auth-overlay">
       <form id="loginForm" class="auth-dialog">
         <h1>FactMapGen</h1>
@@ -162,7 +203,10 @@
           Password
           <input id="loginPassword" type="password" autocomplete="current-password" required />
         </label>
-        <button type="submit" class="primary">Login</button>
+        <div class="auth-actions">
+          <button type="button" id="guestBtn">Continue as guest</button>
+          <button type="submit" class="primary">Login</button>
+        </div>
         <div id="loginError" class="form-error"></div>
       </form>
     </div>
@@ -173,6 +217,15 @@
           <h2>Admin</h2>
           <button id="closeAdminBtn" type="button" class="small-button">Close</button>
         </div>
+        <section class="admin-section factorio-admin-section" aria-label="Factorio install">
+          <h3>Factorio install</h3>
+          <div id="factorioAdminStatus" class="factorio-admin-status"></div>
+          <div class="admin-actions">
+            <button id="refreshFactorioBtn" type="button">Refresh status</button>
+            <button id="installFactorioBtn" type="button" class="danger">Delete and reinstall stable</button>
+          </div>
+        </section>
+        <h3>Accounts</h3>
         <form id="userCreateForm" class="admin-create">
           <input id="newUsername" placeholder="Username" autocomplete="off" />
           <input id="newPassword" type="password" placeholder="Password" autocomplete="new-password" />
@@ -188,7 +241,10 @@
       </section>
     </div>
 
-    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <div id="toast" class="toast" role="status" aria-live="polite">
+      <div id="toastMessage" class="toast-message"></div>
+      <button id="toastClose" type="button" class="toast-close" aria-label="Dismiss message">Dismiss</button>
+    </div>
     <script src="/app.js"></script>
   </body>
 </html>

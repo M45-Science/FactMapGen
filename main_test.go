@@ -3,11 +3,15 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -48,6 +52,105 @@ func newTestStore(t *testing.T) *store {
 		t.Fatalf("ensure store: %v", err)
 	}
 	return st
+}
+
+func TestGuestCanReadAndDownloadProfilesButNotMutate(t *testing.T) {
+	st := newTestStore(t)
+	if _, err := st.createProfile("Guest Copy", "default"); err != nil {
+		t.Fatalf("createProfile: %v", err)
+	}
+	srv := &server{store: st}
+
+	list := httptest.NewRecorder()
+	srv.handleProfiles(list, httptest.NewRequest(http.MethodGet, "/api/profiles", nil))
+	if list.Code != http.StatusOK {
+		t.Fatalf("guest list status = %d body=%s", list.Code, list.Body.String())
+	}
+
+	read := httptest.NewRecorder()
+	srv.handleProfile(read, httptest.NewRequest(http.MethodGet, "/api/profiles/default:Default", nil))
+	if read.Code != http.StatusOK {
+		t.Fatalf("guest read status = %d body=%s", read.Code, read.Body.String())
+	}
+	var doc profileDocument
+	if err := json.Unmarshal(read.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode profile: %v", err)
+	}
+	if doc.ID != "default:Default" || !doc.ReadOnly {
+		t.Fatalf("guest read doc id/readOnly = %q/%v, want default:Default/true", doc.ID, doc.ReadOnly)
+	}
+
+	download := httptest.NewRecorder()
+	srv.handleProfile(download, httptest.NewRequest(http.MethodGet, "/api/profiles/default:Default/download.zip", nil))
+	if download.Code != http.StatusOK {
+		t.Fatalf("guest download status = %d body=%s", download.Code, download.Body.String())
+	}
+	if got := download.Header().Get("Content-Type"); got != "application/zip" {
+		t.Fatalf("guest download Content-Type = %q, want application/zip", got)
+	}
+
+	create := httptest.NewRecorder()
+	srv.handleProfiles(create, httptest.NewRequest(http.MethodPost, "/api/profiles", strings.NewReader(`{"name":"Blocked","preset":"default"}`)))
+	if create.Code != http.StatusUnauthorized {
+		t.Fatalf("guest create status = %d body=%s", create.Code, create.Body.String())
+	}
+
+	update := httptest.NewRecorder()
+	srv.handleProfile(update, httptest.NewRequest(http.MethodPut, "/api/profiles/Guest%20Copy", strings.NewReader(`{"mapGen":{},"mapSettings":{}}`)))
+	if update.Code != http.StatusUnauthorized {
+		t.Fatalf("guest update status = %d body=%s", update.Code, update.Body.String())
+	}
+
+	duplicate := httptest.NewRecorder()
+	srv.handleProfile(duplicate, httptest.NewRequest(http.MethodPost, "/api/profiles/default:Default/duplicate", strings.NewReader(`{"name":"Blocked copy"}`)))
+	if duplicate.Code != http.StatusUnauthorized {
+		t.Fatalf("guest duplicate status = %d body=%s", duplicate.Code, duplicate.Body.String())
+	}
+}
+
+func TestDownloadZipCanUsePostedCurrentSettings(t *testing.T) {
+	st := newTestStore(t)
+	if _, err := st.createProfile("Guest Zip", "default"); err != nil {
+		t.Fatalf("createProfile: %v", err)
+	}
+	srv := &server{store: st}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/profiles/Guest%20Zip/download.zip", strings.NewReader(`{"mapGen":{"width":321,"height":654},"mapSettings":{"pollution":{"enabled":false}}}`))
+	rec := httptest.NewRecorder()
+	srv.handleProfile(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("download current settings status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/zip" {
+		t.Fatalf("Content-Type = %q, want application/zip", got)
+	}
+	if got := rec.Header().Get("Content-Disposition"); !strings.Contains(got, "Guest-Zip-") || !strings.HasSuffix(got, `.zip"`) {
+		t.Fatalf("Content-Disposition = %q, want timestamped Guest-Zip filename", got)
+	}
+
+	zr, err := zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))
+	if err != nil {
+		t.Fatalf("read zip: %v", err)
+	}
+	files := map[string]string{}
+	for _, file := range zr.File {
+		rc, err := file.Open()
+		if err != nil {
+			t.Fatalf("open zip file %s: %v", file.Name, err)
+		}
+		body, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			t.Fatalf("read zip file %s: %v", file.Name, err)
+		}
+		files[file.Name] = string(body)
+	}
+	if !strings.Contains(files[mapGenFile], `"width": 321`) || !strings.Contains(files[mapGenFile], `"height": 654`) {
+		t.Fatalf("map-gen zip entry did not use posted settings: %s", files[mapGenFile])
+	}
+	if !strings.Contains(files[mapSettingsFile], `"enabled": false`) {
+		t.Fatalf("map-settings zip entry did not use posted settings: %s", files[mapSettingsFile])
+	}
 }
 
 func TestStoreCreateReadAndSave(t *testing.T) {
@@ -178,7 +281,7 @@ func TestPreviewMapGenPathUsesTemporaryRequestJSON(t *testing.T) {
 		t.Fatalf("resolveProfile: %v", err)
 	}
 	mapGenPath, cleanup, err := srv.previewMapGenPath(ref, previewRequest{
-		MapGen: json.RawMessage(`{"width": 123, "height": 456}`),
+		MapGen: json.RawMessage(`{"width": 123, "height": 456, "autoplace_controls": {"coal": {"frequency": 0, "size": 1, "richness": 1}}}`),
 	})
 	if err != nil {
 		t.Fatalf("previewMapGenPath: %v", err)
@@ -191,6 +294,9 @@ func TestPreviewMapGenPathUsesTemporaryRequestJSON(t *testing.T) {
 	}
 	if !bytes.Contains(body, []byte(`"width": 123`)) {
 		t.Fatalf("temp map-gen did not contain request JSON: %s", body)
+	}
+	if !bytes.Contains(body, []byte(`"frequency": 0.1`)) {
+		t.Fatalf("temp map-gen did not sanitize zero resource frequency: %s", body)
 	}
 
 	saved, err := os.ReadFile(filepath.Join(st.customRoot, "PreviewTemp", mapGenFile))
@@ -393,5 +499,92 @@ func TestFactorioRootFromBin(t *testing.T) {
 
 	if got := factorioRootFromBin("/usr/local/bin/factorio"); got != "" {
 		t.Fatalf("factorioRootFromBin for path install returned %q, want empty", got)
+	}
+}
+
+func TestParseFactorioVersionOutput(t *testing.T) {
+	version, err := parseFactorioVersionOutput("Version: 2.0.72 (build 81234, linux64, headless)\n")
+	if err != nil {
+		t.Fatalf("parseFactorioVersionOutput: %v", err)
+	}
+	if version != "2.0.72" {
+		t.Fatalf("version = %q, want 2.0.72", version)
+	}
+
+	if _, err := parseFactorioVersionOutput("hello\n"); err == nil {
+		t.Fatal("parseFactorioVersionOutput accepted output without a version")
+	}
+}
+
+func TestFactorioVersionNewer(t *testing.T) {
+	tests := []struct {
+		candidate string
+		current   string
+		want      bool
+	}{
+		{"2.0.73", "2.0.72", true},
+		{"2.1.0", "2.0.99", true},
+		{"3.0.0", "2.99.99", true},
+		{"2.0.72", "2.0.72", false},
+		{"2.0.71", "2.0.72", false},
+		{"bad", "2.0.72", false},
+	}
+	for _, test := range tests {
+		if got := factorioVersionNewer(test.candidate, test.current); got != test.want {
+			t.Fatalf("factorioVersionNewer(%q, %q) = %v, want %v", test.candidate, test.current, got, test.want)
+		}
+	}
+}
+
+func TestFactorioStatusCachesVersionAndChecksLatest(t *testing.T) {
+	root := t.TempDir()
+	installDir := filepath.Join(root, "factorio")
+	bin := filepath.Join(installDir, "bin", "x64", "factorio")
+	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	counterPath := filepath.Join(installDir, "version-count")
+	script := "#!/bin/sh\ncount=$(cat version-count 2>/dev/null || echo 0)\ncount=$((count + 1))\necho $count > version-count\necho 'Version: 2.0.70 (build 81234, linux64, headless)'\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake factorio: %v", err)
+	}
+
+	latest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"stable":{"headless":"2.0.72"}}`))
+	}))
+	defer latest.Close()
+
+	preview := &previewer{factorioBin: bin}
+	manager := newFactorioManager(installDir, preview, true)
+	manager.latestURL = latest.URL
+
+	first := manager.status(context.Background(), true)
+	if first.Version != "2.0.70" || first.LatestVersion != "2.0.72" || !first.UpdateAvailable {
+		t.Fatalf("first status = %#v, want current 2.0.70 with 2.0.72 update", first)
+	}
+	second := manager.status(context.Background(), true)
+	if second.Version != "2.0.70" || !second.UpdateAvailable {
+		t.Fatalf("second status = %#v, want cached current version with update", second)
+	}
+
+	counter, err := os.ReadFile(counterPath)
+	if err != nil {
+		t.Fatalf("read counter: %v", err)
+	}
+	if got := strings.TrimSpace(string(counter)); got != "1" {
+		t.Fatalf("factorio --version runs = %s, want 1", got)
+	}
+}
+
+func TestFactorioInstallManagedDetection(t *testing.T) {
+	if !factorioInstallIsManaged("/opt/factorio", "/opt/factorio/bin/x64/factorio") {
+		t.Fatal("expected bin under factorio dir to be managed")
+	}
+	if factorioInstallIsManaged("/opt/factorio", "/usr/local/bin/factorio") {
+		t.Fatal("expected PATH-style factorio binary to be unmanaged")
+	}
+	if !factorioInstallIsManaged("tools/factorio", "") {
+		t.Fatal("expected empty binary with configured factorio dir to be installable")
 	}
 }

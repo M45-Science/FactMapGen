@@ -14,6 +14,9 @@
   --accent-strong: #ffc24f;
   --danger: #ff7468;
   --danger-soft: rgba(255, 116, 104, 0.14);
+  --editor-min-width: 400px;
+  --editor-max-width: 860px;
+  --preview-column-min: 430px;
   --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.1), inset 0 -1px 0 rgba(0, 0, 0, 0.5);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
@@ -149,12 +152,43 @@ input[type="range"] {
     repeating-linear-gradient(90deg, #3c3d3a 0, #3c3d3a 2px, #30312f 2px, #30312f 5px);
 }
 
+.mapgen-title-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
 .mapgen-title {
-  padding: 0 12px;
+  padding: 0 0 0 12px;
   color: var(--text);
   font-size: 18px;
   font-weight: 900;
   text-shadow: 0 1px 0 #000;
+  white-space: nowrap;
+}
+
+.factorio-version {
+  overflow: hidden;
+  max-width: min(420px, 42vw);
+  padding: 3px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.factorio-version.update {
+  border-color: rgba(255, 194, 79, 0.46);
+  color: var(--accent-strong);
+}
+
+.factorio-version.error {
+  border-color: rgba(255, 116, 104, 0.38);
+  color: #ffb8af;
 }
 
 .mapgen-status {
@@ -168,8 +202,9 @@ input[type="range"] {
 
 .mapgen-toolbar {
   display: grid;
-  grid-template-columns: minmax(240px, 320px) minmax(380px, 1fr) minmax(300px, auto);
+  grid-template-columns: minmax(360px, 780px) minmax(300px, max-content);
   align-items: center;
+  justify-content: start;
   gap: 6px;
   padding: 4px 6px;
   border-bottom: 2px solid var(--line);
@@ -194,9 +229,10 @@ input[type="range"] {
 
 .edit-preset-group {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
+  width: min(100%, 780px);
   min-width: 0;
   padding: 0 6px;
 }
@@ -219,23 +255,9 @@ input[type="range"] {
   color: var(--field-text);
 }
 
-.toolbar-create {
-  display: grid;
-  grid-template-columns: auto minmax(140px, 1fr) minmax(120px, 160px) auto;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  padding: 0 6px;
-}
-
-.toolbar-create button {
-  min-height: 28px;
-  background: linear-gradient(#ffc24f, #e38a1f);
-}
-
 .seed-box {
   display: grid;
-  grid-template-columns: auto minmax(92px, 150px) auto;
+  grid-template-columns: auto minmax(92px, 150px) auto auto;
   align-items: center;
   gap: 8px;
   padding: 0 8px;
@@ -246,6 +268,12 @@ input[type="range"] {
 .preview-tools .check-field span {
   color: var(--text);
   font-weight: 900;
+}
+
+.seed-reroll {
+  min-height: 28px;
+  padding: 0 8px;
+  white-space: nowrap;
 }
 
 .seed-random {
@@ -283,7 +311,9 @@ input[type="range"] {
 
 .mapgen-body {
   display: grid;
-  grid-template-columns: minmax(420px, 1fr) minmax(0, min(max(calc(var(--preview-size, 768px) + 16px), 430px), calc(100vw - 420px)));
+  grid-template-columns:
+    minmax(var(--editor-min-width), min(var(--editor-max-width), 42vw))
+    minmax(var(--preview-column-min), 1fr);
   min-height: 0;
 }
 
@@ -410,6 +440,15 @@ input[type="range"] {
   text-align: right;
 }
 
+.autoplace-grid .preset-field {
+  grid-template-columns: minmax(180px, 1.5fr) minmax(0, 3fr);
+  min-height: 54px;
+  padding: 8px 10px;
+  border: 1px solid #222;
+  border-top: 0;
+  background: #484a46;
+}
+
 .autoplace-row {
   display: grid;
   grid-template-columns: minmax(180px, 1.5fr) minmax(0, 3fr);
@@ -468,8 +507,13 @@ input[type="range"] {
 
 .factorio-control-stack .slider-field,
 .factorio-control-stack .field,
+.factorio-control-stack .preset-field,
+.factorio-control-stack .preset-slider-field,
 .factorio-field-grid .field,
-.factorio-field-grid .check-field {
+.factorio-field-grid .check-field,
+.factorio-field-grid .preset-field,
+.factorio-field-grid .preset-slider-field,
+.space-age-group .preset-field {
   min-height: 54px;
   margin: 0;
   padding: 8px 10px;
@@ -483,8 +527,125 @@ input[type="range"] {
 }
 
 .factorio-control-stack .field,
-.factorio-field-grid .field {
+.factorio-control-stack .preset-field,
+.factorio-control-stack .preset-slider-field,
+.factorio-field-grid .field,
+.factorio-field-grid .preset-field,
+.factorio-field-grid .preset-slider-field,
+.space-age-group .preset-field {
   grid-template-columns: minmax(180px, 1.5fr) minmax(120px, 1fr);
+}
+
+.space-age-controls {
+  display: grid;
+  gap: 12px;
+}
+
+.space-age-group {
+  display: grid;
+  gap: 0;
+  border-bottom: 1px solid #222;
+}
+
+.space-age-group-header {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid #222;
+  border-top: 0;
+  background: #3d3f3b;
+}
+
+.space-age-group-header h3 {
+  margin: 0;
+  color: #ddd7c8;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.preset-field,
+.preset-slider-field {
+  display: grid;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.preset-field > label,
+.preset-slider-field > label {
+  color: #ded4c2;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.preset-control {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.slider-input-row,
+.paired-inputs {
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) 82px;
+  gap: 8px;
+  min-width: 0;
+}
+
+.paired-inputs {
+  grid-template-columns: repeat(2, minmax(82px, 1fr));
+}
+
+.preset-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.tooltip-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tooltip-mark {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 50%;
+  color: var(--muted);
+  cursor: help;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.tooltip-mark:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
+
+.check-field .tooltip-mark,
+.resource-name .tooltip-mark {
+  margin-left: 2px;
+}
+
+.preset-button {
+  min-height: 24px;
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.preset-button.active {
+  background: linear-gradient(#ffc24f, #e38a1f);
+  color: #17100a;
 }
 
 .factorio-field-grid {
@@ -513,18 +674,18 @@ input[type="range"] {
   width: var(--preview-size, 768px);
   height: var(--preview-size, 768px);
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   background: #102326;
   box-shadow: 0 0 0 3px var(--line);
 }
 
 .preview-frame img {
   display: none;
-  width: auto;
-  height: auto;
+  width: 100%;
+  height: 100%;
   max-width: none;
   max-height: none;
-  object-fit: initial;
+  object-fit: fill;
 }
 
 .preview-empty {
@@ -560,9 +721,13 @@ input[type="range"] {
   position: fixed;
   right: 22px;
   bottom: 22px;
-  max-width: min(420px, calc(100vw - 44px));
-  padding: 12px 14px;
-  border: 1px solid var(--line-soft);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  max-width: min(520px, calc(100vw - 44px));
+  padding: 12px 12px 12px 14px;
+  border: 2px solid var(--line-soft);
   border-radius: 4px;
   background: #20241d;
   color: var(--text);
@@ -576,12 +741,34 @@ input[type="range"] {
 .toast.show {
   opacity: 1;
   transform: translateY(0);
+  pointer-events: auto;
 }
 
 .toast.error {
-  border-color: rgba(255, 116, 104, 0.55);
-  background: #261715;
-  color: #ffb8af;
+  border-color: #ff2f2f;
+  background: #2b0f0d;
+  color: #ffd3cf;
+  box-shadow: 0 0 0 2px rgba(255, 47, 47, 0.32), 0 18px 42px rgba(0, 0, 0, 0.42);
+}
+
+.toast-message {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.toast-close {
+  min-height: 28px;
+  padding: 0 8px;
+  border-color: rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  white-space: nowrap;
+}
+
+.toast.error .toast-close {
+  border-color: rgba(255, 211, 207, 0.55);
+  background: rgba(255, 47, 47, 0.18);
 }
 
 @media (max-width: 1180px) {
@@ -598,10 +785,6 @@ input[type="range"] {
 
   .mapgen-toolbar {
     grid-template-columns: minmax(0, 1fr) minmax(300px, auto);
-  }
-
-  .toolbar-create {
-    grid-column: 1 / -1;
   }
 
   .mapgen-editor-actions {
@@ -633,21 +816,43 @@ input[type="range"] {
     padding: 6px 0;
   }
 
+  .mapgen-title-group {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+    width: 100%;
+  }
+
+  .factorio-version {
+    max-width: calc(100vw - 24px);
+    margin-left: 12px;
+  }
+
   .mapgen-toolbar,
   .edit-preset-group,
-  .toolbar-create,
   .seed-box,
   .preview-tools,
   .table-caption,
   #terrainSubpanel .table-caption,
   #enemySubpanel .table-caption,
   #advancedSubpanel .table-caption,
+  .autoplace-grid .preset-field,
   .autoplace-row,
   .resource-controls,
   .resource-controls .slider-field,
   .factorio-control-stack .slider-field,
   .factorio-control-stack .field,
-  .factorio-field-grid .field {
+  .factorio-control-stack .preset-field,
+  .factorio-control-stack .preset-slider-field,
+  .factorio-field-grid .field,
+  .factorio-field-grid .preset-field,
+  .factorio-field-grid .preset-slider-field,
+  .space-age-group .preset-field {
+    grid-template-columns: 1fr;
+  }
+
+  .slider-input-row,
+  .paired-inputs {
     grid-template-columns: 1fr;
   }
 
@@ -692,7 +897,8 @@ input[type="range"] {
 }
 
 .auth-overlay,
-.admin-overlay {
+.admin-overlay,
+.modal-overlay {
   position: fixed;
   inset: 0;
   z-index: 20;
@@ -703,32 +909,41 @@ input[type="range"] {
 }
 
 .auth-overlay.active,
-.admin-overlay:not([hidden]) {
+.admin-overlay:not([hidden]),
+.modal-overlay:not([hidden]) {
   display: grid;
 }
 
 .auth-dialog,
-.admin-dialog {
+.admin-dialog,
+.modal-dialog {
   width: min(100%, 420px);
   border: 2px solid var(--line);
   background: #33332f;
   box-shadow: 0 18px 52px rgba(0, 0, 0, 0.48);
 }
 
-.auth-dialog {
+.auth-dialog,
+.modal-dialog {
   display: grid;
   gap: 12px;
   padding: 18px;
 }
 
+.modal-dialog {
+  width: min(100%, 460px);
+}
+
 .auth-dialog h1,
 .admin-dialog h2,
-.admin-dialog h3 {
+.admin-dialog h3,
+.modal-dialog h2 {
   margin: 0;
   color: var(--text);
 }
 
-.auth-dialog label {
+.auth-dialog label,
+.modal-dialog label {
   display: grid;
   gap: 5px;
   color: var(--text);
@@ -742,6 +957,17 @@ input[type="range"] {
   font-size: 13px;
 }
 
+.auth-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.guest-user {
+  color: var(--muted);
+}
+
+
 .admin-dialog {
   display: grid;
   gap: 12px;
@@ -751,6 +977,8 @@ input[type="range"] {
   padding: 14px;
 }
 
+.modal-header,
+.modal-actions,
 .admin-header,
 .admin-create,
 .user-row {
@@ -759,8 +987,14 @@ input[type="range"] {
   gap: 8px;
 }
 
+.modal-header,
 .admin-header {
   grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.modal-actions {
+  grid-template-columns: minmax(0, 1fr) auto;
+  justify-items: end;
 }
 
 .admin-create {
@@ -768,6 +1002,50 @@ input[type="range"] {
   padding: 10px;
   border: 1px solid #222;
   background: #454743;
+}
+
+.admin-section {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #222;
+  background: #454743;
+}
+
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.factorio-admin-status {
+  display: grid;
+  gap: 4px;
+}
+
+.factorio-admin-line {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.factorio-admin-line span {
+  font-weight: 900;
+}
+
+.factorio-admin-line strong {
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+.factorio-admin-line.update strong {
+  color: var(--accent-strong);
+}
+
+.factorio-admin-line.error strong {
+  color: #ffb8af;
 }
 
 .admin-list,
@@ -801,8 +1079,11 @@ input[type="range"] {
 
 @media (max-width: 760px) {
   .session-bar,
+  .modal-header,
+  .modal-actions,
   .admin-create,
-  .user-row {
+  .user-row,
+  .factorio-admin-line {
     grid-template-columns: 1fr;
   }
 

@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -33,10 +34,12 @@ const (
 var embedded embed.FS
 
 type server struct {
-	store     *store
-	previewer *previewer
-	auth      *authStore
-	config    appConfig
+	store        *store
+	previewer    *previewer
+	previewQueue *previewQueue
+	auth         *authStore
+	factorio     *factorioManager
+	config       appConfig
 }
 
 type store struct {
@@ -45,18 +48,20 @@ type store struct {
 }
 
 type previewer struct {
+	mu          sync.RWMutex
 	factorioBin string
 	outputRoot  string
 	timeout     time.Duration
 }
 
 type appConfig struct {
-	PresetDir        string `json:"presetDir"`
-	DefaultPresetDir string `json:"defaultPresetDir"`
-	CustomPresetDir  string `json:"customPresetDir"`
-	PreviewDir       string `json:"previewDir"`
-	PreviewEnabled   bool   `json:"previewEnabled"`
-	FactorioBin      string `json:"factorioBin,omitempty"`
+	PresetDir        string         `json:"presetDir"`
+	DefaultPresetDir string         `json:"defaultPresetDir"`
+	CustomPresetDir  string         `json:"customPresetDir"`
+	PreviewDir       string         `json:"previewDir"`
+	PreviewEnabled   bool           `json:"previewEnabled"`
+	FactorioBin      string         `json:"factorioBin,omitempty"`
+	Factorio         factorioStatus `json:"factorio"`
 }
 
 type createProfileRequest struct {
@@ -65,6 +70,11 @@ type createProfileRequest struct {
 }
 
 type saveProfileRequest struct {
+	MapGen      json.RawMessage `json:"mapGen"`
+	MapSettings json.RawMessage `json:"mapSettings"`
+}
+
+type downloadProfileRequest struct {
 	MapGen      json.RawMessage `json:"mapGen"`
 	MapSettings json.RawMessage `json:"mapSettings"`
 }
@@ -144,6 +154,7 @@ func main() {
 	factorioBin := flag.String("factorio-bin", "", "optional path to a Factorio/headless binary for map previews")
 	factorioDir := flag.String("factorio-dir", "tools/factorio", "directory used to discover Factorio headless")
 	previewTimeout := flag.Duration("preview-timeout", 2*time.Minute, "maximum time allowed for one map preview render")
+	previewQueueSize := flag.Int("preview-queue", 8, "maximum number of queued map preview jobs")
 	authDB := flag.String("auth-db", "factmapgen-auth.db", "SQLite database path for users, sessions, and audit logs")
 	flag.Parse()
 
@@ -162,6 +173,9 @@ func main() {
 	st := &store{defaultRoot: defaultPresetDir, customRoot: customPresetDir}
 	if err := st.ensure(); err != nil {
 		log.Fatalf("prepare preset directories: %v", err)
+	}
+	if *previewQueueSize < 1 {
+		log.Fatalf("preview queue size must be at least 1")
 	}
 	if err := os.MkdirAll(*previewDir, 0o755); err != nil {
 		log.Fatalf("prepare preview directory: %v", err)
@@ -183,11 +197,14 @@ func main() {
 		outputRoot:  *previewDir,
 		timeout:     *previewTimeout,
 	}
+	factorio := newFactorioManager(*factorioDir, p, factorioInstallIsManaged(*factorioDir, *factorioBin))
 
 	srv := &server{
-		store:     st,
-		previewer: p,
-		auth:      auth,
+		store:        st,
+		previewer:    p,
+		previewQueue: newPreviewQueue(*previewQueueSize),
+		auth:         auth,
+		factorio:     factorio,
 		config: appConfig{
 			PresetDir:        customPresetDir,
 			DefaultPresetDir: defaultPresetDir,
@@ -203,6 +220,8 @@ func main() {
 	mux.HandleFunc("/api/users", srv.handleUsers)
 	mux.HandleFunc("/api/users/", srv.handleUser)
 	mux.HandleFunc("/api/audit", srv.handleAudit)
+	mux.HandleFunc("/api/factorio", srv.handleFactorio)
+	mux.HandleFunc("/api/factorio/install", srv.handleFactorioInstall)
 	mux.HandleFunc("/api/profiles", srv.handleProfiles)
 	mux.HandleFunc("/api/profiles/", srv.handleProfile)
 	mux.Handle("/", http.FileServer(http.FS(uiFS)))
@@ -319,15 +338,56 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.config)
+	cfg := s.config
+	if s.factorio != nil {
+		cfg.Factorio = s.factorio.status(r.Context(), true)
+		cfg.PreviewEnabled = cfg.Factorio.PreviewEnabled
+		cfg.FactorioBin = cfg.Factorio.Bin
+	} else if s.previewer != nil {
+		cfg.FactorioBin = s.previewer.factorioBinary()
+		cfg.PreviewEnabled = cfg.FactorioBin != ""
+	}
+	writeJSON(w, http.StatusOK, cfg)
 }
 
-func (s *server) handleProfiles(w http.ResponseWriter, r *http.Request) {
-	actor, ok := s.requireUser(w, r)
+func (s *server) handleFactorio(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	if s.factorio == nil {
+		writeError(w, http.StatusFailedDependency, "Factorio install manager is not configured")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.factorio.status(r.Context(), true))
+}
+
+func (s *server) handleFactorioInstall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	actor, ok := s.requireAdmin(w, r)
 	if !ok {
 		return
 	}
+	if s.factorio == nil {
+		writeError(w, http.StatusFailedDependency, "Factorio install manager is not configured")
+		return
+	}
+	status, err := s.factorio.installFresh(r.Context())
+	if err != nil {
+		writeFactorioError(w, err)
+		return
+	}
+	s.auth.logAudit(actor, "install", "factorio", status.Version, auditDetail(map[string]any{"latest": status.LatestVersion, "installDir": status.InstallDir}))
+	writeJSON(w, http.StatusOK, status)
+}
 
+func (s *server) handleProfiles(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		profiles, err := s.store.listProfiles()
@@ -337,6 +397,10 @@ func (s *server) handleProfiles(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"profiles": profiles})
 	case http.MethodPost:
+		actor, ok := s.requireUser(w, r)
+		if !ok {
+			return
+		}
 		var req createProfileRequest
 		if err := decodeJSONRequest(r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -368,38 +432,43 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	actor, ok := s.requireUser(w, r)
-	if !ok {
-		return
-	}
-
 	if len(parts) == 2 && parts[1] == "preview" {
 		if r.Method != http.MethodPost {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
+		user, _ := s.currentUser(r)
 		var req previewRequest
 		if err := decodeJSONRequest(r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		resp, err := s.renderPreview(r.Context(), name, req)
+		resp, err := s.renderPreview(r.Context(), name, req, previewPriorityForUser(user))
 		if err != nil {
 			writeStoreError(w, err)
 			return
 		}
-		s.auth.logAudit(actor, "preview", "profile", name, auditDetail(map[string]any{"size": resp.Size, "planet": resp.Planet}))
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 
 	if len(parts) == 2 && parts[1] == "download.zip" {
-		if r.Method != http.MethodGet {
+		switch r.Method {
+		case http.MethodGet:
+			if err := s.store.writeProfileZip(w, name); err != nil {
+				writeStoreError(w, err)
+			}
+		case http.MethodPost:
+			var req downloadProfileRequest
+			if err := decodeJSONRequest(r, &req); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			if err := s.store.writeProfileZipFromRequest(w, name, req); err != nil {
+				writeStoreError(w, err)
+			}
+		default:
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-			return
-		}
-		if err := s.store.writeProfileZip(w, name); err != nil {
-			writeStoreError(w, err)
 		}
 		return
 	}
@@ -418,6 +487,10 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 2 && parts[1] == "duplicate" {
 		if r.Method != http.MethodPost {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		actor, ok := s.requireUser(w, r)
+		if !ok {
 			return
 		}
 		var req duplicateProfileRequest
@@ -449,6 +522,10 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, doc)
 	case http.MethodPut:
+		actor, ok := s.requireUser(w, r)
+		if !ok {
+			return
+		}
 		var req saveProfileRequest
 		if err := decodeJSONRequest(r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -462,6 +539,10 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 		s.auth.logAudit(actor, "update", "profile", doc.ID, "saved map-gen-settings.json and map-settings.json")
 		writeJSON(w, http.StatusOK, doc)
 	case http.MethodDelete:
+		actor, ok := s.requireUser(w, r)
+		if !ok {
+			return
+		}
 		if err := s.store.deleteProfile(name); err != nil {
 			writeStoreError(w, err)
 			return
@@ -513,6 +594,8 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		status = http.StatusForbidden
 	case errors.Is(err, errPreviewUnavailable):
 		status = http.StatusFailedDependency
+	case errors.Is(err, errPreviewQueueFull):
+		status = http.StatusTooManyRequests
 	default:
 		status = http.StatusInternalServerError
 	}
@@ -718,27 +801,71 @@ func (s *store) writeProfileZip(w http.ResponseWriter, identifier string) error 
 		return err
 	}
 	dir := s.profileDir(ref)
-
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.zip"`, ref.Name))
-	zw := zip.NewWriter(w)
+	files := map[string][]byte{}
 	for _, filename := range []string{mapGenFile, mapSettingsFile} {
 		body, err := os.ReadFile(filepath.Join(dir, filename))
 		if err != nil {
-			_ = zw.Close()
 			return err
 		}
+		files[filename] = body
+	}
+	return writeZipFiles(w, ref.Name, files)
+}
+
+func (s *store) writeProfileZipFromRequest(w http.ResponseWriter, identifier string, req downloadProfileRequest) error {
+	ref, err := s.resolveProfile(identifier)
+	if err != nil {
+		return err
+	}
+	mapGen, err := normalizeJSON(req.MapGen)
+	if err != nil {
+		return fmt.Errorf("%s is invalid JSON: %w", mapGenFile, err)
+	}
+	mapSettings, err := normalizeJSON(req.MapSettings)
+	if err != nil {
+		return fmt.Errorf("%s is invalid JSON: %w", mapSettingsFile, err)
+	}
+	return writeZipFiles(w, ref.Name, map[string][]byte{
+		mapGenFile:      append(mapGen, '\n'),
+		mapSettingsFile: append(mapSettings, '\n'),
+	})
+}
+
+func writeZipFiles(w http.ResponseWriter, profileName string, files map[string][]byte) error {
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, downloadZipFilename(profileName)))
+	zw := zip.NewWriter(w)
+	for _, filename := range []string{mapGenFile, mapSettingsFile} {
 		fw, err := zw.Create(filename)
 		if err != nil {
 			_ = zw.Close()
 			return err
 		}
-		if _, err := fw.Write(body); err != nil {
+		if _, err := fw.Write(files[filename]); err != nil {
 			_ = zw.Close()
 			return err
 		}
 	}
 	return zw.Close()
+}
+
+func downloadZipFilename(profileName string) string {
+	base := strings.TrimSpace(profileName)
+	var b strings.Builder
+	for _, r := range base {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '.', r == '_', r == '-':
+			b.WriteRune(r)
+		case r == ' ':
+			b.WriteByte('-')
+		}
+	}
+	if b.Len() == 0 {
+		b.WriteString("preset")
+	}
+	return fmt.Sprintf("%s-%s.zip", b.String(), time.Now().Format("0102-150405"))
 }
 
 func (s *store) rootForSource(source string) string {
@@ -850,10 +977,30 @@ func (s *store) seedDefaultProfiles() error {
 	return nil
 }
 
-func (s *server) renderPreview(ctx context.Context, name string, req previewRequest) (previewResponse, error) {
-	if s.previewer == nil || s.previewer.factorioBin == "" {
+func previewPriorityForUser(user *authUser) int {
+	if user == nil {
+		return previewPriorityGuest
+	}
+	if user.IsAdmin {
+		return previewPriorityAdmin
+	}
+	return previewPriorityUser
+}
+
+func (s *server) renderPreview(ctx context.Context, name string, req previewRequest, priority int) (previewResponse, error) {
+	if s.previewer == nil || s.previewer.factorioBinary() == "" {
 		return previewResponse{}, errPreviewUnavailable
 	}
+	run := func(ctx context.Context) (previewResponse, error) {
+		return s.renderPreviewNow(ctx, name, req)
+	}
+	if s.previewQueue == nil {
+		return run(ctx)
+	}
+	return s.previewQueue.submit(ctx, priority, run)
+}
+
+func (s *server) renderPreviewNow(ctx context.Context, name string, req previewRequest) (previewResponse, error) {
 	ref, err := s.store.resolveProfile(name)
 	if err != nil {
 		return previewResponse{}, err
@@ -872,7 +1019,7 @@ func (s *server) previewMapGenPath(ref profileRef, req previewRequest) (string, 
 		return absolutePath(filepath.Join(s.store.profileDir(ref), mapGenFile)), cleanup, nil
 	}
 
-	normalized, err := normalizeJSON(req.MapGen)
+	normalized, err := normalizePreviewMapGen(req.MapGen)
 	if err != nil {
 		return "", cleanup, fmt.Errorf("%s is invalid JSON: %w", mapGenFile, err)
 	}
@@ -920,10 +1067,11 @@ func (s *server) servePreview(w http.ResponseWriter, r *http.Request, name strin
 }
 
 func (p *previewer) render(ctx context.Context, ref profileRef, mapGenPath string, req previewRequest) (previewResponse, error) {
-	if p.factorioBin == "" {
+	factorioBin := p.factorioBinary()
+	if factorioBin == "" {
 		return previewResponse{}, errPreviewUnavailable
 	}
-	if _, err := os.Stat(p.factorioBin); err != nil {
+	if _, err := os.Stat(factorioBin); err != nil {
 		return previewResponse{}, fmt.Errorf("%w: %s", errPreviewUnavailable, err)
 	}
 
@@ -943,15 +1091,29 @@ func (p *previewer) render(ctx context.Context, ref profileRef, mapGenPath strin
 	}
 
 	outPath := absolutePath(p.previewPath(ref))
-	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+	outDir := filepath.Dir(outPath)
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return previewResponse{}, err
 	}
+	tmp, err := os.CreateTemp(outDir, ".preview-*.png")
+	if err != nil {
+		return previewResponse{}, err
+	}
+	tmpPath := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return previewResponse{}, err
+	}
+	if err := os.Remove(tmpPath); err != nil {
+		return previewResponse{}, err
+	}
+	defer os.Remove(tmpPath)
 
 	runCtx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
 
 	args := []string{
-		"--generate-map-preview", outPath,
+		"--generate-map-preview", tmpPath,
 		"--map-gen-settings", mapGenPath,
 		"--map-preview-size", strconv.Itoa(size),
 		"--map-preview-planet", planet,
@@ -963,8 +1125,8 @@ func (p *previewer) render(ctx context.Context, ref profileRef, mapGenPath strin
 		args = append(args, "--map-gen-seed", seed)
 	}
 
-	cmd := exec.CommandContext(runCtx, p.factorioBin, args...)
-	if root := factorioRootFromBin(p.factorioBin); root != "" {
+	cmd := exec.CommandContext(runCtx, factorioBin, args...)
+	if root := factorioRootFromBin(factorioBin); root != "" {
 		cmd.Dir = root
 	}
 
@@ -978,6 +1140,10 @@ func (p *previewer) render(ctx context.Context, ref profileRef, mapGenPath strin
 		}
 		log.Printf("Factorio preview failed for %q: %v\n%s", ref.id(), err, clippedOutput(factorioOutput, 12000))
 		return previewResponse{}, fmt.Errorf("Factorio preview failed: %w: %s", err, factorioErrorSummary(factorioOutput))
+	}
+
+	if err := os.Rename(tmpPath, outPath); err != nil {
+		return previewResponse{}, err
 	}
 
 	generatedAt := time.Now().UTC().Format(time.RFC3339)
@@ -1231,6 +1397,50 @@ func applyNoBitersPreset(mapGen, mapSettings map[string]any) {
 	setAutoplace(mapGen, []string{"enemy-base"}, 0, 0, 0)
 	setNested(mapSettings, []string{"enemy_evolution", "enabled"}, false)
 	setNested(mapSettings, []string{"enemy_expansion", "enabled"}, false)
+}
+
+func normalizePreviewMapGen(raw json.RawMessage) ([]byte, error) {
+	normalized, err := normalizeJSON(raw)
+	if err != nil {
+		return nil, err
+	}
+	var mapGen map[string]any
+	if err := decodeObject(normalized, &mapGen); err != nil {
+		return nil, err
+	}
+	sanitizePreviewAutoplaceFrequencies(mapGen)
+	return json.MarshalIndent(mapGen, "", "  ")
+}
+
+func sanitizePreviewAutoplaceFrequencies(mapGen map[string]any) {
+	controls, ok := mapGen["autoplace_controls"].(map[string]any)
+	if !ok {
+		return
+	}
+	for _, rawControl := range controls {
+		control, ok := rawControl.(map[string]any)
+		if !ok {
+			continue
+		}
+		frequency, ok := jsonNumberFloat(control["frequency"])
+		if !ok || frequency <= 0 {
+			control["frequency"] = 0.1
+		}
+	}
+}
+
+func jsonNumberFloat(value any) (float64, bool) {
+	switch v := value.(type) {
+	case json.Number:
+		n, err := v.Float64()
+		return n, err == nil
+	case float64:
+		return v, true
+	case int:
+		return float64(v), true
+	default:
+		return 0, false
+	}
 }
 
 func decodeObject(raw []byte, out any) error {
