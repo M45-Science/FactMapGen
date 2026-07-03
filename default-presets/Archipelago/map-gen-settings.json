@@ -1,0 +1,96 @@
+{
+  "_comment_width+height": "Width and height of map, in tiles; 0 means infinite",
+  "_property_expression_names_comment": [
+    "Overrides for property value generators (map type)",
+    "Leave 'elevation' blank to get 'normal' terrain.",
+    "Use 'elevation': 'elevation_island' to get an island.",
+    "Moisture and terrain type are also controlled via this.",
+    "'control:moisture:frequency' is the inverse of the 'moisture scale' in the map generator GUI.",
+    "'control:moisture:bias' is the 'moisture bias' in the map generator GUI.",
+    "'control:aux:frequency' is the inverse of the 'terrain type scale' in the map generator GUI.",
+    "'control:aux:bias' is the 'terrain type bias' in the map generator GUI."
+  ],
+  "_seed_comment": "Use null for a random seed, number for a specific seed.",
+  "_starting_area_comment": "Multiplier for 'biter free zone radius'",
+  "autoplace_controls": {
+    "coal": {
+      "frequency": 0.75,
+      "richness": 1.7,
+      "size": 1.4
+    },
+    "copper-ore": {
+      "frequency": 0.75,
+      "richness": 1.7,
+      "size": 1.4
+    },
+    "crude-oil": {
+      "frequency": 0.75,
+      "richness": 1.7,
+      "size": 1.4
+    },
+    "enemy-base": {
+      "frequency": 1,
+      "size": 1
+    },
+    "iron-ore": {
+      "frequency": 0.75,
+      "richness": 1.7,
+      "size": 1.4
+    },
+    "stone": {
+      "frequency": 0.75,
+      "richness": 1.7,
+      "size": 1.4
+    },
+    "trees": {
+      "frequency": 0.7,
+      "size": 0.55
+    },
+    "uranium-ore": {
+      "frequency": 0.75,
+      "richness": 1.7,
+      "size": 1.4
+    },
+    "water": {
+      "frequency": 3.4,
+      "size": 1.6
+    }
+  },
+  "cliff_settings": {
+    "_cliff_elevation_0_comment": "Elevation of first row of cliffs",
+    "_cliff_elevation_interval_comment": [
+      "Elevation difference between successive rows of cliffs.",
+      "This is inversely proportional to 'frequency' in the map generation GUI. Specifically, when set from the GUI the value is 40 / frequency."
+    ],
+    "_name_comment": "Name of the cliff prototype",
+    "_richness_comment": "Called 'cliff continuity' in the map generator GUI. 0 will result in no cliffs, 10 will make all cliff rows completely solid",
+    "cliff_elevation_0": 10,
+    "cliff_elevation_interval": 40,
+    "cliff_smoothing": 1,
+    "name": "cliff",
+    "richness": 1.5
+  },
+  "height": 0,
+  "peaceful_mode": false,
+  "property_expression_names": {
+    "aux": "aux_basic",
+    "cliff_elevation": "cliff_elevation_from_elevation",
+    "cliffiness": "cliffiness_basic",
+    "control:aux:bias": "0",
+    "control:aux:frequency": "1",
+    "control:moisture:bias": "0.45",
+    "control:moisture:frequency": "1",
+    "elevation": "elevation_lakes",
+    "moisture": "moisture_basic",
+    "trees_forest_path_cutout": 1
+  },
+  "seed": null,
+  "starting_area": 1.5,
+  "starting_points": [
+    {
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "width": 0
+}

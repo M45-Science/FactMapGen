@@ -1668,6 +1668,9 @@ function addWorldSizeField(parent) {
     { label: "Compact", width: 512, height: 512, tooltip: "A small finite 512 by 512 tile map." },
     { label: "Standard", width: 1024, height: 1024, tooltip: "A finite 1024 by 1024 tile map." },
     { label: "Large", width: 2048, height: 2048, tooltip: "A finite 2048 by 2048 tile map." },
+    { label: "4K", width: 4096, height: 4096, tooltip: "A finite 4096 by 4096 tile map." },
+    { label: "8K", width: 8192, height: 8192, tooltip: "A finite 8192 by 8192 tile map." },
+    { label: "16K", width: 16384, height: 16384, tooltip: "A finite 16384 by 16384 tile map." },
     { label: "Ribbon", width: 0, height: 128, tooltip: "Factorio's Ribbon world height: infinite width and 128 tiles tall." },
   ];
   for (const preset of presets) {

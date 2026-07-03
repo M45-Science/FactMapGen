@@ -38,7 +38,7 @@ presets/
     map-settings.json
 ```
 
-The UI focuses on the visual map generator. Frequently tuned settings use sliders, toggles, selects, and named per-setting presets for world size, terrain shape, cliffs, evolution, expansion, pollution, pathfinding pressure, and resources. New presets are created from a modal dialog so the main toolbar stays focused on editing. The built-in per-setting preset buttons are derived from Factorio's bundled `map-gen-presets.lua` and `autoplace-controls.lua` data where those values can be represented directly. Space Age-only autoplace controls are kept in a separate Space Age tab by planet, based on the installed `space-age/prototypes/autoplace-controls.lua` and planet map-gen data. Keys not exposed visually are preserved when saving, as long as the preset already contains them.
+The UI focuses on the visual map generator. Frequently tuned settings use sliders, toggles, selects, and named per-setting presets for world size up to 16K, terrain shape, cliffs, evolution, expansion, pollution, pathfinding pressure, and resources. New presets are created from a modal dialog so the main toolbar stays focused on editing. The built-in per-setting preset buttons are derived from Factorio's bundled `map-gen-presets.lua` and `autoplace-controls.lua` data where those values can be represented directly. Space Age-only autoplace controls are kept in a separate Space Age tab by planet, based on the installed `space-age/prototypes/autoplace-controls.lua` and planet map-gen data. Keys not exposed visually are preserved when saving, as long as the preset already contains them.
 
 In `map-gen-settings.json`, `seed: null` follows Factorio's public example file and is the default. It tells Factorio to choose a unique randomized map seed each time a new map is generated. The editor also treats older `seed: 0` presets as random. Use a positive seed value only when you want repeatable generation.
 
@@ -76,7 +76,11 @@ Built-in presets:
 - `no-biters`
 - `rail-world`
 - `death-world`
+- `rich-resources`
+- `marathon`
+- `death-world-marathon`
 - `peaceful-rich`
+- `lakes`
 - `island`
 - `ribbon-world`
 - `empty-sandbox`
@@ -86,6 +90,16 @@ Built-in presets:
 - `cliffside-lakes`
 - `oil-baron`
 - `tiny-death-spiral`
+- `megabase-plain`
+- `waterworld`
+- `forest-deathworld`
+- `ore-patchwork`
+- `archipelago`
+- `fragmented-coast`
+- `hive-expansion`
+- `sparse-rich-desert`
+- `island-escape`
+
 The bundled default templates are based on Wube's public `factorio-data` example JSON files. `map-gen-settings.example.json` keeps the public random seed form, `seed: null`.
 
 ## API

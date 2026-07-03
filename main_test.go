@@ -612,6 +612,182 @@ func TestCoolPresetsHaveDistinctShape(t *testing.T) {
 	}
 }
 
+func TestBundledPresetProfilesGenerate(t *testing.T) {
+	seenNames := map[string]bool{}
+	seenKeys := map[string]bool{}
+	for _, preset := range bundledPresetProfiles {
+		if preset.Name == "" || preset.Key == "" {
+			t.Fatalf("bundled preset has empty name or key: %#v", preset)
+		}
+		if seenNames[preset.Name] {
+			t.Fatalf("duplicate bundled preset name %q", preset.Name)
+		}
+		if seenKeys[preset.Key] {
+			t.Fatalf("duplicate bundled preset key %q", preset.Key)
+		}
+		seenNames[preset.Name] = true
+		seenKeys[preset.Key] = true
+		if _, _, err := presetDocuments(preset.Key); err != nil {
+			t.Fatalf("presetDocuments(%q): %v", preset.Key, err)
+		}
+	}
+}
+
+func TestExpandedDefaultPresetsHaveDistinctShape(t *testing.T) {
+	tests := []struct {
+		preset string
+		check  func(t *testing.T, mapGen, mapSettings map[string]any)
+	}{
+		{"rich-resources", func(t *testing.T, mapGen, mapSettings map[string]any) {
+			iron := mapGen["autoplace_controls"].(map[string]any)["iron-ore"].(map[string]any)
+			if iron["richness"].(float64) < 3 {
+				t.Fatalf("iron richness = %#v, want rich resources", iron["richness"])
+			}
+		}},
+		{"marathon", func(t *testing.T, mapGen, mapSettings map[string]any) {
+			difficulty := mapSettings["difficulty_settings"].(map[string]any)
+			if difficulty["technology_price_multiplier"] != float64(4) {
+				t.Fatalf("technology multiplier = %#v, want 4", difficulty["technology_price_multiplier"])
+			}
+		}},
+		{"death-world-marathon", func(t *testing.T, mapGen, mapSettings map[string]any) {
+			if mapGen["starting_area"] != float64(0.5) {
+				t.Fatalf("starting area = %#v, want small", mapGen["starting_area"])
+			}
+			enemyBase := mapGen["autoplace_controls"].(map[string]any)["enemy-base"].(map[string]any)
+			if enemyBase["frequency"].(float64) < 3 || enemyBase["size"].(float64) < 3 {
+				t.Fatalf("enemy-base autoplace = %#v, want death marathon", enemyBase)
+			}
+			difficulty := mapSettings["difficulty_settings"].(map[string]any)
+			if difficulty["technology_price_multiplier"] != float64(4) {
+				t.Fatalf("technology multiplier = %#v, want 4", difficulty["technology_price_multiplier"])
+			}
+			pollution := mapSettings["pollution"].(map[string]any)
+			if pollution["enemy_attack_pollution_consumption_modifier"] != float64(0.8) {
+				t.Fatalf("attack pollution modifier = %#v, want 0.8", pollution["enemy_attack_pollution_consumption_modifier"])
+			}
+		}},
+		{"lakes", func(t *testing.T, mapGen, mapSettings map[string]any) {
+			expressions := mapGen["property_expression_names"].(map[string]any)
+			if expressions["elevation"] != "elevation_lakes" {
+				t.Fatalf("elevation = %#v, want elevation_lakes", expressions["elevation"])
+			}
+			cliffs := mapGen["cliff_settings"].(map[string]any)
+			if cliffs["cliff_smoothing"] != float64(1) {
+				t.Fatalf("cliff smoothing = %#v, want 1", cliffs["cliff_smoothing"])
+			}
+			trees := mapGen["autoplace_controls"].(map[string]any)["trees"].(map[string]any)
+			if trees["size"] != float64(0.5) {
+				t.Fatalf("trees size = %#v, want lakes trees", trees["size"])
+			}
+		}},
+		{"megabase-plain", func(t *testing.T, mapGen, mapSettings map[string]any) {
+			if mapGen["starting_area"] != float64(4) {
+				t.Fatalf("starting area = %#v, want huge", mapGen["starting_area"])
+			}
+			if richness := mapGen["cliff_settings"].(map[string]any)["richness"]; richness != float64(0) {
+				t.Fatalf("cliff richness = %#v, want 0", richness)
+			}
+			if enabled := mapSettings["enemy_expansion"].(map[string]any)["enabled"]; enabled != false {
+				t.Fatalf("enemy expansion = %#v, want false", enabled)
+			}
+		}},
+		{"waterworld", func(t *testing.T, mapGen, mapSettings map[string]any) {
+			water := mapGen["autoplace_controls"].(map[string]any)["water"].(map[string]any)
+			if water["frequency"].(float64) < 2 || water["size"].(float64) < 2 {
+				t.Fatalf("water autoplace = %#v, want waterworld", water)
+			}
+			expressions := mapGen["property_expression_names"].(map[string]any)
+			if expressions["control:moisture:bias"] != "0.65" {
+				t.Fatalf("moisture bias = %#v, want wet", expressions["control:moisture:bias"])
+			}
+		}},
+		{"forest-deathworld", func(t *testing.T, mapGen, mapSettings map[string]any) {
+			trees := mapGen["autoplace_controls"].(map[string]any)["trees"].(map[string]any)
+			if trees["frequency"].(float64) < 3 || trees["size"].(float64) < 2 {
+				t.Fatalf("trees autoplace = %#v, want dense hostile forest", trees)
+			}
+			if maxGroup := mapSettings["unit_group"].(map[string]any)["max_unit_group_size"]; maxGroup != float64(400) {
+				t.Fatalf("max unit group size = %#v, want 400", maxGroup)
+			}
+		}},
+		{"ore-patchwork", func(t *testing.T, mapGen, mapSettings map[string]any) {
+			iron := mapGen["autoplace_controls"].(map[string]any)["iron-ore"].(map[string]any)
+			if iron["frequency"].(float64) < 3 || iron["size"].(float64) >= 1 || iron["richness"].(float64) < 2.5 {
+				t.Fatalf("iron autoplace = %#v, want patchwork", iron)
+			}
+		}},
+		{"archipelago", func(t *testing.T, mapGen, mapSettings map[string]any) {
+			water := mapGen["autoplace_controls"].(map[string]any)["water"].(map[string]any)
+			if water["frequency"].(float64) < 3 || water["size"].(float64) < 1.5 {
+				t.Fatalf("water autoplace = %#v, want archipelago", water)
+			}
+			expressions := mapGen["property_expression_names"].(map[string]any)
+			if expressions["elevation"] != "elevation_lakes" {
+				t.Fatalf("elevation = %#v, want lakes archipelago", expressions["elevation"])
+			}
+		}},
+		{"fragmented-coast", func(t *testing.T, mapGen, mapSettings map[string]any) {
+			water := mapGen["autoplace_controls"].(map[string]any)["water"].(map[string]any)
+			if water["frequency"].(float64) < 4 || water["size"].(float64) > 0.5 {
+				t.Fatalf("water autoplace = %#v, want fragmented coast", water)
+			}
+			cliffs := mapGen["cliff_settings"].(map[string]any)
+			if cliffs["richness"].(float64) < 3 {
+				t.Fatalf("cliff richness = %#v, want fragmented coast", cliffs["richness"])
+			}
+		}},
+		{"hive-expansion", func(t *testing.T, mapGen, mapSettings map[string]any) {
+			enemyBase := mapGen["autoplace_controls"].(map[string]any)["enemy-base"].(map[string]any)
+			if enemyBase["frequency"].(float64) > 0.2 || enemyBase["size"].(float64) < 4 {
+				t.Fatalf("enemy-base autoplace = %#v, want rare huge hives", enemyBase)
+			}
+			expansion := mapSettings["enemy_expansion"].(map[string]any)
+			if expansion["max_expansion_distance"] != float64(20) || expansion["settler_group_max_size"] != float64(50) {
+				t.Fatalf("enemy expansion = %#v, want hive expansion", expansion)
+			}
+		}},
+		{"sparse-rich-desert", func(t *testing.T, mapGen, mapSettings map[string]any) {
+			iron := mapGen["autoplace_controls"].(map[string]any)["iron-ore"].(map[string]any)
+			if iron["frequency"].(float64) > 0.3 || iron["richness"].(float64) < 3 {
+				t.Fatalf("iron autoplace = %#v, want sparse rich desert", iron)
+			}
+			expressions := mapGen["property_expression_names"].(map[string]any)
+			if expressions["control:moisture:bias"] != "-0.55" {
+				t.Fatalf("moisture bias = %#v, want desert", expressions["control:moisture:bias"])
+			}
+		}},
+		{"island-escape", func(t *testing.T, mapGen, mapSettings map[string]any) {
+			expressions := mapGen["property_expression_names"].(map[string]any)
+			if expressions["elevation"] != "elevation_island" {
+				t.Fatalf("elevation = %#v, want island escape", expressions["elevation"])
+			}
+			stone := mapGen["autoplace_controls"].(map[string]any)["stone"].(map[string]any)
+			if stone["frequency"].(float64) > 0.4 || stone["size"].(float64) > 0.5 {
+				t.Fatalf("stone autoplace = %#v, want constrained island escape", stone)
+			}
+		}},
+	}
+
+	for _, test := range tests {
+		mapGenRaw, mapSettingsRaw, err := presetDocuments(test.preset)
+		if err != nil {
+			t.Fatalf("presetDocuments(%q): %v", test.preset, err)
+		}
+		var mapGen map[string]any
+		if err := json.Unmarshal(mapGenRaw, &mapGen); err != nil {
+			t.Fatalf("unmarshal map gen for %s: %v", test.preset, err)
+		}
+		var mapSettings map[string]any
+		if err := json.Unmarshal(mapSettingsRaw, &mapSettings); err != nil {
+			t.Fatalf("unmarshal map settings for %s: %v", test.preset, err)
+		}
+		t.Run(test.preset, func(t *testing.T) {
+			test.check(t, mapGen, mapSettings)
+		})
+	}
+}
+
 func TestFactorioRootFromBin(t *testing.T) {
 	got := factorioRootFromBin("/opt/factorio/bin/x64/factorio")
 	if got != "/opt/factorio" {

@@ -950,7 +950,11 @@ var bundledPresetProfiles = []struct {
 	{Name: "No-Biters", Key: "no-biters"},
 	{Name: "Railworld", Key: "rail-world"},
 	{Name: "Deathworld", Key: "death-world"},
+	{Name: "Rich-Resources", Key: "rich-resources"},
+	{Name: "Marathon", Key: "marathon"},
+	{Name: "Deathworld-Marathon", Key: "death-world-marathon"},
 	{Name: "Rich-Peaceful", Key: "peaceful-rich"},
+	{Name: "Lakes", Key: "lakes"},
 	{Name: "Island", Key: "island"},
 	{Name: "Ribbon-World", Key: "ribbon-world"},
 	{Name: "Empty-Sandbox", Key: "empty-sandbox"},
@@ -960,6 +964,15 @@ var bundledPresetProfiles = []struct {
 	{Name: "Cliffside-Lakes", Key: "cliffside-lakes"},
 	{Name: "Oil-Baron", Key: "oil-baron"},
 	{Name: "Tiny-Death-Spiral", Key: "tiny-death-spiral"},
+	{Name: "Megabase-Plain", Key: "megabase-plain"},
+	{Name: "Waterworld", Key: "waterworld"},
+	{Name: "Forest-Deathworld", Key: "forest-deathworld"},
+	{Name: "Ore-Patchwork", Key: "ore-patchwork"},
+	{Name: "Archipelago", Key: "archipelago"},
+	{Name: "Fragmented-Coast", Key: "fragmented-coast"},
+	{Name: "Hive-Expansion", Key: "hive-expansion"},
+	{Name: "Sparse-Rich-Desert", Key: "sparse-rich-desert"},
+	{Name: "Island-Escape", Key: "island-escape"},
 }
 
 func (s *store) seedDefaultProfiles() error {
@@ -1570,10 +1583,18 @@ func presetDocuments(preset string) ([]byte, []byte, error) {
 		setNested(mapSettings, []string{"enemy_evolution", "pollution_factor"}, 0.0000012)
 		setNested(mapSettings, []string{"enemy_expansion", "min_expansion_cooldown"}, 3600)
 		setNested(mapSettings, []string{"enemy_expansion", "max_expansion_cooldown"}, 72000)
+	case "rich-resources":
+		applyRichResourcesPreset(mapGen)
+	case "marathon":
+		applyMarathonPreset(mapSettings)
+	case "death-world-marathon":
+		applyDeathWorldMarathonPreset(mapGen, mapSettings)
 	case "peaceful-rich":
 		mapGen["starting_area"] = 2
 		setAutoplace(mapGen, []string{"coal", "stone", "copper-ore", "iron-ore", "uranium-ore", "crude-oil"}, 1.4, 1.8, 3.0)
 		applyNoBitersPreset(mapGen, mapSettings)
+	case "lakes":
+		applyLakesPreset(mapGen)
 	case "island":
 		mapGen["starting_area"] = 1.5
 		setNested(mapGen, []string{"property_expression_names", "elevation"}, "elevation_island")
@@ -1641,6 +1662,99 @@ func presetDocuments(preset string) ([]byte, []byte, error) {
 		setNested(mapSettings, []string{"enemy_evolution", "destroy_factor"}, 0.004)
 		setNested(mapSettings, []string{"enemy_expansion", "min_expansion_cooldown"}, 1800)
 		setNested(mapSettings, []string{"enemy_expansion", "max_expansion_cooldown"}, 18000)
+	case "megabase-plain":
+		mapGen["starting_area"] = 4
+		setAutoplace(mapGen, []string{"coal", "stone", "copper-ore", "iron-ore", "uranium-ore", "crude-oil"}, 0.55, 3.0, 2.0)
+		setAutoplace(mapGen, []string{"water"}, 0.25, 0.35, 0)
+		setAutoplace(mapGen, []string{"trees"}, 0.15, 0.25, 0)
+		setAutoplace(mapGen, []string{"enemy-base"}, 0.35, 0.5, 0)
+		setNested(mapGen, []string{"cliff_settings", "richness"}, 0)
+		setNested(mapSettings, []string{"enemy_expansion", "enabled"}, false)
+	case "waterworld":
+		mapGen["starting_area"] = 2
+		applyLakesPreset(mapGen)
+		setAutoplace(mapGen, []string{"water"}, 2.8, 2.3, 0)
+		setAutoplace(mapGen, []string{"trees"}, 1.2, 0.7, 0)
+		setAutoplace(mapGen, []string{"coal", "stone", "copper-ore", "iron-ore", "uranium-ore", "crude-oil"}, 0.7, 1.5, 1.4)
+		setNested(mapGen, []string{"cliff_settings", "richness"}, 2.0)
+		setNested(mapGen, []string{"property_expression_names", "control:moisture:bias"}, "0.65")
+	case "forest-deathworld":
+		mapGen["starting_area"] = 0.75
+		mapGen["peaceful_mode"] = false
+		setAutoplace(mapGen, []string{"trees"}, 3.2, 2.6, 0)
+		setAutoplace(mapGen, []string{"water"}, 1.4, 1.2, 0)
+		setAutoplace(mapGen, []string{"coal", "stone", "copper-ore", "iron-ore", "uranium-ore", "crude-oil"}, 0.7, 0.9, 1.0)
+		setAutoplace(mapGen, []string{"enemy-base"}, 2.2, 2.1, 0)
+		setNested(mapGen, []string{"cliff_settings", "richness"}, 2.0)
+		setNested(mapGen, []string{"property_expression_names", "control:moisture:bias"}, "0.45")
+		setNested(mapSettings, []string{"enemy_evolution", "time_factor"}, 0.000018)
+		setNested(mapSettings, []string{"enemy_evolution", "destroy_factor"}, 0.0035)
+		setNested(mapSettings, []string{"enemy_evolution", "pollution_factor"}, 0.0000014)
+		setNested(mapSettings, []string{"pollution", "ageing"}, 0.5)
+		setNested(mapSettings, []string{"pollution", "enemy_attack_pollution_consumption_modifier"}, 0.6)
+		setNested(mapSettings, []string{"enemy_expansion", "min_expansion_cooldown"}, 2400)
+		setNested(mapSettings, []string{"enemy_expansion", "max_expansion_cooldown"}, 36000)
+		setNested(mapSettings, []string{"unit_group", "max_unit_group_size"}, 400)
+	case "ore-patchwork":
+		mapGen["starting_area"] = 1.25
+		setAutoplace(mapGen, []string{"coal", "stone", "copper-ore", "iron-ore", "uranium-ore", "crude-oil"}, 3.0, 0.55, 2.5)
+		setAutoplace(mapGen, []string{"water"}, 0.7, 0.75, 0)
+		setAutoplace(mapGen, []string{"trees"}, 0.8, 0.8, 0)
+		setAutoplace(mapGen, []string{"enemy-base"}, 0.8, 0.9, 0)
+		setNested(mapGen, []string{"cliff_settings", "richness"}, 0.75)
+	case "archipelago":
+		mapGen["starting_area"] = 1.5
+		applyLakesPreset(mapGen)
+		setAutoplace(mapGen, []string{"water"}, 3.4, 1.6, 0)
+		setAutoplace(mapGen, []string{"trees"}, 0.7, 0.55, 0)
+		setAutoplace(mapGen, []string{"coal", "stone", "copper-ore", "iron-ore", "uranium-ore", "crude-oil"}, 0.75, 1.4, 1.7)
+		setNested(mapGen, []string{"cliff_settings", "richness"}, 1.5)
+		setNested(mapGen, []string{"property_expression_names", "control:moisture:bias"}, "0.45")
+	case "fragmented-coast":
+		mapGen["starting_area"] = 1.1
+		applyLakesPreset(mapGen)
+		setAutoplace(mapGen, []string{"water"}, 4.0, 0.35, 0)
+		setAutoplace(mapGen, []string{"trees"}, 0.45, 0.45, 0)
+		setAutoplace(mapGen, []string{"coal", "stone", "copper-ore", "iron-ore", "uranium-ore", "crude-oil"}, 1.4, 0.55, 1.8)
+		setAutoplace(mapGen, []string{"enemy-base"}, 1.1, 0.8, 0)
+		setNested(mapGen, []string{"cliff_settings", "cliff_elevation_interval"}, 20)
+		setNested(mapGen, []string{"cliff_settings", "richness"}, 3.0)
+		setNested(mapGen, []string{"property_expression_names", "control:moisture:frequency"}, "3")
+	case "hive-expansion":
+		mapGen["starting_area"] = 2
+		setAutoplace(mapGen, []string{"coal", "stone", "copper-ore", "iron-ore", "uranium-ore", "crude-oil"}, 0.45, 2.2, 2.0)
+		setAutoplace(mapGen, []string{"water"}, 1.25, 1.3, 0)
+		setAutoplace(mapGen, []string{"trees"}, 0.8, 0.8, 0)
+		setAutoplace(mapGen, []string{"enemy-base"}, 0.17, 4.0, 0)
+		setNested(mapSettings, []string{"enemy_expansion", "enabled"}, true)
+		setNested(mapSettings, []string{"enemy_expansion", "max_expansion_distance"}, 20)
+		setNested(mapSettings, []string{"enemy_expansion", "settler_group_min_size"}, 20)
+		setNested(mapSettings, []string{"enemy_expansion", "settler_group_max_size"}, 50)
+		setNested(mapSettings, []string{"enemy_expansion", "min_expansion_cooldown"}, 108000)
+		setNested(mapSettings, []string{"enemy_expansion", "max_expansion_cooldown"}, 324000)
+		setNested(mapSettings, []string{"enemy_evolution", "time_factor"}, 0.000001)
+		setNested(mapSettings, []string{"enemy_evolution", "destroy_factor"}, 0.0005)
+		setNested(mapSettings, []string{"enemy_evolution", "pollution_factor"}, 0.00000001)
+		setNested(mapSettings, []string{"unit_group", "max_unit_group_size"}, 500)
+	case "sparse-rich-desert":
+		mapGen["starting_area"] = 1.25
+		setAutoplace(mapGen, []string{"coal", "stone", "copper-ore", "iron-ore", "uranium-ore", "crude-oil"}, 0.25, 2.2, 3.0)
+		setAutoplace(mapGen, []string{"water"}, 0.4, 0.7, 0)
+		setAutoplace(mapGen, []string{"trees"}, 0.2, 0.25, 0)
+		setAutoplace(mapGen, []string{"enemy-base"}, 1.0, 1.0, 0)
+		setNested(mapGen, []string{"property_expression_names", "control:moisture:bias"}, "-0.55")
+		setNested(mapGen, []string{"property_expression_names", "control:aux:bias"}, "0.35")
+		setNested(mapSettings, []string{"pollution", "ageing"}, 0.8)
+	case "island-escape":
+		mapGen["starting_area"] = 0.8
+		setNested(mapGen, []string{"property_expression_names", "elevation"}, "elevation_island")
+		setAutoplace(mapGen, []string{"water"}, 1.6, 2.0, 0)
+		setAutoplace(mapGen, []string{"trees"}, 0.45, 0.4, 0)
+		setAutoplace(mapGen, []string{"coal", "copper-ore", "iron-ore"}, 0.55, 0.65, 0.8)
+		setAutoplace(mapGen, []string{"stone"}, 0.35, 0.45, 0.75)
+		setAutoplace(mapGen, []string{"uranium-ore", "crude-oil"}, 0.35, 0.6, 0.9)
+		setAutoplace(mapGen, []string{"enemy-base"}, 0.7, 1.1, 0)
+		setNested(mapGen, []string{"cliff_settings", "richness"}, 1.8)
 	default:
 		return nil, nil, fmt.Errorf("unknown preset %q", preset)
 	}
@@ -1661,6 +1775,39 @@ func applyNoBitersPreset(mapGen, mapSettings map[string]any) {
 	setAutoplace(mapGen, []string{"enemy-base"}, 0, 0, 0)
 	setNested(mapSettings, []string{"enemy_evolution", "enabled"}, false)
 	setNested(mapSettings, []string{"enemy_expansion", "enabled"}, false)
+}
+
+func applyRichResourcesPreset(mapGen map[string]any) {
+	setAutoplace(mapGen, []string{"coal", "stone", "copper-ore", "iron-ore", "uranium-ore", "crude-oil"}, 1, 1, 3)
+}
+
+func applyMarathonPreset(mapSettings map[string]any) {
+	setNested(mapSettings, []string{"difficulty_settings", "technology_price_multiplier"}, 4)
+}
+
+func applyDeathWorldMarathonPreset(mapGen, mapSettings map[string]any) {
+	mapGen["starting_area"] = 0.5
+	mapGen["peaceful_mode"] = false
+	setAutoplace(mapGen, []string{"enemy-base"}, 3, 3, 0)
+	applyMarathonPreset(mapSettings)
+	setNested(mapSettings, []string{"enemy_evolution", "time_factor"}, 0.000015)
+	setNested(mapSettings, []string{"enemy_evolution", "destroy_factor"}, 0.002)
+	setNested(mapSettings, []string{"enemy_evolution", "pollution_factor"}, 0.0000010)
+	setNested(mapSettings, []string{"enemy_expansion", "enabled"}, true)
+	setNested(mapSettings, []string{"pollution", "enabled"}, true)
+	setNested(mapSettings, []string{"pollution", "ageing"}, 0.5)
+	setNested(mapSettings, []string{"pollution", "enemy_attack_pollution_consumption_modifier"}, 0.8)
+}
+
+func applyLakesPreset(mapGen map[string]any) {
+	setNested(mapGen, []string{"property_expression_names", "elevation"}, "elevation_lakes")
+	setNested(mapGen, []string{"property_expression_names", "moisture"}, "moisture_basic")
+	setNested(mapGen, []string{"property_expression_names", "aux"}, "aux_basic")
+	setNested(mapGen, []string{"property_expression_names", "cliffiness"}, "cliffiness_basic")
+	setNested(mapGen, []string{"property_expression_names", "cliff_elevation"}, "cliff_elevation_from_elevation")
+	setNested(mapGen, []string{"property_expression_names", "trees_forest_path_cutout"}, 1)
+	setNested(mapGen, []string{"cliff_settings", "cliff_smoothing"}, 1)
+	setAutoplace(mapGen, []string{"trees"}, 1, 0.5, 0)
 }
 
 func normalizePreviewMapGen(raw json.RawMessage) ([]byte, error) {
