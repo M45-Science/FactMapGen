@@ -1,9 +1,12 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
+	"compress/zlib"
 	"context"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -545,6 +548,32 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(parts) == 2 && parts[1] == "download.zip" {
+		switch r.Method {
+		case http.MethodGet:
+			if err := s.store.writeProfileZip(w, name); err != nil {
+				writeStoreError(w, err)
+			}
+		case http.MethodPost:
+			var req saveProfileRequest
+			if err := decodeJSONRequest(r, &req); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			doc, err := s.store.readProfile(name)
+			if err != nil {
+				writeStoreError(w, err)
+				return
+			}
+			if err := writeProfileZip(w, doc.Name, req.MapGen, req.MapSettings); err != nil {
+				writeStoreError(w, err)
+			}
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+		return
+	}
+
 	if len(parts) == 2 && parts[1] == "duplicate" {
 		if r.Method != http.MethodPost {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -838,6 +867,65 @@ func (s *store) writeProfileFiles(ref profileRef, mapGen, mapSettings []byte) er
 		return err
 	}
 	return nil
+}
+
+func (s *store) writeProfileZip(w http.ResponseWriter, identifier string) error {
+	doc, err := s.readProfile(identifier)
+	if err != nil {
+		return err
+	}
+	return writeProfileZip(w, doc.Name, doc.MapGen, doc.MapSettings)
+}
+
+func writeProfileZip(w http.ResponseWriter, profileName string, mapGen, mapSettings json.RawMessage) error {
+	normalizedMapGen, err := normalizeJSON(mapGen)
+	if err != nil {
+		return fmt.Errorf("%s is invalid JSON: %w", mapGenFile, err)
+	}
+	normalizedMapSettings, err := normalizeJSON(mapSettings)
+	if err != nil {
+		return fmt.Errorf("%s is invalid JSON: %w", mapSettingsFile, err)
+	}
+
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-%s.zip"`, safeDownloadName(profileName), time.Now().UTC().Format("20060102-150405")))
+	zw := zip.NewWriter(w)
+	for _, entry := range []struct {
+		name string
+		body []byte
+	}{
+		{name: mapGenFile, body: append(normalizedMapGen, byte(10))},
+		{name: mapSettingsFile, body: append(normalizedMapSettings, byte(10))},
+	} {
+		f, err := zw.Create(entry.name)
+		if err != nil {
+			_ = zw.Close()
+			return err
+		}
+		if _, err := f.Write(entry.body); err != nil {
+			_ = zw.Close()
+			return err
+		}
+	}
+	return zw.Close()
+}
+
+func safeDownloadName(name string) string {
+	name = strings.TrimSpace(strings.ReplaceAll(name, " ", "-"))
+	if name == "" {
+		return "profile"
+	}
+	var b strings.Builder
+	for _, r := range name {
+		if strings.ContainsRune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-", r) {
+			b.WriteRune(r)
+		}
+	}
+	result := strings.Trim(b.String(), "-.")
+	if result == "" {
+		return "profile"
+	}
+	return result
 }
 
 func (s *store) deleteProfile(identifier string) error {
