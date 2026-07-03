@@ -3,10 +3,8 @@ package main
 import (
 	"archive/zip"
 	"bytes"
-	"compress/zlib"
 	"context"
 	"embed"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -952,7 +950,7 @@ func (s *store) profileExchangeString(identifier string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return encodeExchangeString(doc.MapGen, doc.MapSettings)
+	return EncodeMapExchangeString(doc.MapGen, doc.MapSettings)
 }
 
 func exchangeStringFromRequest(req exchangeStringRequest) (string, error) {
@@ -964,74 +962,27 @@ func exchangeStringFromRequest(req exchangeStringRequest) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%s is invalid JSON: %w", mapSettingsFile, err)
 	}
-	return encodeExchangeString(mapGen, mapSettings)
-}
-
-type exchangeStringDocument struct {
-	Format      string          `json:"format"`
-	Version     int             `json:"version"`
-	MapGen      json.RawMessage `json:"mapGen"`
-	MapSettings json.RawMessage `json:"mapSettings"`
-}
-
-func encodeExchangeString(mapGen, mapSettings json.RawMessage) (string, error) {
-	payload := exchangeStringDocument{
-		Format:      "factmapgen-map-exchange",
-		Version:     1,
-		MapGen:      mapGen,
-		MapSettings: mapSettings,
-	}
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return "", err
-	}
-	var compressed bytes.Buffer
-	zw := zlib.NewWriter(&compressed)
-	if _, err := zw.Write(raw); err != nil {
-		_ = zw.Close()
-		return "", err
-	}
-	if err := zw.Close(); err != nil {
-		return "", err
-	}
-	return ">>>FMG" + base64.StdEncoding.EncodeToString(compressed.Bytes()) + "<<<", nil
+	return EncodeMapExchangeString(mapGen, mapSettings)
 }
 
 func decodeExchangeString(value string) ([]byte, []byte, error) {
-	value = strings.TrimSpace(value)
-	value = strings.TrimPrefix(value, ">>>")
-	value = strings.TrimSuffix(value, "<<<")
-	if !strings.HasPrefix(value, "FMG") {
-		return nil, nil, errors.New("exchange string must start with >>>FMG and end with <<<")
-	}
-	compressed, err := base64.StdEncoding.DecodeString(strings.TrimSpace(strings.TrimPrefix(value, "FMG")))
-	if err != nil {
-		return nil, nil, fmt.Errorf("exchange string is not valid base64: %w", err)
-	}
-	zr, err := zlib.NewReader(bytes.NewReader(compressed))
-	if err != nil {
-		return nil, nil, fmt.Errorf("exchange string is not zlib data: %w", err)
-	}
-	decompressed, err := io.ReadAll(io.LimitReader(zr, 4<<20))
-	closeErr := zr.Close()
+	data, err := ParseMapExchangeString(value)
 	if err != nil {
 		return nil, nil, err
 	}
-	if closeErr != nil {
-		return nil, nil, closeErr
+	mapGenRaw, err := json.MarshalIndent(data.MapGenSettings, "", "  ")
+	if err != nil {
+		return nil, nil, err
 	}
-	var doc exchangeStringDocument
-	if err := decodeObject(decompressed, &doc); err != nil {
-		return nil, nil, fmt.Errorf("exchange string payload is invalid JSON: %w", err)
+	mapSettingsRaw, err := json.MarshalIndent(data.MapSettings, "", "  ")
+	if err != nil {
+		return nil, nil, err
 	}
-	if doc.Format != "factmapgen-map-exchange" || doc.Version != 1 {
-		return nil, nil, errors.New("unsupported exchange string format")
-	}
-	mapGen, err := normalizeJSON(doc.MapGen)
+	mapGen, err := normalizeJSON(mapGenRaw)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s is invalid JSON: %w", mapGenFile, err)
 	}
-	mapSettings, err := normalizeJSON(doc.MapSettings)
+	mapSettings, err := normalizeJSON(mapSettingsRaw)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s is invalid JSON: %w", mapSettingsFile, err)
 	}

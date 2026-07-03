@@ -34,6 +34,7 @@ import (
 	"hash/crc32"
 	"io"
 	"math"
+	"sort"
 	"strings"
 	"unicode"
 )
@@ -118,7 +119,8 @@ func ParseMapExchangeString(input string) (*MapExchangeData, error) {
 	actual := binary.LittleEndian.Uint32(raw[crcIndex:])
 	expected := crc32.ChecksumIEEE(raw[:crcIndex])
 	data.ChecksumOK = actual == expected
-	if !data.ChecksumOK {	}
+	if !data.ChecksumOK {
+	}
 
 	return data, nil
 }
@@ -643,4 +645,357 @@ func (p *mapExchangeParser) readMapSettings(atLeastV2 bool) map[string]interface
 		settings["asteroids"] = p.readAsteroidsSettings()
 	}
 	return settings
+}
+
+func EncodeMapExchangeString(mapGenRaw, mapSettingsRaw json.RawMessage) (string, error) {
+	var mapGen map[string]interface{}
+	if err := decodeObject(mapGenRaw, &mapGen); err != nil {
+		return "", fmt.Errorf("%s is invalid JSON: %w", mapGenFile, err)
+	}
+	var mapSettings map[string]interface{}
+	if err := decodeObject(mapSettingsRaw, &mapSettings); err != nil {
+		return "", fmt.Errorf("%s is invalid JSON: %w", mapSettingsFile, err)
+	}
+
+	w := &mapExchangeWriter{}
+	w.writeVersion([4]uint16{2, 0, 0, 0})
+	w.writeUint8(0)
+	w.writeMapGenSettings(mapGen)
+	w.writeMapSettings(mapSettings)
+	checksum := crc32.ChecksumIEEE(w.buf.Bytes())
+	w.writeUint32(checksum)
+
+	var compressed bytes.Buffer
+	zw := zlib.NewWriter(&compressed)
+	if _, err := zw.Write(w.buf.Bytes()); err != nil {
+		_ = zw.Close()
+		return "", err
+	}
+	if err := zw.Close(); err != nil {
+		return "", err
+	}
+	return ">>>" + base64.StdEncoding.EncodeToString(compressed.Bytes()) + "<<<", nil
+}
+
+type mapExchangeWriter struct {
+	buf bytes.Buffer
+}
+
+func (w *mapExchangeWriter) writeUint8(v uint8) { w.buf.WriteByte(v) }
+
+func (w *mapExchangeWriter) writeBool(v bool) {
+	if v {
+		w.writeUint8(1)
+	} else {
+		w.writeUint8(0)
+	}
+}
+
+func (w *mapExchangeWriter) writeInt16(v int16)   { _ = binary.Write(&w.buf, binary.LittleEndian, v) }
+func (w *mapExchangeWriter) writeUint16(v uint16) { _ = binary.Write(&w.buf, binary.LittleEndian, v) }
+func (w *mapExchangeWriter) writeInt32(v int32)   { _ = binary.Write(&w.buf, binary.LittleEndian, v) }
+func (w *mapExchangeWriter) writeUint32(v uint32) { _ = binary.Write(&w.buf, binary.LittleEndian, v) }
+func (w *mapExchangeWriter) writeDouble(v float64) {
+	_ = binary.Write(&w.buf, binary.LittleEndian, math.Float64bits(v))
+}
+func (w *mapExchangeWriter) writeFloat(v float64) { w.writeUint32(math.Float32bits(float32(v))) }
+
+func (w *mapExchangeWriter) writeUint32SO(v uint32) {
+	if v < 0xff {
+		w.writeUint8(uint8(v))
+		return
+	}
+	w.writeUint8(0xff)
+	w.writeUint32(v)
+}
+
+func (w *mapExchangeWriter) writeString(v string) {
+	w.writeUint32SO(uint32(len(v)))
+	w.buf.WriteString(v)
+}
+
+func (w *mapExchangeWriter) writeVersion(v [4]uint16) {
+	for _, part := range v {
+		w.writeUint16(part)
+	}
+}
+
+func (w *mapExchangeWriter) writeOptional(value interface{}, writeValue func(interface{})) {
+	if value == nil {
+		w.writeBool(false)
+		return
+	}
+	w.writeBool(true)
+	writeValue(value)
+}
+
+func (w *mapExchangeWriter) writeArray(items []interface{}, writeItem func(interface{})) {
+	w.writeUint32SO(uint32(len(items)))
+	for _, item := range items {
+		writeItem(item)
+	}
+}
+
+func (w *mapExchangeWriter) writeStringArray(items []interface{}) {
+	w.writeArray(items, func(item interface{}) { w.writeString(asString(item, "")) })
+}
+
+func (w *mapExchangeWriter) writeStringDict(m map[string]interface{}, writeValue func(interface{})) {
+	keys := sortedDataKeys(m)
+	w.writeUint32SO(uint32(len(keys)))
+	for _, key := range keys {
+		w.writeString(key)
+		writeValue(m[key])
+	}
+}
+
+func (w *mapExchangeWriter) writeFrequencySizeRichness(v interface{}) {
+	m := asMap(v)
+	w.writeFloat(asFloat(m["frequency"], 1))
+	w.writeFloat(asFloat(m["size"], 1))
+	w.writeFloat(asFloat(m["richness"], 0))
+}
+
+func (w *mapExchangeWriter) writeAutoplaceSetting(v interface{}) {
+	m := asMap(v)
+	w.writeBool(asBool(m["treat_missing_as_default"], false))
+	w.writeStringDict(asMap(m["settings"]), w.writeFrequencySizeRichness)
+}
+
+func (w *mapExchangeWriter) writeMapPosition(v interface{}) {
+	m := asMap(v)
+	x := int32(math.Round(asFloat(m["x"], 0) * 256))
+	y := int32(math.Round(asFloat(m["y"], 0) * 256))
+	w.writeInt16(0x7fff)
+	w.writeInt32(x)
+	w.writeInt32(y)
+}
+
+func (w *mapExchangeWriter) writeBoundingBox(v interface{}) {
+	m := asMap(v)
+	w.writeMapPosition(m["left_top"])
+	w.writeMapPosition(m["right_bottom"])
+	orientation := asMap(m["orientation"])
+	w.writeInt16(int16(asInt(orientation["x"], 0)))
+	w.writeInt16(int16(asInt(orientation["y"], 0)))
+}
+
+func (w *mapExchangeWriter) writeCliffSettings(v interface{}) {
+	m := asMap(v)
+	w.writeString(asString(m["name"], "cliff"))
+	w.writeUint8(0)
+	w.writeFloat(asFloat(m["cliff_elevation_0"], 10))
+	w.writeFloat(asFloat(m["cliff_elevation_interval"], 40))
+	w.writeFloat(asFloat(m["richness"], 1))
+	w.writeFloat(asFloat(m["cliff_smoothing"], 0))
+}
+
+func (w *mapExchangeWriter) writeTerritorySettings(v interface{}) {
+	m := asMap(v)
+	w.writeStringArray(asArray(m["units"]))
+	w.writeString(asString(m["territory_index_expression"], ""))
+	w.writeString(asString(m["territory_variation_expression"], ""))
+	w.writeUint32(uint32(asInt(m["minimum_territory_size"], 0)))
+}
+
+func (w *mapExchangeWriter) writeMapGenSettings(settings map[string]interface{}) {
+	w.writeStringDict(asMap(settings["autoplace_controls"]), w.writeFrequencySizeRichness)
+	w.writeStringDict(asMap(settings["autoplace_settings"]), w.writeAutoplaceSetting)
+	w.writeBool(asBool(settings["default_enable_all_autoplace_controls"], false))
+	w.writeUint32(uint32(asInt(settings["seed"], 0)))
+	w.writeUint32(uint32(asInt(settings["width"], 0)))
+	w.writeUint32(uint32(asInt(settings["height"], 0)))
+	w.writeBoundingBox(settings["area_to_generate_at_start"])
+	w.writeFloat(asFloat(settings["starting_area"], 1))
+	w.writeBool(asBool(settings["peaceful_mode"], false))
+	w.writeBool(asBool(settings["no_enemies_mode"], false))
+	w.writeArray(asArray(settings["starting_points"]), w.writeMapPosition)
+	w.writeStringDict(asMap(settings["property_expression_names"]), func(v interface{}) { w.writeString(asString(v, "")) })
+	w.writeCliffSettings(settings["cliff_settings"])
+	w.writeOptional(settings["territory_settings"], w.writeTerritorySettings)
+}
+
+func (w *mapExchangeWriter) writePollution(v interface{}) {
+	m := asMap(v)
+	for _, key := range []string{"enabled", "diffusion_ratio", "min_to_diffuse", "ageing", "expected_max_per_chunk", "min_to_show_per_chunk", "min_pollution_to_damage_trees", "pollution_with_max_forest_damage", "pollution_per_tree_damage", "pollution_restored_per_tree_damage", "max_pollution_to_restore_trees", "enemy_attack_pollution_consumption_modifier"} {
+		if key == "enabled" {
+			w.writeOptional(m[key], func(v interface{}) { w.writeBool(asBool(v, false)) })
+		} else {
+			w.writeOptional(m[key], func(v interface{}) { w.writeDouble(asFloat(v, 0)) })
+		}
+	}
+}
+
+func (w *mapExchangeWriter) writeRealSteering(v interface{}) {
+	m := asMap(v)
+	w.writeOptional(m["radius"], func(v interface{}) { w.writeDouble(asFloat(v, 0)) })
+	w.writeOptional(m["separation_factor"], func(v interface{}) { w.writeDouble(asFloat(v, 0)) })
+	w.writeOptional(m["separation_force"], func(v interface{}) { w.writeDouble(asFloat(v, 0)) })
+	w.writeOptional(m["force_unit_fuzzy_goto_behavior"], func(v interface{}) { w.writeBool(asBool(v, false)) })
+}
+
+func (w *mapExchangeWriter) writeSteering(v interface{}) {
+	m := asMap(v)
+	w.writeRealSteering(m["default"])
+	w.writeRealSteering(m["moving"])
+}
+
+func (w *mapExchangeWriter) writeEnemyEvolution(v interface{}) {
+	m := asMap(v)
+	w.writeOptional(m["enabled"], func(v interface{}) { w.writeBool(asBool(v, false)) })
+	w.writeOptional(m["time_factor"], func(v interface{}) { w.writeDouble(asFloat(v, 0)) })
+	w.writeOptional(m["destroy_factor"], func(v interface{}) { w.writeDouble(asFloat(v, 0)) })
+	w.writeOptional(m["pollution_factor"], func(v interface{}) { w.writeDouble(asFloat(v, 0)) })
+}
+
+func (w *mapExchangeWriter) writeEnemyExpansion(v interface{}) {
+	m := asMap(v)
+	for _, key := range []string{"enabled", "max_expansion_distance", "friendly_base_influence_radius", "enemy_building_influence_radius", "building_coefficient", "other_base_coefficient", "neighbouring_chunk_coefficient", "neighbouring_base_chunk_coefficient", "max_colliding_tiles_coefficient", "settler_group_min_size", "settler_group_max_size", "min_expansion_cooldown", "max_expansion_cooldown"} {
+		switch key {
+		case "enabled":
+			w.writeOptional(m[key], func(v interface{}) { w.writeBool(asBool(v, false)) })
+		case "max_expansion_distance", "friendly_base_influence_radius", "enemy_building_influence_radius", "settler_group_min_size", "settler_group_max_size", "min_expansion_cooldown", "max_expansion_cooldown":
+			w.writeOptional(m[key], func(v interface{}) { w.writeUint32(uint32(asInt(v, 0))) })
+		default:
+			w.writeOptional(m[key], func(v interface{}) { w.writeDouble(asFloat(v, 0)) })
+		}
+	}
+}
+
+func (w *mapExchangeWriter) writeUnitGroup(v interface{}) {
+	m := asMap(v)
+	for _, key := range []string{"min_group_gathering_time", "max_group_gathering_time", "max_wait_time_for_late_members", "max_group_radius", "min_group_radius", "max_member_speedup_when_behind", "max_member_slowdown_when_ahead", "max_group_slowdown_factor", "max_group_member_fallback_factor", "member_disown_distance", "tick_tolerance_when_member_arrives", "max_gathering_unit_groups", "max_unit_group_size"} {
+		switch key {
+		case "min_group_gathering_time", "max_group_gathering_time", "max_wait_time_for_late_members", "tick_tolerance_when_member_arrives", "max_gathering_unit_groups", "max_unit_group_size":
+			w.writeOptional(m[key], func(v interface{}) { w.writeUint32(uint32(asInt(v, 0))) })
+		default:
+			w.writeOptional(m[key], func(v interface{}) { w.writeDouble(asFloat(v, 0)) })
+		}
+	}
+}
+
+func (w *mapExchangeWriter) writePathFinder(v interface{}) {
+	m := asMap(v)
+	for _, key := range []string{"fwd2bwd_ratio", "goal_pressure_ratio", "use_path_cache", "max_steps_worked_per_tick", "max_work_done_per_tick", "short_cache_size", "long_cache_size", "short_cache_min_cacheable_distance", "short_cache_min_algo_steps_to_cache", "long_cache_min_cacheable_distance", "cache_max_connect_to_cache_steps_multiplier", "cache_accept_path_start_distance_ratio", "cache_accept_path_end_distance_ratio", "negative_cache_accept_path_start_distance_ratio", "negative_cache_accept_path_end_distance_ratio", "cache_path_start_distance_rating_multiplier", "cache_path_end_distance_rating_multiplier", "stale_enemy_with_same_destination_collision_penalty", "ignore_moving_enemy_collision_distance", "enemy_with_different_destination_collision_penalty", "general_entity_collision_penalty", "general_entity_subsequent_collision_penalty", "extended_collision_penalty", "max_clients_to_accept_any_new_request", "max_clients_to_accept_short_new_request", "direct_distance_to_consider_short_request", "short_request_max_steps", "short_request_ratio", "min_steps_to_check_path_find_termination", "start_to_goal_cost_multiplier_to_terminate_path_find", "overload_levels", "overload_multipliers", "negative_path_cache_delay_interval"} {
+		switch key {
+		case "fwd2bwd_ratio":
+			w.writeOptional(m[key], func(v interface{}) { w.writeInt32(int32(asInt(v, 0))) })
+		case "use_path_cache":
+			w.writeOptional(m[key], func(v interface{}) { w.writeBool(asBool(v, false)) })
+		case "max_work_done_per_tick", "short_cache_size", "long_cache_size", "short_cache_min_algo_steps_to_cache", "cache_max_connect_to_cache_steps_multiplier", "max_clients_to_accept_any_new_request", "max_clients_to_accept_short_new_request", "direct_distance_to_consider_short_request", "short_request_max_steps", "min_steps_to_check_path_find_termination", "negative_path_cache_delay_interval":
+			w.writeOptional(m[key], func(v interface{}) { w.writeUint32(uint32(asInt(v, 0))) })
+		case "overload_levels":
+			w.writeOptional(m[key], func(v interface{}) {
+				w.writeArray(asArray(v), func(item interface{}) { w.writeUint32(uint32(asInt(item, 0))) })
+			})
+		case "overload_multipliers":
+			w.writeOptional(m[key], func(v interface{}) {
+				w.writeArray(asArray(v), func(item interface{}) { w.writeDouble(asFloat(item, 0)) })
+			})
+		default:
+			w.writeOptional(m[key], func(v interface{}) { w.writeDouble(asFloat(v, 0)) })
+		}
+	}
+}
+
+func (w *mapExchangeWriter) writeDifficultySettings(v interface{}) {
+	m := asMap(v)
+	w.writeDouble(asFloat(m["technology_price_multiplier"], 1))
+	w.writeDouble(asFloat(m["spoil_time_modifier"], 1))
+}
+
+func (w *mapExchangeWriter) writeAsteroidsSettings(v interface{}) {
+	m := asMap(v)
+	w.writeOptional(m["spawning_rate"], func(v interface{}) { w.writeDouble(asFloat(v, 0)) })
+	w.writeOptional(m["max_ray_portals_expanded_per_tick"], func(v interface{}) { w.writeUint32(uint32(asInt(v, 0))) })
+}
+
+func (w *mapExchangeWriter) writeMapSettings(settings map[string]interface{}) {
+	w.writePollution(settings["pollution"])
+	w.writeSteering(settings["steering"])
+	w.writeEnemyEvolution(settings["enemy_evolution"])
+	w.writeEnemyExpansion(settings["enemy_expansion"])
+	w.writeUnitGroup(settings["unit_group"])
+	w.writePathFinder(settings["path_finder"])
+	w.writeUint32(uint32(asInt(settings["max_failed_behavior_count"], 0)))
+	w.writeDifficultySettings(settings["difficulty_settings"])
+	w.writeAsteroidsSettings(settings["asteroids"])
+}
+
+func sortedDataKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		if strings.HasPrefix(key, "_") {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func asMap(v interface{}) map[string]interface{} {
+	if m, ok := v.(map[string]interface{}); ok {
+		return m
+	}
+	return map[string]interface{}{}
+}
+
+func asArray(v interface{}) []interface{} {
+	if a, ok := v.([]interface{}); ok {
+		return a
+	}
+	return nil
+}
+
+func asString(v interface{}, fallback string) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fallback
+}
+
+func asBool(v interface{}, fallback bool) bool {
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	return fallback
+}
+
+func asInt(v interface{}, fallback int64) int64 {
+	switch n := v.(type) {
+	case json.Number:
+		i, err := n.Int64()
+		if err == nil {
+			return i
+		}
+		f, err := n.Float64()
+		if err == nil {
+			return int64(f)
+		}
+	case float64:
+		return int64(n)
+	case int:
+		return int64(n)
+	case int64:
+		return n
+	}
+	return fallback
+}
+
+func asFloat(v interface{}, fallback float64) float64 {
+	switch n := v.(type) {
+	case json.Number:
+		f, err := n.Float64()
+		if err == nil {
+			return f
+		}
+	case float64:
+		return n
+	case int:
+		return float64(n)
+	case int64:
+		return float64(n)
+	}
+	return fallback
 }

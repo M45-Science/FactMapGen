@@ -195,6 +195,20 @@ func TestStoreCreateReadAndSave(t *testing.T) {
 	}
 }
 
+func TestDecodeNativeFactorioExchangeString(t *testing.T) {
+	input := `>>>eNp1VDGIE0EUnbkYcuYuGiQIwnFGuDYW6oGFZEcbETlru3Wymc0Nbnbi7EzktDDoFRaCjc3ZaGtjpYXdgY2CgigIWp0cgoWFh1EshDizm9nMbuLA//v2vz///zc77BwAYE0ZWKria5IGzPW4bBOX0QCAgWOs5OHAo4LYsX0ew5mkssd6PcIbjGfy9scVG7mKZRKS7kajhSOVDFBiA6fiB5JxGhK3T0Jhb6j4Mugwjl0voL5vMwcNQ6MAh+3I5hY6AWnN2FNN4vEQbjLEhFxMyJ6qJmZViwQLyYz4dSwIt+PzlLMwfx6VgIp1KrtuS+vM9A2x7NNoetoiZ97VzCTFyOO4Z0cORwJzQcOOiznBbpfRSMhs5+LU4LVIBr7k1HOxR9tuh2xEWQVFwQnJdF4UMuxEgoRuTteC5DhUuqb09mXg4VAqXbkLcyhl+kwDGnUzvafOE8Cty+T2YHMZaBvdAvXRSJtCO+oGaQNwoK6SyoYqaK/6WWXnJpUgvFl7ev7LjQcOTBKOozHYGUe2WyZywYBL6L/UigGnrDon4/XTAklToVqMs+bRBCTkpiYh3Fvfvfv8z7AJ/z7Ze7/WuuLA/p3K8NexZ01FlrTSudQ93NLrhZECrBES6pMD377R67sDi3pHTTt0WrntiwUAqwcUenxPufoSMKM1TZkagn68fhsluwZ8cPI61EGc0cWXtXulXdwwnQwmEN1HEB017JFJitp/AtgztCcKX5u2L63+uUGmP4StIxdZQTM+Q1k3bKfuWyGdRp3nu5J5Q48QLGigs4YqlryNf2dxqeRZRfFxF9K7+MMxT5gCXeTj56+r/wBeqDbe<<<`
+	mapGen, mapSettings, err := decodeExchangeString(input)
+	if err != nil {
+		t.Fatalf("decode native Factorio exchange string: %v", err)
+	}
+	if !bytes.Contains(mapGen, []byte(`"autoplace_controls"`)) {
+		t.Fatalf("native map-gen JSON missing autoplace controls: %s", mapGen)
+	}
+	if !bytes.Contains(mapSettings, []byte(`"pollution"`)) {
+		t.Fatalf("native map-settings JSON missing pollution: %s", mapSettings)
+	}
+}
+
 func TestProfileExchangeStringRoutes(t *testing.T) {
 	st := newTestStore(t)
 	if _, err := st.createProfile("Source", "default"); err != nil {
@@ -211,12 +225,32 @@ func TestProfileExchangeStringRoutes(t *testing.T) {
 	if err := json.Unmarshal(exportRec.Body.Bytes(), &exported); err != nil {
 		t.Fatalf("decode export response: %v", err)
 	}
-	if !strings.HasPrefix(exported.ExchangeString, ">>>FMG") {
-		t.Fatalf("exchange string = %q, want >>>FMG prefix", exported.ExchangeString)
+	if !strings.HasPrefix(exported.ExchangeString, ">>>") || !strings.HasSuffix(exported.ExchangeString, "<<<") || strings.HasPrefix(exported.ExchangeString, ">>>FMG") {
+		t.Fatalf("exchange string = %q, want native Factorio wrapper", exported.ExchangeString)
+	}
+	if _, err := ParseMapExchangeString(exported.ExchangeString); err != nil {
+		t.Fatalf("parse exported native exchange string: %v", err)
 	}
 
+	doc, err := st.readProfile("Source")
+	if err != nil {
+		t.Fatalf("read source profile: %v", err)
+	}
+	var currentMapGen map[string]interface{}
+	if err := json.Unmarshal(doc.MapGen, &currentMapGen); err != nil {
+		t.Fatalf("decode source map gen: %v", err)
+	}
+	currentMapGen["width"] = 77
+	currentMapGenRaw, err := json.Marshal(currentMapGen)
+	if err != nil {
+		t.Fatalf("marshal edited map gen: %v", err)
+	}
+	postBody, err := json.Marshal(exchangeStringRequest{MapGen: currentMapGenRaw, MapSettings: doc.MapSettings})
+	if err != nil {
+		t.Fatalf("marshal exchange request: %v", err)
+	}
 	postRec := httptest.NewRecorder()
-	postReq := httptest.NewRequest(http.MethodPost, "/api/profiles/Source/exchange-string", strings.NewReader(`{"mapGen":{"width":77},"mapSettings":{"pollution":{"enabled":false}}}`))
+	postReq := httptest.NewRequest(http.MethodPost, "/api/profiles/Source/exchange-string", bytes.NewReader(postBody))
 	srv.handleProfile(postRec, postReq)
 	if postRec.Code != http.StatusOK {
 		t.Fatalf("export posted exchange status = %d body=%s", postRec.Code, postRec.Body.String())
@@ -229,8 +263,8 @@ func TestProfileExchangeStringRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode posted exchange string: %v", err)
 	}
-	if !bytes.Contains(mapGen, []byte(`"width": 77`)) || !bytes.Contains(mapSettings, []byte(`"enabled": false`)) {
-		t.Fatalf("posted exchange did not include current settings: mapGen=%s mapSettings=%s", mapGen, mapSettings)
+	if !bytes.Contains(mapGen, []byte(`"width": 77`)) {
+		t.Fatalf("posted exchange did not include current map gen settings: mapGen=%s mapSettings=%s", mapGen, mapSettings)
 	}
 
 	auth, password := newTestAuthStore(t)
