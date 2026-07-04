@@ -1,5 +1,5 @@
 {
-  "_comment_width+height": "Width and height of map, in tiles; 0 means infinite",
+  "_comment_width+height": "Width and height of map, in tiles; omit or set null for infinite",
   "_property_expression_names_comment": [
     "Overrides for property value generators (map type)",
     "Leave 'elevation' blank to get 'normal' terrain.",
@@ -69,7 +69,6 @@
     "name": "cliff",
     "richness": 3.5
   },
-  "height": 0,
   "peaceful_mode": false,
   "property_expression_names": {
     "control:aux:bias": "0",
@@ -84,6 +83,5 @@
       "x": 0,
       "y": 0
     }
-  ],
-  "width": 0
+  ]
 }

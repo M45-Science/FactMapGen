@@ -1,7 +1,5 @@
 {
-  "_comment_width+height": "Width and height of map, in tiles; 0 means infinite",
-  "width": 0,
-  "height": 0,
+  "_comment_width+height": "Width and height of map, in tiles; omit or set null for infinite",
   "_starting_area_comment": "Multiplier for 'biter free zone radius'",
   "starting_area": 1,
   "peaceful_mode": false,

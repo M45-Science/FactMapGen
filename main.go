@@ -804,7 +804,7 @@ func (s *store) readProfile(identifier string) (profileDocument, error) {
 	}
 	dir := s.profileDir(ref)
 
-	mapGen, err := readNormalizedJSON(filepath.Join(dir, mapGenFile))
+	mapGen, err := readNormalizedMapGenJSON(filepath.Join(dir, mapGenFile))
 	if err != nil {
 		return profileDocument{}, fmt.Errorf("%s: %w", mapGenFile, err)
 	}
@@ -838,7 +838,7 @@ func (s *store) saveProfile(identifier string, mapGen, mapSettings json.RawMessa
 		return profileDocument{}, errReadOnlyProfile
 	}
 
-	normalizedMapGen, err := normalizeJSON(mapGen)
+	normalizedMapGen, err := normalizeMapGenJSON(mapGen)
 	if err != nil {
 		return profileDocument{}, fmt.Errorf("%s is invalid JSON: %w", mapGenFile, err)
 	}
@@ -876,7 +876,7 @@ func (s *store) writeProfileZip(w http.ResponseWriter, identifier string) error 
 }
 
 func writeProfileZip(w http.ResponseWriter, profileName string, mapGen, mapSettings json.RawMessage) error {
-	normalizedMapGen, err := normalizeJSON(mapGen)
+	normalizedMapGen, err := normalizeMapGenJSON(mapGen)
 	if err != nil {
 		return fmt.Errorf("%s is invalid JSON: %w", mapGenFile, err)
 	}
@@ -954,7 +954,7 @@ func (s *store) profileExchangeString(identifier string) (string, error) {
 }
 
 func exchangeStringFromRequest(req exchangeStringRequest) (string, error) {
-	mapGen, err := normalizeJSON(req.MapGen)
+	mapGen, err := normalizeMapGenJSON(req.MapGen)
 	if err != nil {
 		return "", fmt.Errorf("%s is invalid JSON: %w", mapGenFile, err)
 	}
@@ -970,6 +970,7 @@ func decodeExchangeString(value string) ([]byte, []byte, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	normalizeMapGenDimensions(data.MapGenSettings)
 	mapGenRaw, err := json.MarshalIndent(data.MapGenSettings, "", "  ")
 	if err != nil {
 		return nil, nil, err
@@ -1686,6 +1687,14 @@ func readNormalizedJSON(path string) ([]byte, error) {
 	return normalizeJSON(body)
 }
 
+func readNormalizedMapGenJSON(path string) ([]byte, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeMapGenJSON(body)
+}
+
 func normalizeJSON(raw json.RawMessage) ([]byte, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return nil, errors.New("empty JSON document")
@@ -1704,6 +1713,35 @@ func normalizeJSON(raw json.RawMessage) ([]byte, error) {
 		return nil, errors.New("top-level JSON value must be an object")
 	}
 	return json.MarshalIndent(value, "", "  ")
+}
+
+func normalizeMapGenJSON(raw json.RawMessage) ([]byte, error) {
+	normalized, err := normalizeJSON(raw)
+	if err != nil {
+		return nil, err
+	}
+	var mapGen map[string]any
+	if err := decodeObject(normalized, &mapGen); err != nil {
+		return nil, err
+	}
+	normalizeMapGenDimensions(mapGen)
+	return json.MarshalIndent(mapGen, "", "  ")
+}
+
+func normalizeMapGenDimensions(mapGen map[string]any) {
+	removeImplicitMapDimension(mapGen, "width")
+	removeImplicitMapDimension(mapGen, "height")
+}
+
+func removeImplicitMapDimension(mapGen map[string]any, key string) {
+	value, ok := mapGen[key]
+	if !ok || value == nil {
+		delete(mapGen, key)
+		return
+	}
+	if n, ok := jsonNumberFloat(value); ok && n == 0 {
+		delete(mapGen, key)
+	}
 }
 
 func writeFileAtomic(path string, body []byte) error {
@@ -1782,7 +1820,7 @@ func presetDocuments(preset string) ([]byte, []byte, error) {
 		setAutoplace(mapGen, []string{"water"}, 1.2, 1.8, 0)
 	case "ribbon-world":
 		mapGen["height"] = 128
-		mapGen["width"] = 0
+		delete(mapGen, "width")
 		mapGen["starting_area"] = 2
 		setAutoplace(mapGen, []string{"coal", "stone", "copper-ore", "iron-ore", "uranium-ore", "crude-oil"}, 1, 1.8, 1.5)
 	case "empty-sandbox":
@@ -1940,6 +1978,7 @@ func presetDocuments(preset string) ([]byte, []byte, error) {
 		return nil, nil, fmt.Errorf("unknown preset %q", preset)
 	}
 
+	normalizeMapGenDimensions(mapGen)
 	mapGenOut, err := json.MarshalIndent(mapGen, "", "  ")
 	if err != nil {
 		return nil, nil, err
@@ -1992,7 +2031,7 @@ func applyLakesPreset(mapGen map[string]any) {
 }
 
 func normalizePreviewMapGen(raw json.RawMessage) ([]byte, error) {
-	normalized, err := normalizeJSON(raw)
+	normalized, err := normalizeMapGenJSON(raw)
 	if err != nil {
 		return nil, err
 	}

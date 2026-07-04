@@ -193,6 +193,15 @@ func TestStoreCreateReadAndSave(t *testing.T) {
 	if !bytes.Contains(saved.MapGen, []byte(`"width": 512`)) {
 		t.Fatalf("saved map gen was not normalized: %s", saved.MapGen)
 	}
+
+	doc.MapGen = json.RawMessage(`{"width": 0, "height": null, "starting_area": 1}`)
+	saved, err = st.saveProfile("Peaceful", doc.MapGen, doc.MapSettings)
+	if err != nil {
+		t.Fatalf("saveProfile zero dimensions: %v", err)
+	}
+	if bytes.Contains(saved.MapGen, []byte(`"width"`)) || bytes.Contains(saved.MapGen, []byte(`"height"`)) {
+		t.Fatalf("saved map gen retained implicit map dimensions: %s", saved.MapGen)
+	}
 }
 
 func TestDecodeNativeFactorioExchangeString(t *testing.T) {
@@ -234,6 +243,12 @@ func TestProfileExchangeStringRoutes(t *testing.T) {
 	}
 	if decodedExport.Version != [4]uint16{2, 0, 10, 0} {
 		t.Fatalf("exported exchange version = %v, want 2.0.10-0", decodedExport.Version)
+	}
+	if _, ok := decodedExport.MapGenSettings["width"]; ok {
+		t.Fatalf("exported exchange string included implicit width 0")
+	}
+	if _, ok := decodedExport.MapGenSettings["height"]; ok {
+		t.Fatalf("exported exchange string included implicit height 0")
 	}
 	controls := asMap(decodedExport.MapGenSettings["autoplace_controls"])
 	for _, key := range []string{"coal", "copper-ore", "iron-ore", "stone"} {

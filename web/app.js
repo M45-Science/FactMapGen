@@ -106,7 +106,7 @@ const factorioScaleValues = {
 };
 
 const controlTooltips = {
-  "World size": "Width and height in tiles. Factorio uses 0 for an infinite map; Ribbon keeps height at 128 tiles.",
+  "World size": "Width and height in tiles. Leave a dimension unset for an infinite map; Ribbon keeps height at 128 tiles.",
   "Starting point": "Initial spawn point in map coordinates. Most presets keep this at 0,0.",
   "Starting area": "Multiplier for the biter-free starting area radius. Larger values give a safer spawn.",
   "Missing autoplace controls": "When enabled, Factorio treats autoplace controls not listed in this file as enabled at their prototype defaults.",
@@ -1939,7 +1939,7 @@ function addWorldSizeField(parent) {
   const currentWidth = numericValue(state.mapGen.width ?? 0);
   const currentHeight = numericValue(state.mapGen.height ?? 0);
   const presets = [
-    { label: "Infinite", width: 0, height: 0, tooltip: "Factorio's unbounded world size; both width and height are 0." },
+    { label: "Infinite", width: 0, height: 0, tooltip: "Factorio's unbounded world size; width and height are omitted." },
     { label: "Compact", width: 512, height: 512, tooltip: "A small finite 512 by 512 tile map." },
     { label: "Standard", width: 1024, height: 1024, tooltip: "A finite 1024 by 1024 tile map." },
     { label: "Large", width: 2048, height: 2048, tooltip: "A finite 2048 by 2048 tile map." },
@@ -1955,8 +1955,8 @@ function addWorldSizeField(parent) {
     button.title = preset.tooltip || `${preset.label}: ${preset.width} x ${preset.height} tiles`;
     button.className = currentWidth === preset.width && currentHeight === preset.height ? "preset-button active" : "preset-button";
     button.addEventListener("click", () => {
-      state.mapGen.width = preset.width;
-      state.mapGen.height = preset.height;
+      setMapDimension("width", preset.width);
+      setMapDimension("height", preset.height);
       afterVisualEdit();
       renderVisualControls();
     });
@@ -1970,18 +1970,18 @@ function addWorldSizeField(parent) {
   width.min = "0";
   width.step = "1";
   width.value = String(currentWidth);
-  width.title = "Width in tiles, 0 is infinite";
+  width.title = "Width in tiles, 0 leaves it unset for infinite";
   width.ariaLabel = "World width";
   const height = document.createElement("input");
   height.type = "number";
   height.min = "0";
   height.step = "1";
   height.value = String(currentHeight);
-  height.title = "Height in tiles, 0 is infinite";
+  height.title = "Height in tiles, 0 leaves it unset for infinite";
   height.ariaLabel = "World height";
   const sync = () => {
-    state.mapGen.width = Math.max(0, Math.round(numericValue(width.value)));
-    state.mapGen.height = Math.max(0, Math.round(numericValue(height.value)));
+    setMapDimension("width", Math.max(0, Math.round(numericValue(width.value))));
+    setMapDimension("height", Math.max(0, Math.round(numericValue(height.value))));
     afterVisualEdit();
   };
   width.addEventListener("input", sync);
@@ -1991,6 +1991,15 @@ function addWorldSizeField(parent) {
   controls.append(buttons, custom);
   wrap.append(label, controls);
   parent.append(wrap);
+}
+
+function setMapDimension(key, value) {
+  if (!state.mapGen) return;
+  if (!Number.isFinite(value) || value <= 0) {
+    delete state.mapGen[key];
+    return;
+  }
+  state.mapGen[key] = value;
 }
 
 function addStartingPointField(parent) {

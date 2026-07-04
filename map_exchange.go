@@ -433,23 +433,34 @@ func (p *mapExchangeParser) readMapGenSettings(atLeastV2 bool) map[string]interf
 		water = p.readFloat()
 	}
 
+	autoplaceControls := p.readStringDict(func() interface{} {
+		return p.readFrequencySizeRichness()
+	})
+	autoplaceSettings := p.readStringDict(func() interface{} {
+		return p.readAutoplaceSetting()
+	})
+	defaultEnableAllAutoplaceControls := p.readBool()
+	seed := p.readUint32()
+	width := p.readUint32()
+	height := p.readUint32()
+
 	settings := map[string]interface{}{
-		"autoplace_controls": p.readStringDict(func() interface{} {
-			return p.readFrequencySizeRichness()
-		}),
-		"autoplace_settings": p.readStringDict(func() interface{} {
-			return p.readAutoplaceSetting()
-		}),
-		"default_enable_all_autoplace_controls": p.readBool(),
-		"seed":                                  p.readUint32(),
-		"width":                                 p.readUint32(),
-		"height":                                p.readUint32(),
+		"autoplace_controls":                    autoplaceControls,
+		"autoplace_settings":                    autoplaceSettings,
+		"default_enable_all_autoplace_controls": defaultEnableAllAutoplaceControls,
+		"seed":                                  seed,
 		"area_to_generate_at_start":             p.readBoundingBox(),
 		"starting_area":                         p.readFloat(),
 		"peaceful_mode":                         p.readBool(),
 		"starting_points":                       nil,
 		"property_expression_names":             nil,
 		"cliff_settings":                        nil,
+	}
+	if width != 0 {
+		settings["width"] = width
+	}
+	if height != 0 {
+		settings["height"] = height
 	}
 	if atLeastV2 {
 		settings["no_enemies_mode"] = p.readBool()
@@ -804,8 +815,6 @@ func mapExchangeExportMapGenSettings(settings map[string]interface{}) map[string
 		"autoplace_settings":                    map[string]interface{}{},
 		"default_enable_all_autoplace_controls": false,
 		"seed":                                  0,
-		"width":                                 0,
-		"height":                                0,
 		"area_to_generate_at_start": map[string]interface{}{
 			"left_top":     map[string]interface{}{"x": 0, "y": 0},
 			"right_bottom": map[string]interface{}{"x": 0, "y": 0},
@@ -878,9 +887,9 @@ func pruneDefaultAutoplaceSettings(settings map[string]interface{}) {
 
 func pruneDefaultPropertyExpressions(properties map[string]interface{}) {
 	defaults := map[string]string{
-		"control:aux:bias":          "0",
-		"control:aux:frequency":     "1",
-		"control:moisture:bias":     "0",
+		"control:aux:bias":           "0",
+		"control:aux:frequency":      "1",
+		"control:moisture:bias":      "0",
 		"control:moisture:frequency": "1",
 	}
 	for key, want := range defaults {
