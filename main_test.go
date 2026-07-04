@@ -232,24 +232,24 @@ func TestProfileExchangeStringRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse exported native exchange string: %v", err)
 	}
+	if decodedExport.Version != [4]uint16{2, 0, 10, 0} {
+		t.Fatalf("exported exchange version = %v, want 2.0.10-0", decodedExport.Version)
+	}
 	controls := asMap(decodedExport.MapGenSettings["autoplace_controls"])
-	for _, key := range []string{"rocks", "starting_area_moisture", "nauvis_cliff"} {
-		if _, ok := controls[key]; !ok {
-			t.Fatalf("exported exchange string missing Factorio runtime autoplace control %q", key)
+	for _, key := range []string{"coal", "copper-ore", "iron-ore", "stone"} {
+		if _, ok := controls[key]; ok {
+			t.Fatalf("exported exchange string included default autoplace control %q", key)
 		}
 	}
-	tileSettings := asMap(asMap(asMap(decodedExport.MapGenSettings["autoplace_settings"])["tile"])["settings"])
-	for _, key := range []string{"deepwater", "grass-1", "sand-1"} {
-		if _, ok := tileSettings[key]; !ok {
-			t.Fatalf("exported exchange string missing Factorio runtime tile autoplace setting %q", key)
-		}
+	if autoplaceSettings := asMap(decodedExport.MapGenSettings["autoplace_settings"]); len(autoplaceSettings) != 0 {
+		t.Fatalf("exported exchange string included default autoplace settings: %v", autoplaceSettings)
 	}
 	exportedMapGen, exportedMapSettings, err := decodeExchangeString(exported.ExchangeString)
 	if err != nil {
 		t.Fatalf("decode exported exchange string: %v", err)
 	}
-	if !bytes.Contains(exportedMapGen, []byte(`"nauvis_cliff"`)) || !bytes.Contains(exportedMapGen, []byte(`"deepwater"`)) {
-		t.Fatalf("decoded exported map-gen JSON missing runtime defaults: mapGen=%s", exportedMapGen)
+	if bytes.Contains(exportedMapGen, []byte(`"nauvis_cliff"`)) || bytes.Contains(exportedMapGen, []byte(`"deepwater"`)) {
+		t.Fatalf("decoded exported map-gen JSON included default runtime settings: mapGen=%s", exportedMapGen)
 	}
 	if !bytes.Contains(exportedMapSettings, []byte(`"pollution"`)) {
 		t.Fatalf("decoded exported map-settings JSON missing pollution settings: mapSettings=%s", exportedMapSettings)

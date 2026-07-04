@@ -658,7 +658,7 @@ func EncodeMapExchangeString(mapGenRaw, mapSettingsRaw json.RawMessage) (string,
 	}
 
 	w := &mapExchangeWriter{}
-	w.writeVersion([4]uint16{2, 0, 0, 0})
+	w.writeVersion([4]uint16{2, 0, 10, 0})
 	w.writeUint8(0)
 	w.writeMapGenSettings(mapGen)
 	w.writeMapSettings(mapSettings)
@@ -800,21 +800,8 @@ func (w *mapExchangeWriter) writeTerritorySettings(v interface{}) {
 
 func mapExchangeExportMapGenSettings(settings map[string]interface{}) map[string]interface{} {
 	out := map[string]interface{}{
-		"autoplace_controls": map[string]interface{}{
-			"coal":                   map[string]interface{}{},
-			"copper-ore":             map[string]interface{}{},
-			"crude-oil":              map[string]interface{}{},
-			"enemy-base":             map[string]interface{}{},
-			"iron-ore":               map[string]interface{}{},
-			"nauvis_cliff":           map[string]interface{}{},
-			"rocks":                  map[string]interface{}{},
-			"starting_area_moisture": map[string]interface{}{},
-			"stone":                  map[string]interface{}{},
-			"trees":                  map[string]interface{}{},
-			"uranium-ore":            map[string]interface{}{},
-			"water":                  map[string]interface{}{},
-		},
-		"autoplace_settings":                    defaultNauvisAutoplaceSettings(),
+		"autoplace_controls":                    map[string]interface{}{},
+		"autoplace_settings":                    map[string]interface{}{},
 		"default_enable_all_autoplace_controls": false,
 		"seed":                                  0,
 		"width":                                 0,
@@ -838,6 +825,7 @@ func mapExchangeExportMapGenSettings(settings map[string]interface{}) map[string
 		},
 	}
 	mergeMapGenExportSettings(out, settings)
+	pruneDefaultMapGenExportSettings(out)
 	return out
 }
 
@@ -856,23 +844,74 @@ func mergeMapGenExportSettings(dst, src map[string]interface{}) {
 	}
 }
 
-func defaultNauvisAutoplaceSettings() map[string]interface{} {
-	return map[string]interface{}{
-		"tile":       defaultAutoplaceSetting([]string{"deepwater", "dirt-1", "dirt-2", "dirt-3", "dirt-4", "dirt-5", "dirt-6", "dirt-7", "dry-dirt", "grass-1", "grass-2", "grass-3", "grass-4", "red-desert-0", "red-desert-1", "red-desert-2", "red-desert-3", "sand-1", "sand-2", "sand-3", "water"}),
-		"decorative": defaultAutoplaceSetting([]string{"brown-asterisk", "brown-asterisk-mini", "brown-carpet-grass", "brown-fluff", "brown-fluff-dry", "brown-hairy-grass", "cracked-mud-decal", "dark-mud-decal", "garballo", "garballo-mini-dry", "green-asterisk", "green-asterisk-mini", "green-bush-mini", "green-carpet-grass", "green-croton", "green-desert-bush", "green-hairy-grass", "green-pita", "green-pita-mini", "green-small-grass", "light-mud-decal", "medium-rock", "medium-sand-rock", "red-asterisk", "red-desert-bush", "red-desert-decal", "red-pita", "sand-decal", "sand-dune-decal", "small-rock", "small-sand-rock", "tiny-rock", "white-desert-bush"}),
-		"entity":     defaultAutoplaceSetting([]string{"big-rock", "big-sand-rock", "coal", "copper-ore", "crude-oil", "fish", "huge-rock", "iron-ore", "stone", "uranium-ore"}),
+func pruneDefaultMapGenExportSettings(settings map[string]interface{}) {
+	pruneDefaultAutoplaceControls(asMap(settings["autoplace_controls"]))
+	pruneDefaultAutoplaceSettings(asMap(settings["autoplace_settings"]))
+	pruneDefaultPropertyExpressions(asMap(settings["property_expression_names"]))
+	if isDefaultStartingPoints(asArray(settings["starting_points"])) {
+		settings["starting_points"] = []interface{}{}
 	}
 }
 
-func defaultAutoplaceSetting(keys []string) map[string]interface{} {
-	settings := make(map[string]interface{}, len(keys))
-	for _, key := range keys {
-		settings[key] = map[string]interface{}{}
+func pruneDefaultAutoplaceControls(controls map[string]interface{}) {
+	for key, value := range controls {
+		if isDefaultFrequencySizeRichness(value) {
+			delete(controls, key)
+		}
 	}
-	return map[string]interface{}{
-		"treat_missing_as_default": false,
-		"settings":                 settings,
+}
+
+func pruneDefaultAutoplaceSettings(settings map[string]interface{}) {
+	for key, value := range settings {
+		setting := asMap(value)
+		entries := asMap(setting["settings"])
+		for entryKey, entryValue := range entries {
+			if isDefaultFrequencySizeRichness(entryValue) {
+				delete(entries, entryKey)
+			}
+		}
+		if !asBool(setting["treat_missing_as_default"], false) && len(entries) == 0 {
+			delete(settings, key)
+		}
 	}
+}
+
+func pruneDefaultPropertyExpressions(properties map[string]interface{}) {
+	defaults := map[string]string{
+		"control:aux:bias":          "0",
+		"control:aux:frequency":     "1",
+		"control:moisture:bias":     "0",
+		"control:moisture:frequency": "1",
+	}
+	for key, want := range defaults {
+		if asString(properties[key], "") == want {
+			delete(properties, key)
+		}
+	}
+}
+
+func isDefaultFrequencySizeRichness(v interface{}) bool {
+	m := asMap(v)
+	if len(m) == 0 {
+		return true
+	}
+	frequency := asFloat(m["frequency"], 1)
+	size := asFloat(m["size"], 1)
+	richnessValue, hasRichness := m["richness"]
+	richness := asFloat(richnessValue, 1)
+	return floatEqual(frequency, 1) && floatEqual(size, 1) && (!hasRichness || floatEqual(richness, 1) || floatEqual(richness, 0))
+}
+
+func isDefaultStartingPoints(points []interface{}) bool {
+	if len(points) != 1 {
+		return false
+	}
+	point := asMap(points[0])
+	return floatEqual(asFloat(point["x"], 0), 0) && floatEqual(asFloat(point["y"], 0), 0)
+}
+
+func floatEqual(a, b float64) bool {
+	return math.Abs(a-b) < 0.000000001
 }
 
 func (w *mapExchangeWriter) writeMapGenSettings(settings map[string]interface{}) {
