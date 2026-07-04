@@ -228,8 +228,31 @@ func TestProfileExchangeStringRoutes(t *testing.T) {
 	if !strings.HasPrefix(exported.ExchangeString, ">>>") || !strings.HasSuffix(exported.ExchangeString, "<<<") {
 		t.Fatalf("exchange string = %q, want native Factorio wrapper", exported.ExchangeString)
 	}
-	if _, err := ParseMapExchangeString(exported.ExchangeString); err != nil {
+	decodedExport, err := ParseMapExchangeString(exported.ExchangeString)
+	if err != nil {
 		t.Fatalf("parse exported native exchange string: %v", err)
+	}
+	controls := asMap(decodedExport.MapGenSettings["autoplace_controls"])
+	for _, key := range []string{"rocks", "starting_area_moisture", "nauvis_cliff"} {
+		if _, ok := controls[key]; !ok {
+			t.Fatalf("exported exchange string missing Factorio runtime autoplace control %q", key)
+		}
+	}
+	tileSettings := asMap(asMap(asMap(decodedExport.MapGenSettings["autoplace_settings"])["tile"])["settings"])
+	for _, key := range []string{"deepwater", "grass-1", "sand-1"} {
+		if _, ok := tileSettings[key]; !ok {
+			t.Fatalf("exported exchange string missing Factorio runtime tile autoplace setting %q", key)
+		}
+	}
+	exportedMapGen, exportedMapSettings, err := decodeExchangeString(exported.ExchangeString)
+	if err != nil {
+		t.Fatalf("decode exported exchange string: %v", err)
+	}
+	if !bytes.Contains(exportedMapGen, []byte(`"nauvis_cliff"`)) || !bytes.Contains(exportedMapGen, []byte(`"deepwater"`)) {
+		t.Fatalf("decoded exported map-gen JSON missing runtime defaults: mapGen=%s", exportedMapGen)
+	}
+	if !bytes.Contains(exportedMapSettings, []byte(`"pollution"`)) {
+		t.Fatalf("decoded exported map-settings JSON missing pollution settings: mapSettings=%s", exportedMapSettings)
 	}
 
 	doc, err := st.readProfile("Source")

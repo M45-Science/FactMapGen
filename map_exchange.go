@@ -798,7 +798,85 @@ func (w *mapExchangeWriter) writeTerritorySettings(v interface{}) {
 	w.writeUint32(uint32(asInt(m["minimum_territory_size"], 0)))
 }
 
+func mapExchangeExportMapGenSettings(settings map[string]interface{}) map[string]interface{} {
+	out := map[string]interface{}{
+		"autoplace_controls": map[string]interface{}{
+			"coal":                   map[string]interface{}{},
+			"copper-ore":             map[string]interface{}{},
+			"crude-oil":              map[string]interface{}{},
+			"enemy-base":             map[string]interface{}{},
+			"iron-ore":               map[string]interface{}{},
+			"nauvis_cliff":           map[string]interface{}{},
+			"rocks":                  map[string]interface{}{},
+			"starting_area_moisture": map[string]interface{}{},
+			"stone":                  map[string]interface{}{},
+			"trees":                  map[string]interface{}{},
+			"uranium-ore":            map[string]interface{}{},
+			"water":                  map[string]interface{}{},
+		},
+		"autoplace_settings":                    defaultNauvisAutoplaceSettings(),
+		"default_enable_all_autoplace_controls": false,
+		"seed":                                  0,
+		"width":                                 0,
+		"height":                                0,
+		"area_to_generate_at_start": map[string]interface{}{
+			"left_top":     map[string]interface{}{"x": 0, "y": 0},
+			"right_bottom": map[string]interface{}{"x": 0, "y": 0},
+			"orientation":  map[string]interface{}{"x": 0, "y": 0},
+		},
+		"starting_area":             1,
+		"peaceful_mode":             false,
+		"no_enemies_mode":           false,
+		"starting_points":           []interface{}{map[string]interface{}{"x": 0, "y": 0}},
+		"property_expression_names": map[string]interface{}{},
+		"cliff_settings": map[string]interface{}{
+			"name":                     "cliff",
+			"cliff_elevation_0":        10,
+			"cliff_elevation_interval": 40,
+			"richness":                 1,
+			"cliff_smoothing":          0,
+		},
+	}
+	mergeMapGenExportSettings(out, settings)
+	return out
+}
+
+func mergeMapGenExportSettings(dst, src map[string]interface{}) {
+	for key, value := range src {
+		if strings.HasPrefix(key, "_") {
+			continue
+		}
+		srcMap, srcIsMap := value.(map[string]interface{})
+		dstMap, dstIsMap := dst[key].(map[string]interface{})
+		if srcIsMap && dstIsMap {
+			mergeMapGenExportSettings(dstMap, srcMap)
+			continue
+		}
+		dst[key] = value
+	}
+}
+
+func defaultNauvisAutoplaceSettings() map[string]interface{} {
+	return map[string]interface{}{
+		"tile":       defaultAutoplaceSetting([]string{"deepwater", "dirt-1", "dirt-2", "dirt-3", "dirt-4", "dirt-5", "dirt-6", "dirt-7", "dry-dirt", "grass-1", "grass-2", "grass-3", "grass-4", "red-desert-0", "red-desert-1", "red-desert-2", "red-desert-3", "sand-1", "sand-2", "sand-3", "water"}),
+		"decorative": defaultAutoplaceSetting([]string{"brown-asterisk", "brown-asterisk-mini", "brown-carpet-grass", "brown-fluff", "brown-fluff-dry", "brown-hairy-grass", "cracked-mud-decal", "dark-mud-decal", "garballo", "garballo-mini-dry", "green-asterisk", "green-asterisk-mini", "green-bush-mini", "green-carpet-grass", "green-croton", "green-desert-bush", "green-hairy-grass", "green-pita", "green-pita-mini", "green-small-grass", "light-mud-decal", "medium-rock", "medium-sand-rock", "red-asterisk", "red-desert-bush", "red-desert-decal", "red-pita", "sand-decal", "sand-dune-decal", "small-rock", "small-sand-rock", "tiny-rock", "white-desert-bush"}),
+		"entity":     defaultAutoplaceSetting([]string{"big-rock", "big-sand-rock", "coal", "copper-ore", "crude-oil", "fish", "huge-rock", "iron-ore", "stone", "uranium-ore"}),
+	}
+}
+
+func defaultAutoplaceSetting(keys []string) map[string]interface{} {
+	settings := make(map[string]interface{}, len(keys))
+	for _, key := range keys {
+		settings[key] = map[string]interface{}{}
+	}
+	return map[string]interface{}{
+		"treat_missing_as_default": false,
+		"settings":                 settings,
+	}
+}
+
 func (w *mapExchangeWriter) writeMapGenSettings(settings map[string]interface{}) {
+	settings = mapExchangeExportMapGenSettings(settings)
 	w.writeStringDict(asMap(settings["autoplace_controls"]), w.writeFrequencySizeRichness)
 	w.writeStringDict(asMap(settings["autoplace_settings"]), w.writeAutoplaceSetting)
 	w.writeBool(asBool(settings["default_enable_all_autoplace_controls"], false))
