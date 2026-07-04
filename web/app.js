@@ -135,6 +135,7 @@ const controlTooltips = {
   "Expansion distance": "Maximum distance in chunks from existing enemy bases for new expansion candidates.",
   "Expansion cooldown": "Minimum time before enemy expansion attempts. Saved as ticks; shown here as minutes.",
   "Built-in advanced": "Applies advanced portions of Factorio's Marathon and Death world presets.",
+  "Science/research cost": "Multiplier for technology science pack costs. Marathon uses 4x.",
   "Spoil time": "Multiplier for Space Age item spoilage timers.",
   "Pollution profile": "Sets pollution spread, absorption, and attack cost together.",
   "Pollution spread": "Percentage of pollution diffused to neighboring chunks each second.",
@@ -1482,7 +1483,7 @@ function renderVisualControls() {
     { label: "Death", tooltip: "Uses Death world pollution aging and attack pollution cost.", apply: () => applyAdvancedPreset("death-world") },
     { label: "Death marathon", tooltip: "Uses Death world marathon technology and pollution settings.", apply: () => applyAdvancedPreset("death-world-marathon") },
   ]);
-  addPresetSliderField(els.simulationControls, "Technology price (x)", state.mapSettings, ["difficulty_settings", "technology_price_multiplier"], 0.25, 10, 0.25, [
+  addPresetSliderField(els.simulationControls, "Science/research cost (x)", state.mapSettings, ["difficulty_settings", "technology_price_multiplier"], 0.25, 10, 0.25, [
     { label: "Cheap", value: 0.5 },
     { label: "Normal", value: 1 },
     { label: "Marathon", value: 4 },
