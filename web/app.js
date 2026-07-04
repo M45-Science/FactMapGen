@@ -107,11 +107,16 @@ const factorioScaleValues = {
 
 const controlTooltips = {
   "World size": "Width and height in tiles. Factorio uses 0 for an infinite map; Ribbon keeps height at 128 tiles.",
+  "Starting point": "Initial spawn point in map coordinates. Most presets keep this at 0,0.",
   "Starting area": "Multiplier for the biter-free starting area radius. Larger values give a safer spawn.",
+  "Missing autoplace controls": "When enabled, Factorio treats autoplace controls not listed in this file as enabled at their prototype defaults.",
   "Built-in resources": "Applies resource portions of Factorio's bundled map generation presets without changing unrelated settings.",
   "Space Age controls": "Space Age-only autoplace controls are separated because base Factorio installs may not recognize these prototype names.",
   "Built-in terrain": "Applies terrain portions of Factorio's bundled map generation presets without changing unrelated settings.",
   Elevation: "Chooses the base elevation expression. Lakes and Island match Factorio's built-in preset map types.",
+  "Cliff prototype": "Name of the cliff prototype to generate. Nauvis uses cliff; Space Age planets use planet-specific cliff prototypes.",
+  "Cliff control": "Autoplace control that drives cliff placement. Nauvis uses nauvis_cliff; Space Age planets use planet-specific controls.",
+  "Cliff base elevation": "Elevation of the first cliff row. The default Nauvis value is 10.",
   "Cliff interval": "Elevation gap between cliff rows. Lower interval values create more frequent cliff lines.",
   "Cliff continuity": "How connected cliff rows are. 0 disables cliffs; higher values make longer, denser cliff lines.",
   "Cliff smoothing": "Extra coast-following cliff smoothing used by Factorio's Lakes and Island presets.",
@@ -121,6 +126,9 @@ const controlTooltips = {
   "Terrain bias": "Biases terrain type toward sandy or greener terrain.",
   "No biters": "Turns off enemy bases, evolution, and expansion while enabling peaceful mode.",
   "Enemy bases": "Controls whether enemy-base autoplace is active.",
+  "No enemies mode": "Disables enemy spawning at map generation time in Factorio 2.x exchange strings.",
+  "Enemy base frequency": "Controls how often enemy bases are placed. Set to 0 to disable enemy bases.",
+  "Enemy base size": "Controls enemy base patch size. Set to 0 to disable enemy bases.",
   "Built-in enemy": "Applies enemy-related portions of Factorio's Death world, Death world marathon, and Rail world presets.",
   "Peaceful mode": "Enemies do not attack first, but bases may still exist unless enemy bases are disabled.",
   "Evolution profile": "Sets the three evolution factors together.",
@@ -1333,6 +1341,7 @@ function renderVisualControls() {
   if (!state.mapGen || !state.mapSettings) return;
 
   addWorldSizeField(els.worldControls);
+  addStartingPointField(els.worldControls);
   addPresetSliderField(els.worldControls, "Starting area (x)", state.mapGen, ["starting_area"], 0.25, 6, 0.05, [
     { label: "Small", value: factorioScaleValue("small") },
     { label: "Normal", value: 1 },
@@ -1352,6 +1361,9 @@ function renderVisualControls() {
     { label: "Lakes", value: "elevation_lakes" },
     { label: "Island", value: "elevation_island" },
   ]);
+  addTextField(els.terrainControls, "Cliff prototype", state.mapGen, ["cliff_settings", "name"], "cliff");
+  addTextField(els.terrainControls, "Cliff control", state.mapGen, ["cliff_settings", "control"], "nauvis_cliff");
+  addNumberField(els.terrainControls, "Cliff base elevation", state.mapGen, ["cliff_settings", "cliff_elevation_0"], -1000, 1000, 1);
   addPresetSliderField(els.terrainControls, "Cliff interval (elevation)", state.mapGen, ["cliff_settings", "cliff_elevation_interval"], 1, 200, 1, [
     { label: "Very high", value: 10 },
     { label: "High", value: 20 },
@@ -1396,6 +1408,20 @@ function renderVisualControls() {
 
   addNoBitersField(els.enemyControls);
   addEnemyBasesField(els.enemyControls);
+  addPresetSliderField(els.enemyControls, "Enemy base frequency", state.mapGen, ["autoplace_controls", "enemy-base", "frequency"], 0, 6, 0.1, [
+    { label: "Off", value: 0 },
+    { label: "Low", value: 0.5 },
+    { label: "Normal", value: 1 },
+    { label: "High", value: 2 },
+    { label: "Very high", value: 3 },
+  ], { fallback: 1 });
+  addPresetSliderField(els.enemyControls, "Enemy base size", state.mapGen, ["autoplace_controls", "enemy-base", "size"], 0, 6, 0.1, [
+    { label: "Off", value: 0 },
+    { label: "Small", value: 0.5 },
+    { label: "Normal", value: 1 },
+    { label: "Big", value: 2 },
+    { label: "Very big", value: 3 },
+  ], { fallback: 1 });
   addPresetButtons(els.enemyControls, "Built-in enemy", [
     { label: "Default", tooltip: "Restores normal enemy bases, evolution, expansion, and attack group limits.", apply: () => applyEnemyPreset("default") },
     { label: "Death", tooltip: "Biters are more dangerous and evolve faster.", apply: () => applyEnemyPreset("death-world") },
@@ -1403,6 +1429,7 @@ function renderVisualControls() {
     { label: "Rail", tooltip: "Keeps bases but disables enemy re-expansion, matching Factorio's Rail world preset.", apply: () => applyEnemyPreset("rail-world") },
   ]);
   addCheckboxField(els.enemyControls, "Peaceful mode", state.mapGen, ["peaceful_mode"], { rerender: true });
+  addCheckboxField(els.enemyControls, "No enemies mode", state.mapGen, ["no_enemies_mode"], { rerender: true });
   addCheckboxField(els.enemyControls, "Evolution", state.mapSettings, ["enemy_evolution", "enabled"], { rerender: true });
   addPresetButtons(els.enemyControls, "Evolution profile", [
     { label: "Off", apply: () => setEvolutionProfile(false, 0, 0, 0) },
@@ -1741,6 +1768,7 @@ function hidePreview(message) {
 }
 
 function renderAutoplace() {
+  addCheckboxField(els.autoplaceGrid, "Missing autoplace controls", state.mapGen, ["default_enable_all_autoplace_controls"]);
   addPresetButtons(els.autoplaceGrid, "Built-in resources", [
     { label: "Default", tooltip: "Restores normal resource, water, tree, rock, moisture, and cliff autoplace multipliers.", apply: () => applyResourcePreset("default") },
     { label: "Rich", tooltip: "Resource patches have much higher richness, matching Factorio's Rich resources preset.", apply: () => applyResourcePreset("rich-resources") },
@@ -1962,6 +1990,52 @@ function addWorldSizeField(parent) {
   controls.append(buttons, custom);
   wrap.append(label, controls);
   parent.append(wrap);
+}
+
+function addStartingPointField(parent) {
+  const wrap = document.createElement("div");
+  wrap.className = "field";
+  const label = document.createElement("label");
+  label.textContent = "Starting point";
+  addTooltipMark(label, controlTooltip("Starting point"), "Starting point");
+
+  const point = firstStartingPoint();
+  const inputs = document.createElement("div");
+  inputs.className = "paired-inputs";
+  const x = document.createElement("input");
+  x.type = "number";
+  x.step = "1";
+  x.value = String(numericValue(point.x));
+  x.title = "Starting X coordinate";
+  x.ariaLabel = "Starting point X";
+  const y = document.createElement("input");
+  y.type = "number";
+  y.step = "1";
+  y.value = String(numericValue(point.y));
+  y.title = "Starting Y coordinate";
+  y.ariaLabel = "Starting point Y";
+
+  const sync = () => {
+    point.x = numericValue(x.value);
+    point.y = numericValue(y.value);
+    afterVisualEdit();
+  };
+  x.addEventListener("input", sync);
+  y.addEventListener("input", sync);
+
+  inputs.append(x, y);
+  wrap.append(label, inputs);
+  parent.append(wrap);
+}
+
+function firstStartingPoint() {
+  if (!Array.isArray(state.mapGen.starting_points)) {
+    state.mapGen.starting_points = [];
+  }
+  if (!state.mapGen.starting_points[0] || typeof state.mapGen.starting_points[0] !== "object" || Array.isArray(state.mapGen.starting_points[0])) {
+    state.mapGen.starting_points[0] = { x: 0, y: 0 };
+  }
+  return state.mapGen.starting_points[0];
 }
 
 function addSelectField(parent, labelText, root, path, choices) {
