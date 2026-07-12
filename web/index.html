@@ -115,6 +115,7 @@
 
               <div class="mapgen-editor-actions">
                 <button id="duplicateBtn" type="button">Duplicate</button>
+                <button id="renameBtn" type="button">Rename</button>
                 <button id="downloadBtn" type="button">Export string</button>
                 <button id="downloadZipBtn" type="button">Download zip</button>
                 <button id="deleteBtn" type="button" class="danger">Delete</button>
@@ -259,6 +260,23 @@
         <div class="modal-actions">
           <button id="cancelCreateBtn" type="button">Cancel</button>
           <button type="submit" class="primary">Create</button>
+        </div>
+      </form>
+    </div>
+
+    <div id="renamePresetDialog" class="modal-overlay" hidden>
+      <form id="renameForm" class="modal-dialog rename-dialog" aria-label="Rename preset">
+        <div class="modal-header">
+          <h2>Rename preset</h2>
+          <button id="closeRenameBtn" type="button" class="small-button">Close</button>
+        </div>
+        <label>
+          Preset name
+          <input id="renameProfileName" name="renameProfileName" autocomplete="off" maxlength="64" />
+        </label>
+        <div class="modal-actions">
+          <button id="cancelRenameBtn" type="button">Cancel</button>
+          <button type="submit" class="primary">Rename</button>
         </div>
       </form>
     </div>

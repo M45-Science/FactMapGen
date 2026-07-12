@@ -23,9 +23,9 @@ go build -o factmapgen .
 
 ## Authentication
 
-Guests can browse presets, inspect settings, generate previews, and download preset ZIP files without logging in. Creating, saving, duplicating, and deleting presets require a logged-in user. Admin users can add, edit, and delete accounts from the Admin panel in the browser. Passwords are stored as PBKDF2-SHA256 hashes in SQLite, and sessions use HttpOnly cookies.
+Guests can browse presets, create or import a transient working preset, edit settings, generate previews, export exchange strings, and download ZIP files without logging in. Guest work never writes preset folders on disk. Persisting server presets by creating, importing, saving, duplicating, renaming, or deleting generators requires a logged-in user. Admin users can add, edit, and delete accounts from the Admin panel in the browser. Passwords are stored as PBKDF2-SHA256 hashes in SQLite, and sessions use HttpOnly cookies.
 
-Preset create, update, delete, and duplicate actions write audit log entries with the acting user, action, target, detail, and timestamp. Account changes are audited too.
+Preset create, import, update, duplicate, rename, and delete actions write audit log entries with the acting user, action, target, detail, and timestamp. Account changes are audited too.
 
 ## Server Files
 
@@ -118,9 +118,11 @@ The bundled default templates are based on Wube's public `factorio-data` example
 - `POST /api/factorio/install` admin only; deletes and reinstalls the managed `-factorio-dir` headless install
 - `GET /api/profiles`; public
 - `POST /api/profiles` with `{ "name": "...", "preset": "default" }`; login required
+- `POST /api/profiles/import-exchange` with `{ "name": "...", "exchangeString": ">>><<<" }`; guests receive a transient `local:` document; logged-in users create a server preset
 - `GET /api/profiles/{name}`; public
 - `PUT /api/profiles/{name}` with `{ "mapGen": {...}, "mapSettings": {...} }`; login required
 - `DELETE /api/profiles/{name}`; login required
+- `POST /api/profiles/{name}/rename` with `{ "name": "new name" }`; login required
 - `POST /api/profiles/{name}/duplicate` with `{ "name": "copy name" }`; login required
 - `GET /api/profiles/{name}/download.zip`; public
 - `POST /api/profiles/{name}/preview` with `{ "size": 768, "planet": "nauvis", "zoom": "1", "lossless": false, "mapGen": {...} }`; public and queued; guests are capped at 512 pixels and normal zoom; `lossless` and custom `zoom` are honored only for signed-in users; `zoom` is map scale: `out-4`, `out-3`, and `out-2` show 4, 3, or 2 meters per output pixel; `1` is normal 1 meter per pixel; `in-2`, `in-3`, and `in-4` crop the center to 1/2, 1/3, or 1/4 meter per output pixel with integer scaling; `mapGen` is optional and lets the server preview unsaved edits from a temporary file

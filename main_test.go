@@ -45,6 +45,32 @@ func TestValidateProfileName(t *testing.T) {
 	}
 }
 
+func TestSanitizeProfileName(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+	}{
+		{"  My Map  ", "My Map"},
+		{"../escape", "escape"},
+		{"bad/name\\here", "bad-name-here"},
+		{"name:with*symbols?", "name-with-symbols"},
+		{"spaces\tand\nlines", "spaces and lines"},
+		{"---", ""},
+		{strings.Repeat("a", 80), strings.Repeat("a", maxProfileNameLength)},
+	}
+
+	for _, test := range tests {
+		if got := sanitizeProfileName(test.name); got != test.want {
+			t.Fatalf("sanitizeProfileName(%q) = %q, want %q", test.name, got, test.want)
+		}
+		if test.want != "" {
+			if err := validateProfileName(test.want); err != nil {
+				t.Fatalf("sanitized name %q did not validate: %v", test.want, err)
+			}
+		}
+	}
+}
+
 func newTestStore(t *testing.T) *store {
 	t.Helper()
 	root := t.TempDir()
@@ -110,6 +136,43 @@ func TestGuestCanReadAndDownloadProfilesButNotMutate(t *testing.T) {
 	if duplicate.Code != http.StatusUnauthorized {
 		t.Fatalf("guest duplicate status = %d body=%s", duplicate.Code, duplicate.Body.String())
 	}
+
+	docForImport, err := st.readProfile("Guest Copy")
+	if err != nil {
+		t.Fatalf("read guest copy for local import: %v", err)
+	}
+	exchangeString, err := EncodeMapExchangeString(docForImport.MapGen, docForImport.MapSettings)
+	if err != nil {
+		t.Fatalf("encode exchange string for local import: %v", err)
+	}
+	importBody, _ := json.Marshal(importExchangeStringRequest{Name: "../Guest/Import??", ExchangeString: exchangeString})
+	importExchange := httptest.NewRecorder()
+	srv.handleProfile(importExchange, httptest.NewRequest(http.MethodPost, "/api/profiles/import-exchange", bytes.NewReader(importBody)))
+	if importExchange.Code != http.StatusOK {
+		t.Fatalf("guest local import status = %d body=%s", importExchange.Code, importExchange.Body.String())
+	}
+	var imported profileDocument
+	if err := json.Unmarshal(importExchange.Body.Bytes(), &imported); err != nil {
+		t.Fatalf("decode guest local import response: %v", err)
+	}
+	if imported.ID != "local:Guest-Import" || imported.Source != profileSourceLocal || imported.ReadOnly {
+		t.Fatalf("guest local import doc = %#v, want local Guest-Import", imported)
+	}
+	if _, err := os.Stat(filepath.Join(st.customRoot, "Guest-Import")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("guest local import wrote a preset directory err=%v, want not exist", err)
+	}
+
+	rename := httptest.NewRecorder()
+	srv.handleProfile(rename, httptest.NewRequest(http.MethodPost, "/api/profiles/Guest%20Copy/rename", strings.NewReader(`{"name":"Blocked rename"}`)))
+	if rename.Code != http.StatusUnauthorized {
+		t.Fatalf("guest rename status = %d body=%s", rename.Code, rename.Body.String())
+	}
+
+	deleteRec := httptest.NewRecorder()
+	srv.handleProfile(deleteRec, httptest.NewRequest(http.MethodDelete, "/api/profiles/Guest%20Copy", nil))
+	if deleteRec.Code != http.StatusUnauthorized {
+		t.Fatalf("guest delete status = %d body=%s", deleteRec.Code, deleteRec.Body.String())
+	}
 }
 
 func TestDownloadZipCanUsePostedCurrentSettings(t *testing.T) {
@@ -154,6 +217,24 @@ func TestDownloadZipCanUsePostedCurrentSettings(t *testing.T) {
 	}
 	if !strings.Contains(files[mapSettingsFile], `"enabled": false`) {
 		t.Fatalf("map-settings zip entry did not use posted settings: %s", files[mapSettingsFile])
+	}
+
+	saved, err := st.readProfile("Guest Zip")
+	if err != nil {
+		t.Fatalf("read saved profile after current-settings download: %v", err)
+	}
+	if bytes.Contains(saved.MapGen, []byte(`"width": 321`)) || bytes.Contains(saved.MapSettings, []byte(`"enabled": false`)) {
+		t.Fatalf("posted download settings were written to saved profile: mapGen=%s mapSettings=%s", saved.MapGen, saved.MapSettings)
+	}
+
+	localReq := httptest.NewRequest(http.MethodPost, "/api/profiles/local%3AGuest%20Zip/download.zip", strings.NewReader(`{"name":"Guest Zip Local","mapGen":{"width":123},"mapSettings":{"pollution":{"enabled":false}}}`))
+	localRec := httptest.NewRecorder()
+	srv.handleProfile(localRec, localReq)
+	if localRec.Code != http.StatusOK {
+		t.Fatalf("local download current settings status = %d body=%s", localRec.Code, localRec.Body.String())
+	}
+	if got := localRec.Header().Get("Content-Disposition"); !strings.Contains(got, "Guest-Zip-Local-") {
+		t.Fatalf("local Content-Disposition = %q, want Guest-Zip-Local filename", got)
 	}
 }
 
@@ -201,6 +282,95 @@ func TestStoreCreateReadAndSave(t *testing.T) {
 	}
 	if bytes.Contains(saved.MapGen, []byte(`"width"`)) || bytes.Contains(saved.MapGen, []byte(`"height"`)) {
 		t.Fatalf("saved map gen retained implicit map dimensions: %s", saved.MapGen)
+	}
+}
+
+func TestStoreRenameProfile(t *testing.T) {
+	st := newTestStore(t)
+	doc, err := st.createProfile(" ../Old/Name?? ", "default")
+	if err != nil {
+		t.Fatalf("createProfile: %v", err)
+	}
+	if doc.Name != "Old-Name" || doc.ID != "custom:Old-Name" {
+		t.Fatalf("sanitized created profile = %q/%q, want Old-Name/custom:Old-Name", doc.Name, doc.ID)
+	}
+	saved, err := st.saveProfile(doc.ID, json.RawMessage(`{"width": 512, "height": 256}`), doc.MapSettings)
+	if err != nil {
+		t.Fatalf("saveProfile: %v", err)
+	}
+
+	renamed, err := st.renameProfile(saved.ID, " ../New/Name:?? ")
+	if err != nil {
+		t.Fatalf("renameProfile: %v", err)
+	}
+	if renamed.ID != "custom:New-Name" || renamed.Name != "New-Name" || renamed.ReadOnly {
+		t.Fatalf("renamed profile = %#v, want custom New-Name", renamed)
+	}
+	if !bytes.Contains(renamed.MapGen, []byte(`"width": 512`)) {
+		t.Fatalf("renamed profile lost map-gen contents: %s", renamed.MapGen)
+	}
+	if _, err := os.Stat(filepath.Join(st.customRoot, "Old-Name")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("old profile dir stat err = %v, want not exist", err)
+	}
+	if _, err := os.Stat(filepath.Join(st.customRoot, "New-Name", mapGenFile)); err != nil {
+		t.Fatalf("new profile map-gen missing: %v", err)
+	}
+	if _, err := st.readProfile("Old-Name"); !errors.Is(err, errProfileNotFound) {
+		t.Fatalf("read old profile err = %v, want errProfileNotFound", err)
+	}
+
+	if _, err := st.createProfile("Taken", "default"); err != nil {
+		t.Fatalf("create taken profile: %v", err)
+	}
+	if _, err := st.renameProfile("New-Name", "Taken"); !errors.Is(err, errProfileExists) {
+		t.Fatalf("rename conflict err = %v, want errProfileExists", err)
+	}
+	if _, err := st.renameProfile("New-Name", "////"); !errors.Is(err, errInvalidProfileName) {
+		t.Fatalf("rename invalid err = %v, want errInvalidProfileName", err)
+	}
+	if _, err := st.renameProfile("default:Default", "Renamed Default"); !errors.Is(err, errReadOnlyProfile) {
+		t.Fatalf("rename default err = %v, want errReadOnlyProfile", err)
+	}
+}
+
+func TestProfileRenameRoute(t *testing.T) {
+	st := newTestStore(t)
+	if _, err := st.createProfile("Before", "default"); err != nil {
+		t.Fatalf("createProfile: %v", err)
+	}
+	auth, password := newTestAuthStore(t)
+	srv := &server{store: st, auth: auth}
+
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/session", strings.NewReader(`{"username":"admin","password":"`+password+`"}`))
+	login := httptest.NewRecorder()
+	srv.handleSession(login, loginReq)
+	if login.Code != http.StatusOK {
+		t.Fatalf("login status = %d body=%s", login.Code, login.Body.String())
+	}
+	cookies := login.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("login did not set a cookie")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/profiles/Before/rename", strings.NewReader(`{"name":"After"}`))
+	req.AddCookie(cookies[0])
+	rec := httptest.NewRecorder()
+	srv.handleProfile(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rename status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var doc profileDocument
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode rename response: %v", err)
+	}
+	if doc.ID != "custom:After" || doc.Name != "After" {
+		t.Fatalf("renamed doc id/name = %q/%q, want custom:After/After", doc.ID, doc.Name)
+	}
+	if _, err := st.readProfile("After"); err != nil {
+		t.Fatalf("read renamed profile: %v", err)
+	}
+	if _, err := st.readProfile("Before"); !errors.Is(err, errProfileNotFound) {
+		t.Fatalf("read old route profile err = %v, want errProfileNotFound", err)
 	}
 }
 
@@ -360,10 +530,17 @@ func TestStoreWritesProfileZip(t *testing.T) {
 	}
 }
 
-func TestStoreRejectsInvalidJSONAndTraversal(t *testing.T) {
+func TestStoreRejectsInvalidJSONAndSanitizesTraversal(t *testing.T) {
 	st := newTestStore(t)
-	if _, err := st.createProfile("../Escape", "default"); !errors.Is(err, errInvalidProfileName) {
-		t.Fatalf("createProfile traversal err = %v, want errInvalidProfileName", err)
+	doc, err := st.createProfile("../Escape", "default")
+	if err != nil {
+		t.Fatalf("createProfile sanitized traversal name: %v", err)
+	}
+	if doc.Name != "Escape" || doc.ID != "custom:Escape" {
+		t.Fatalf("sanitized traversal profile = %q/%q, want Escape/custom:Escape", doc.Name, doc.ID)
+	}
+	if _, err := os.Stat(filepath.Join(st.customRoot, "Escape", mapGenFile)); err != nil {
+		t.Fatalf("sanitized traversal profile was not written inside custom root: %v", err)
 	}
 
 	if _, err := st.saveProfile("Bad", json.RawMessage(`{"ok": true} trailing`), json.RawMessage(`{}`)); err == nil {

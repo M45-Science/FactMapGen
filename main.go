@@ -39,6 +39,7 @@ const (
 	previewAVIFCPUUsed       = 6
 	maxPreviewOutputSize     = 4096
 	maxFactorioPreviewSize   = 16384
+	maxProfileNameLength     = 64
 	previewImageRetention    = 30 * time.Minute
 	maxPreviewImages         = 100
 )
@@ -92,6 +93,7 @@ type createProfileRequest struct {
 }
 
 type saveProfileRequest struct {
+	Name        string          `json:"name,omitempty"`
 	MapGen      json.RawMessage `json:"mapGen"`
 	MapSettings json.RawMessage `json:"mapSettings"`
 }
@@ -111,6 +113,10 @@ type exchangeStringResponse struct {
 }
 
 type duplicateProfileRequest struct {
+	Name string `json:"name"`
+}
+
+type renameProfileRequest struct {
 	Name string `json:"name"`
 }
 
@@ -160,6 +166,7 @@ var profileNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$`
 const (
 	profileSourceDefault = "default"
 	profileSourceCustom  = "custom"
+	profileSourceLocal   = "local"
 )
 
 type profileRef struct {
@@ -467,10 +474,7 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		actor, ok := s.requireUser(w, r)
-		if !ok {
-			return
-		}
+		actor, authErr := s.currentUser(r)
 		var req importExchangeStringRequest
 		if err := decodeJSONRequest(r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -479,6 +483,19 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 		mapGen, mapSettings, err := decodeExchangeString(req.ExchangeString)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if authErr != nil && !errors.Is(authErr, errAuthRequired) {
+			writeAuthError(w, authErr)
+			return
+		}
+		if errors.Is(authErr, errAuthRequired) {
+			name, err := canonicalProfileName(req.Name)
+			if err != nil {
+				writeStoreError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, localProfileDocument(name, mapGen, mapSettings))
 			return
 		}
 		doc, err := s.store.createProfileFromDocuments(req.Name, mapGen, mapSettings)
@@ -558,12 +575,16 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			doc, err := s.store.readProfile(name)
-			if err != nil {
-				writeStoreError(w, err)
-				return
+			profileName := strings.TrimSpace(req.Name)
+			if profileName == "" {
+				doc, err := s.store.readProfile(name)
+				if err != nil {
+					writeStoreError(w, err)
+					return
+				}
+				profileName = doc.Name
 			}
-			if err := writeProfileZip(w, doc.Name, req.MapGen, req.MapSettings); err != nil {
+			if err := writeProfileZip(w, profileName, req.MapGen, req.MapSettings); err != nil {
 				writeStoreError(w, err)
 			}
 		default:
@@ -593,6 +614,30 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		s.auth.logAudit(actor, "duplicate", "profile", doc.ID, auditDetail(map[string]any{"source": name}))
 		writeJSON(w, http.StatusCreated, doc)
+		return
+	}
+
+	if len(parts) == 2 && parts[1] == "rename" {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		actor, ok := s.requireUser(w, r)
+		if !ok {
+			return
+		}
+		var req renameProfileRequest
+		if err := decodeJSONRequest(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		doc, err := s.store.renameProfile(name, req.Name)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		s.auth.logAudit(actor, "rename", "profile", doc.ID, auditDetail(map[string]any{"from": name}))
+		writeJSON(w, http.StatusOK, doc)
 		return
 	}
 
@@ -766,8 +811,8 @@ func (s *store) createProfile(name, preset string) (profileDocument, error) {
 }
 
 func (s *store) createProfileFromDocuments(name string, mapGen, mapSettings []byte) (profileDocument, error) {
-	name = strings.TrimSpace(name)
-	if err := validateProfileName(name); err != nil {
+	name, err := canonicalProfileName(name)
+	if err != nil {
 		return profileDocument{}, err
 	}
 	ref := profileRef{Source: profileSourceCustom, Name: name}
@@ -784,8 +829,8 @@ func (s *store) duplicateProfile(sourceName, targetName string) (profileDocument
 	if err != nil {
 		return profileDocument{}, err
 	}
-	targetName = strings.TrimSpace(targetName)
-	if err := validateProfileName(targetName); err != nil {
+	targetName, err = canonicalProfileName(targetName)
+	if err != nil {
 		return profileDocument{}, err
 	}
 	target := profileRef{Source: profileSourceCustom, Name: targetName}
@@ -795,6 +840,52 @@ func (s *store) duplicateProfile(sourceName, targetName string) (profileDocument
 		return profileDocument{}, err
 	}
 	return s.saveProfile(targetName, source.MapGen, source.MapSettings)
+}
+
+func (s *store) renameProfile(identifier, targetName string) (profileDocument, error) {
+	source, err := writableProfileRef(identifier)
+	if err != nil {
+		return profileDocument{}, err
+	}
+	if source.readOnly() {
+		return profileDocument{}, errReadOnlyProfile
+	}
+	if err := s.ensureProfileExists(source); err != nil {
+		return profileDocument{}, err
+	}
+
+	targetName, err = canonicalProfileName(targetName)
+	if err != nil {
+		return profileDocument{}, err
+	}
+	if targetName == source.Name {
+		return s.readProfile(source.id())
+	}
+
+	target := profileRef{Source: profileSourceCustom, Name: targetName}
+	if _, err := os.Stat(s.profileDir(target)); err == nil {
+		return profileDocument{}, errProfileExists
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return profileDocument{}, err
+	}
+	if err := os.Rename(s.profileDir(source), s.profileDir(target)); err != nil {
+		return profileDocument{}, err
+	}
+	return s.readProfile(target.id())
+}
+
+func localProfileDocument(name string, mapGen, mapSettings []byte) profileDocument {
+	ref := profileRef{Source: profileSourceLocal, Name: name}
+	return profileDocument{
+		Name:        name,
+		ID:          ref.id(),
+		Source:      ref.Source,
+		ReadOnly:    false,
+		UpdatedAt:   time.Now().UTC().Format(time.RFC3339),
+		Directory:   "",
+		MapGen:      mapGen,
+		MapSettings: mapSettings,
+	}
 }
 
 func (s *store) readProfile(identifier string) (profileDocument, error) {
@@ -1180,7 +1271,13 @@ func (s *server) renderPreview(ctx context.Context, name string, req previewRequ
 func (s *server) renderPreviewNow(ctx context.Context, name string, req previewRequest) (previewResponse, error) {
 	ref, err := s.store.resolveProfile(name)
 	if err != nil {
-		return previewResponse{}, err
+		if len(bytes.TrimSpace(req.MapGen)) == 0 {
+			return previewResponse{}, err
+		}
+		ref, err = transientProfileRef(name)
+		if err != nil {
+			return previewResponse{}, err
+		}
 	}
 	mapGenPath, cleanup, err := s.previewMapGenPath(ref, req)
 	if err != nil {
@@ -1188,6 +1285,18 @@ func (s *server) renderPreviewNow(ctx context.Context, name string, req previewR
 	}
 	defer cleanup()
 	return s.previewer.render(ctx, ref, mapGenPath, req, false)
+}
+
+func transientProfileRef(identifier string) (profileRef, error) {
+	name := strings.TrimSpace(identifier)
+	if strings.HasPrefix(name, profileSourceLocal+":") {
+		name = strings.TrimPrefix(name, profileSourceLocal+":")
+	}
+	name, err := canonicalProfileName(name)
+	if err != nil {
+		name = "Preview"
+	}
+	return profileRef{Source: profileSourceLocal, Name: name}, nil
 }
 
 func (s *server) previewMapGenPath(ref profileRef, req previewRequest) (string, func(), error) {
@@ -1677,6 +1786,58 @@ func validateProfileName(name string) error {
 		return errInvalidProfileName
 	}
 	return nil
+}
+
+func canonicalProfileName(name string) (string, error) {
+	name = sanitizeProfileName(name)
+	if err := validateProfileName(name); err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
+func sanitizeProfileName(name string) string {
+	var b strings.Builder
+	previousSeparator := false
+	for _, r := range strings.TrimSpace(name) {
+		if isASCIIAlnum(r) {
+			if b.Len()+1 > maxProfileNameLength {
+				break
+			}
+			b.WriteRune(r)
+			previousSeparator = false
+			continue
+		}
+
+		separator, ok := profileNameSeparator(r)
+		if !ok {
+			separator = '-'
+		}
+		if b.Len() == 0 || previousSeparator {
+			continue
+		}
+		if b.Len()+1 > maxProfileNameLength {
+			break
+		}
+		b.WriteRune(separator)
+		previousSeparator = true
+	}
+	return strings.TrimRight(b.String(), " ._-")
+}
+
+func isASCIIAlnum(r rune) bool {
+	return ('A' <= r && r <= 'Z') || ('a' <= r && r <= 'z') || ('0' <= r && r <= '9')
+}
+
+func profileNameSeparator(r rune) (rune, bool) {
+	switch r {
+	case ' ', '.', '_', '-':
+		return r, true
+	case '\t', '\n', '\r':
+		return ' ', true
+	default:
+		return 0, false
+	}
 }
 
 func readNormalizedJSON(path string) ([]byte, error) {

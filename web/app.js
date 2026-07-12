@@ -9,6 +9,7 @@ const state = {
     },
   },
   profiles: [],
+  localProfile: null,
   selected: null,
   mapGen: null,
   mapSettings: null,
@@ -24,6 +25,7 @@ const guestMaxPreviewSize = 512;
 const safePreviewSizes = [256, 512, 768, 1024, 1536, 2048, 3072, 4096];
 const maxPreviewSeed = 4294967295;
 const minAutoplaceFrequency = 0.1;
+const maxProfileNameLength = 64;
 
 let autoPreviewTimer = null;
 let autoPreviewPending = false;
@@ -105,6 +107,36 @@ const factorioScaleValues = {
   "very-good": 3,
 };
 
+const bundledPresetProfiles = {
+  default: "Default",
+  "no-biters": "No-Biters",
+  "rail-world": "Railworld",
+  "death-world": "Deathworld",
+  "rich-resources": "Rich-Resources",
+  marathon: "Marathon",
+  "death-world-marathon": "Deathworld-Marathon",
+  "peaceful-rich": "Rich-Peaceful",
+  lakes: "Lakes",
+  island: "Island",
+  "ribbon-world": "Ribbon-World",
+  "empty-sandbox": "Empty-Sandbox",
+  "marathon-frontier": "Marathon-Frontier",
+  "dense-forest": "Dense-Forest",
+  "desert-scarcity": "Desert-Scarcity",
+  "cliffside-lakes": "Cliffside-Lakes",
+  "oil-baron": "Oil-Baron",
+  "tiny-death-spiral": "Tiny-Death-Spiral",
+  "megabase-plain": "Megabase-Plain",
+  waterworld: "Waterworld",
+  "forest-deathworld": "Forest-Deathworld",
+  "ore-patchwork": "Ore-Patchwork",
+  archipelago: "Archipelago",
+  "fragmented-coast": "Fragmented-Coast",
+  "hive-expansion": "Hive-Expansion",
+  "sparse-rich-desert": "Sparse-Rich-Desert",
+  "island-escape": "Island-Escape",
+};
+
 const controlTooltips = {
   "World size": "Width and height in tiles. Leave a dimension unset for an infinite map; Ribbon keeps height at 128 tiles.",
   "Starting point": "Initial spawn point in map coordinates. Most presets keep this at 0,0.",
@@ -157,6 +189,7 @@ const els = {
   profileSelect: $("#profileSelect"),
   statusLine: $("#statusLine"),
   factorioVersion: $("#factorioVersion"),
+  renameBtn: $("#renameBtn"),
   duplicateBtn: $("#duplicateBtn"),
   deleteBtn: $("#deleteBtn"),
   downloadBtn: $("#downloadBtn"),
@@ -173,6 +206,11 @@ const els = {
   closeExportStringBtn: $("#closeExportStringBtn"),
   copyExportStringBtn: $("#copyExportStringBtn"),
   exportStringOutput: $("#exportStringOutput"),
+  renamePresetDialog: $("#renamePresetDialog"),
+  renameForm: $("#renameForm"),
+  closeRenameBtn: $("#closeRenameBtn"),
+  cancelRenameBtn: $("#cancelRenameBtn"),
+  renameProfileName: $("#renameProfileName"),
   previewBtn: $("#previewBtn"),
   previewSize: $("#previewSize"),
   mapgenBody: $(".mapgen-body"),
@@ -274,13 +312,20 @@ async function init() {
   els.createPresetDialog.addEventListener("click", (event) => {
     if (event.target === els.createPresetDialog) closeCreateDialog();
   });
+  els.closeRenameBtn.addEventListener("click", closeRenameDialog);
+  els.cancelRenameBtn.addEventListener("click", closeRenameDialog);
+  els.renamePresetDialog.addEventListener("click", (event) => {
+    if (event.target === els.renamePresetDialog) closeRenameDialog();
+  });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !els.createPresetDialog.hidden) closeCreateDialog();
+    if (event.key === "Escape" && !els.renamePresetDialog.hidden) closeRenameDialog();
     if (event.key === "Escape" && !els.importPresetDialog.hidden) closeImportDialog();
     if (event.key === "Escape" && !els.exportStringDialog.hidden) closeExportStringDialog();
     if (event.key === "Escape" && !els.passwordDialog.hidden) closePasswordDialog();
   });
   els.createForm.addEventListener("submit", createProfile);
+  els.renameForm.addEventListener("submit", renameProfile);
   els.profileSelect.addEventListener("change", () => loadProfile(els.profileSelect.value));
   els.saveBtn.addEventListener("click", saveProfile);
   els.downloadZipBtn.addEventListener("click", downloadPresetZip);
@@ -309,6 +354,7 @@ async function init() {
   els.seedRandom.addEventListener("change", syncSeedFromToolbar);
   els.seedRerollBtn.addEventListener("click", rerollPreviewSeed);
   els.deleteBtn.addEventListener("click", deleteProfile);
+  els.renameBtn.addEventListener("click", openRenameDialog);
   els.duplicateBtn.addEventListener("click", duplicateProfile);
 
   for (const tab of els.mapgenSubtabs) {
@@ -345,6 +391,120 @@ async function api(path, options = {}) {
   }
   if (response.status === 204) return null;
   return response.json();
+}
+
+function localProfileDocument(name, mapGen, mapSettings, updatedAt = new Date().toISOString()) {
+  return {
+    name,
+    id: localProfileIdentifier(name),
+    source: "local",
+    readOnly: false,
+    updatedAt,
+    directory: "browser memory",
+    hasMapGen: true,
+    hasMapSettings: true,
+    mapGen: cloneJSON(mapGen),
+    mapSettings: cloneJSON(mapSettings),
+  };
+}
+
+function localProfileSummary(profile) {
+  return {
+    name: profile.name,
+    id: profile.id,
+    source: profile.source,
+    readOnly: false,
+    updatedAt: profile.updatedAt,
+    directory: profile.directory,
+    hasMapGen: true,
+    hasMapSettings: true,
+    mapGenBytes: JSON.stringify(profile.mapGen || {}).length,
+    mapSettingsBytes: JSON.stringify(profile.mapSettings || {}).length,
+  };
+}
+
+function localProfileIdentifier(name) {
+  return `local:${name}`;
+}
+
+function isLocalProfileIdentifier(identifier) {
+  return String(identifier || "").startsWith("local:");
+}
+
+function localProfileByIdentifier(identifier) {
+  return state.localProfile?.id === identifier ? state.localProfile : null;
+}
+
+function selectedProfileIsLocal() {
+  return selectedProfile()?.source === "local";
+}
+
+function canonicalProfileName(name) {
+  const sanitized = sanitizeProfileName(name);
+  return sanitized || "";
+}
+
+function sanitizeProfileName(name) {
+  let result = "";
+  let previousSeparator = false;
+  for (const char of String(name || "").trim()) {
+    const code = char.charCodeAt(0);
+    const alnum = (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+    if (alnum) {
+      if (result.length + 1 > maxProfileNameLength) break;
+      result += char;
+      previousSeparator = false;
+      continue;
+    }
+
+    let separator = "";
+    if (char === " " || char === "." || char === "_" || char === "-") separator = char;
+    else if (char === "\t" || char === "\n" || char === "\r") separator = " ";
+    else separator = "-";
+    if (!result || previousSeparator) continue;
+    if (result.length + 1 > maxProfileNameLength) break;
+    result += separator;
+    previousSeparator = true;
+  }
+  return result.replace(/[ ._-]+$/g, "");
+}
+
+function ensureAvailableLocalProfileName(name, currentID = "") {
+  const next = canonicalProfileName(name);
+  if (!next) throw new Error("Enter a preset name with letters or numbers.");
+  return next;
+}
+
+function cloneJSON(value) {
+  return JSON.parse(JSON.stringify(value ?? {}));
+}
+
+function presetProfileIdentifier(presetKey) {
+  return `default:${bundledPresetProfiles[presetKey] || bundledPresetProfiles.default}`;
+}
+
+function selectLocalProfile(doc) {
+  state.localProfile = doc;
+  state.selected = doc.id;
+  state.mapGen = cloneJSON(doc.mapGen);
+  state.mapSettings = cloneJSON(doc.mapSettings);
+  ensureRandomSeedDefault();
+  state.dirty = false;
+  renderAll();
+  scheduleAutoPreview();
+}
+
+function upsertLocalProfile(doc) {
+  state.localProfile = doc;
+}
+
+function saveSelectedLocalProfile() {
+  const profile = localProfileByIdentifier(state.selected);
+  if (!profile || !state.mapGen || !state.mapSettings) return false;
+  profile.mapGen = cloneJSON(state.mapGen);
+  profile.mapSettings = cloneJSON(state.mapSettings);
+  profile.updatedAt = new Date().toISOString();
+  return true;
 }
 
 async function loadSession() {
@@ -391,6 +551,7 @@ async function logout() {
   state.dirty = false;
   closeAdminPanel();
   closePasswordDialog();
+  closeRenameDialog();
   hideLogin();
   renderSession();
   await loadProfiles(true);
@@ -424,7 +585,8 @@ function renderSession() {
   els.adminBtn.hidden = !user || !user.isAdmin;
   els.passwordBtn.hidden = !user;
   els.logoutBtn.hidden = !user;
-  els.openCreateBtn.hidden = !user;
+  els.openCreateBtn.hidden = false;
+  els.openImportBtn.hidden = false;
   notifyFactorioUpdate();
 }
 
@@ -481,10 +643,6 @@ function closeAdminPanel() {
 }
 
 function openCreateDialog() {
-  if (!state.session) {
-    showLogin();
-    return;
-  }
   seedCreatePresetName();
   els.createPresetDialog.hidden = false;
   window.setTimeout(() => {
@@ -509,11 +667,26 @@ function closeCreateDialog() {
   els.createForm.reset();
 }
 
-function openImportDialog() {
-  if (!state.session) {
-    showLogin();
+function openRenameDialog() {
+  if (!canEditSelectedProfile()) {
+    showToast("Only local or signed-in custom presets can be renamed.", true);
     return;
   }
+  els.renameForm.reset();
+  els.renameProfileName.value = selectedProfileName();
+  els.renamePresetDialog.hidden = false;
+  window.setTimeout(() => {
+    els.renameProfileName.focus();
+    els.renameProfileName.select();
+  }, 0);
+}
+
+function closeRenameDialog() {
+  els.renamePresetDialog.hidden = true;
+  els.renameForm.reset();
+}
+
+function openImportDialog() {
   els.importForm.reset();
   els.importPresetDialog.hidden = false;
   window.setTimeout(() => els.importProfileName.focus(), 0);
@@ -526,11 +699,7 @@ function closeImportDialog() {
 
 async function importPreset(event) {
   event.preventDefault();
-  if (!state.session) {
-    showLogin();
-    return;
-  }
-  const name = els.importProfileName.value.trim();
+  const name = canonicalProfileName(els.importProfileName.value);
   const exchangeString = els.exchangeStringInput.value.trim();
   if (!name || !exchangeString) {
     showToast("Enter a preset name and exchange string.", true);
@@ -541,12 +710,21 @@ async function importPreset(event) {
       method: "POST",
       body: JSON.stringify({ name, exchangeString }),
     });
+    closeImportDialog();
+    if (!state.session) {
+      const localName = ensureAvailableLocalProfileName(body.name || name);
+      const doc = localProfileDocument(localName, body.mapGen, body.mapSettings, body.updatedAt);
+      upsertLocalProfile(doc);
+      await loadProfiles(false);
+      selectLocalProfile(doc);
+      showToast("Local preset imported.");
+      return;
+    }
     state.selected = body.id || body.name;
     state.mapGen = body.mapGen;
     state.mapSettings = body.mapSettings;
     ensureRandomSeedDefault();
     state.dirty = false;
-    closeImportDialog();
     await loadProfiles(true);
     showToast("Preset imported.");
   } catch (error) {
@@ -801,7 +979,8 @@ async function loadConfig() {
 async function loadProfiles(keepSelection) {
   try {
     const body = await api("/api/profiles");
-    state.profiles = (body.profiles || []).sort(compareProfiles);
+    const localSummaries = state.localProfile ? [localProfileSummary(state.localProfile)] : [];
+    state.profiles = [...localSummaries, ...(body.profiles || [])].sort(compareProfiles);
     renderProfileSelect();
 
     const selectedStillExists = state.selected && state.profiles.some((profile) => profileIdentifier(profile) === state.selected);
@@ -829,6 +1008,23 @@ async function loadProfiles(keepSelection) {
 
 async function loadProfile(name) {
   if (!name) return;
+  if (isLocalProfileIdentifier(name)) {
+    const doc = localProfileByIdentifier(name);
+    if (!doc) {
+      showToast("Local preset not found.", true);
+      await loadProfiles(false);
+      return;
+    }
+    cancelAutoPreview();
+    state.selected = doc.id;
+    state.mapGen = cloneJSON(doc.mapGen);
+    state.mapSettings = cloneJSON(doc.mapSettings);
+    ensureRandomSeedDefault();
+    state.dirty = false;
+    renderAll();
+    scheduleAutoPreview();
+    return;
+  }
   try {
     const body = await api(`/api/profiles/${encodeURIComponent(name)}`);
     cancelAutoPreview();
@@ -846,13 +1042,26 @@ async function loadProfile(name) {
 
 async function createProfile(event) {
   event.preventDefault();
-  if (!state.session) {
-    showLogin();
-    return;
-  }
-  const name = els.profileName.value.trim();
+  const name = canonicalProfileName(els.profileName.value);
   if (!name) {
     showToast("Enter a preset name.", true);
+    return;
+  }
+
+  if (!state.session) {
+    try {
+      const template = await api(`/api/profiles/${encodeURIComponent(presetProfileIdentifier(els.presetSelect.value))}`);
+      const localName = ensureAvailableLocalProfileName(name);
+      const doc = localProfileDocument(localName, template.mapGen, template.mapSettings);
+      upsertLocalProfile(doc);
+      els.profileName.value = "";
+      closeCreateDialog();
+      await loadProfiles(false);
+      selectLocalProfile(doc);
+      showToast("Local preset created.");
+    } catch (error) {
+      showToast(error.message, true);
+    }
     return;
   }
 
@@ -881,8 +1090,18 @@ async function saveProfile() {
 
 async function saveCurrentProfile(silent) {
   if (!state.selected || !state.mapGen || !state.mapSettings) return false;
+  if (selectedProfileIsLocal()) {
+    const saved = saveSelectedLocalProfile();
+    if (saved) {
+      state.dirty = false;
+      renderHeader();
+      await loadProfiles(true);
+      if (!silent) showToast("Saved locally.");
+    }
+    return saved;
+  }
   if (!state.session) {
-    if (!silent) showLogin();
+    if (!silent) showToast("Guest changes are local-only; duplicate or create a local preset to keep them in this browser.", true);
     return false;
   }
   if (!canEditSelectedProfile()) {
@@ -919,12 +1138,22 @@ async function saveCurrentProfile(silent) {
 
 async function duplicateProfile() {
   if (!state.selected) return;
-  if (!state.session) {
-    showLogin();
-    return;
-  }
   const name = window.prompt("Duplicate preset name", `${selectedProfileName()} copy`);
   if (!name) return;
+
+  if (!state.session || selectedProfileIsLocal()) {
+    try {
+      const localName = ensureAvailableLocalProfileName(name.trim());
+      const doc = localProfileDocument(localName, state.mapGen, state.mapSettings);
+      upsertLocalProfile(doc);
+      await loadProfiles(false);
+      selectLocalProfile(doc);
+      showToast("Local preset duplicated.");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+    return;
+  }
 
   try {
     const body = await api(`/api/profiles/${encodeURIComponent(state.selected)}/duplicate`, {
@@ -943,8 +1172,91 @@ async function duplicateProfile() {
   }
 }
 
+async function renameProfile(event) {
+  event.preventDefault();
+  if (!state.selected) return;
+  if (selectedProfileIsLocal()) {
+    const oldID = state.selected;
+    try {
+      const name = ensureAvailableLocalProfileName(els.renameProfileName.value, oldID);
+      const profile = localProfileByIdentifier(oldID);
+      if (!profile) throw new Error("Local preset not found.");
+      if (name === profile.name) {
+        closeRenameDialog();
+        return;
+      }
+      profile.name = name;
+      profile.id = localProfileIdentifier(name);
+      profile.updatedAt = new Date().toISOString();
+      if (state.previewSeeds[oldID]) {
+        state.previewSeeds[profile.id] = state.previewSeeds[oldID];
+        delete state.previewSeeds[oldID];
+      }
+      state.selected = profile.id;
+      closeRenameDialog();
+      await loadProfiles(true);
+      showToast("Local preset renamed.");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+    return;
+  }
+  if (!canEditSelectedProfile()) {
+    showToast("Only custom presets can be renamed.", true);
+    return;
+  }
+  const name = els.renameProfileName.value.trim();
+  if (!name) {
+    showToast("Enter a preset name.", true);
+    return;
+  }
+  const oldID = state.selected;
+  if (name === selectedProfileName()) {
+    closeRenameDialog();
+    return;
+  }
+  const wasDirty = state.dirty;
+  const currentMapGen = state.mapGen;
+  const currentMapSettings = state.mapSettings;
+
+  try {
+    const body = await api(`/api/profiles/${encodeURIComponent(oldID)}/rename`, {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+    const newID = body.id || body.name;
+    if (oldID !== newID && state.previewSeeds[oldID]) {
+      state.previewSeeds[newID] = state.previewSeeds[oldID];
+      delete state.previewSeeds[oldID];
+    }
+    state.selected = newID;
+    state.mapGen = wasDirty ? currentMapGen : body.mapGen;
+    state.mapSettings = wasDirty ? currentMapSettings : body.mapSettings;
+    ensureRandomSeedDefault();
+    state.dirty = wasDirty;
+    closeRenameDialog();
+
+    await loadProfiles(true);
+    if (!canUseDefaultCachedPreview()) scheduleAutoPreview();
+    showToast("Preset renamed.");
+  } catch (error) {
+    showToast(error.message, true);
+  }
+}
+
 async function deleteProfile() {
   if (!state.selected) return;
+  if (selectedProfileIsLocal()) {
+    if (!window.confirm(`Delete local preset ${selectedProfileName()}?`)) return;
+    state.localProfile = null;
+    state.selected = null;
+    state.mapGen = null;
+    state.mapSettings = null;
+    state.dirty = false;
+    await loadProfiles(false);
+    showToast("Local preset deleted.");
+    return;
+  }
   if (!canEditSelectedProfile()) {
     showToast("This preset cannot be deleted from the current session.", true);
     return;
@@ -993,7 +1305,7 @@ async function downloadPresetZip() {
     const response = await fetch("/api/profiles/" + encodeURIComponent(state.selected) + "/download.zip", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mapGen: state.mapGen, mapSettings: state.mapSettings }),
+      body: JSON.stringify({ name: selectedProfileName(), mapGen: state.mapGen, mapSettings: state.mapSettings }),
     });
     if (!response.ok) {
       let message = response.status + " " + response.statusText;
@@ -1204,13 +1516,16 @@ function profileOption(profile, selected) {
 }
 
 function groupedProfiles() {
+  const local = [];
   const custom = [];
   const defaults = [];
   for (const profile of state.profiles) {
-    if (profile.source === "custom") custom.push(profile);
+    if (profile.source === "local") local.push(profile);
+    else if (profile.source === "custom") custom.push(profile);
     else defaults.push(profile);
   }
   return [
+    { label: "Local presets", profiles: local },
     { label: "My presets", profiles: custom },
     { label: "Base presets", profiles: defaults },
   ].filter((group) => group.profiles.length > 0);
@@ -1223,7 +1538,9 @@ function compareProfiles(a, b) {
 }
 
 function profileSourceRank(profile) {
-  return profile.source === "custom" ? 0 : 1;
+  if (profile.source === "local") return 0;
+  if (profile.source === "custom") return 1;
+  return 2;
 }
 
 function initialProfileIdentifier() {
@@ -1254,7 +1571,11 @@ function renderHeader() {
   }
   els.profileSelect.value = state.selected;
   if (!state.session) {
-    els.statusLine.textContent = state.dirty ? "Guest preview-only changes" : "Guest access: download and preview only";
+    if (selectedProfileIsLocal()) {
+      els.statusLine.textContent = "Local working preset; export or download when done";
+    } else {
+      els.statusLine.textContent = state.dirty ? "Guest local-only changes" : "Guest access: create, import, preview, export, and download locally";
+    }
     return;
   }
   if (selectedProfile()?.readOnly && state.dirty) {
@@ -1266,11 +1587,12 @@ function renderHeader() {
 
 function canEditSelectedProfile() {
   const profile = selectedProfile();
-  return Boolean(state.session && state.selected && profile && !profile.readOnly);
+  if (!state.selected || !profile || profile.readOnly) return false;
+  return profile.source === "local" || Boolean(state.session);
 }
 
 function canDuplicateSelectedProfile() {
-  return Boolean(state.session && state.selected);
+  return Boolean(state.selected && state.mapGen && state.mapSettings);
 }
 
 function maxPreviewSizeForSession() {
@@ -1288,11 +1610,14 @@ function canUseLosslessPreview() {
 function setControlsEnabled(enabled) {
   const canEdit = canEditSelectedProfile();
   const canDuplicate = canDuplicateSelectedProfile();
-  els.saveBtn.hidden = !state.session;
-  els.deleteBtn.hidden = !state.session;
-  els.duplicateBtn.hidden = !state.session;
+  const isLocal = selectedProfileIsLocal();
+  els.saveBtn.hidden = !state.session || isLocal;
+  els.deleteBtn.hidden = !state.session && !isLocal;
+  els.renameBtn.hidden = !state.session && !isLocal;
+  els.duplicateBtn.hidden = false;
   els.saveBtn.disabled = !canEdit;
   els.deleteBtn.disabled = !canEdit;
+  els.renameBtn.disabled = !canEdit;
   els.duplicateBtn.disabled = !canDuplicate;
   els.downloadBtn.disabled = !enabled;
   els.downloadZipBtn.disabled = !enabled;
@@ -2551,7 +2876,8 @@ function addExpressionSliderField(parent, labelText, root, path, min, max, step)
 }
 
 function afterVisualEdit(options = {}) {
-  state.dirty = true;
+  state.dirty = !selectedProfileIsLocal();
+  if (selectedProfileIsLocal()) saveSelectedLocalProfile();
   renderHeader();
   if (options.preview !== false) scheduleAutoPreview();
 }
