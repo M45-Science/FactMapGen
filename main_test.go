@@ -388,6 +388,39 @@ func TestDecodeNativeFactorioExchangeString(t *testing.T) {
 	}
 }
 
+func TestDecodeFactorio21ExchangeString(t *testing.T) {
+	input := `>>>eNp1VE2LEzEYTqx1u19apAjisvawN1nBVcGDdKIgIqJ/YUynaQ1OJzUfldWDPXhUvHjRi3sSXGE9eS+IordFz8KKFz0oFUQvQk06k2nSroFknnk/nud93wmzB0AwCwoALJXxTUVjFkZcNUjIaAxAL7B7JsJxRCVxbXsjhp0ggOYi1ukQvso4cc2zI8ZVj1EHk4S011frWHiki81YMU4TEnZJIn2PiluM4zCKabOZ0QDzPGA9VMQ4aQgrYZ7zrZjUd8kpp/ZREeFkEQups6PZZMaGAodNSJZ4CZn9FpaEu/YS5SyZnMdiTOV1qtph3fTp6SZYdamYrrbIWXRDuKFFEXHccS2HhMRc0qQVYk5w2GZUSMWJn+QXDlBFqLipOI1CHNFG2CLrwu+gKDkhnvKCVElLSJKEzGefVxwnuq+pfrsqjnCidF/ehekFB3NPlxlARfvF5uZYe2qeAB478ull794yMHt4F1SHQ7M12tFSZgPYA6Cvo6E22lXMJgqq5/Q+P6aD8E5l6+Ln248CmEYeRxkYZJZ+3VouWXAV/de1YsEphwfCB99fbfx5u12Df5///HClfi2AJy5UfgzWtmraWTRFF8yxL0dp7o6tqoQmLRo8eWzWtyAlqIzTygiiM/qtf7kAYHm/Rhv39VFdyiNqlq+CYHO0fgfw5Gh9seDjlLhu7qxRWTbHO3MUx6IA6VZS8FDrH7Xew+MQnb8G3Boa5i1t472Vfe3oTxQyPVy3jwlLHlxywJwRbOTH14I76u0Z+4aeotFnACbqF8w+Ckj/KSlVPmkz90J+0VaQf3sMMCRvnp0e/AMndh/V<<<`
+
+	data, err := ParseMapExchangeString(input)
+	if err != nil {
+		t.Fatalf("parse Factorio 2.1 exchange string: %v", err)
+	}
+	if data.Version != [4]uint16{2, 1, 9, 3} {
+		t.Fatalf("version = %v, want 2.1.9-3", data.Version)
+	}
+	if _, ok := data.MapSettings["steering"]; ok {
+		t.Fatalf("Factorio 2.1 map-settings unexpectedly included removed steering block")
+	}
+	expansion := asMap(data.MapSettings["enemy_expansion"])
+	if got := expansion["min_expansion_distance"]; got != uint32(3) {
+		t.Fatalf("min_expansion_distance = %#v, want 3", got)
+	}
+	if got := expansion["evolution_group_size_factor"]; got != float64(4) {
+		t.Fatalf("evolution_group_size_factor = %#v, want 4", got)
+	}
+
+	mapGen, mapSettings, err := decodeExchangeString(input)
+	if err != nil {
+		t.Fatalf("decode native Factorio exchange string: %v", err)
+	}
+	if !bytes.Contains(mapGen, []byte(`"autoplace_controls"`)) {
+		t.Fatalf("native map-gen JSON missing autoplace controls: %s", mapGen)
+	}
+	if !bytes.Contains(mapSettings, []byte(`"min_expansion_distance": 3`)) {
+		t.Fatalf("native map-settings JSON missing Factorio 2.1 expansion fields: %s", mapSettings)
+	}
+}
+
 func TestProfileExchangeStringRoutes(t *testing.T) {
 	st := newTestStore(t)
 	if _, err := st.createProfile("Source", "default"); err != nil {

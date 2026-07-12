@@ -513,6 +513,9 @@ input[type="range"] {
 .factorio-field-grid .check-field,
 .factorio-field-grid .preset-field,
 .factorio-field-grid .preset-slider-field,
+.space-age-group .check-field,
+.space-age-group .field,
+.space-age-group .planet-autoplace-setting-group,
 .space-age-group .preset-field {
   min-height: 54px;
   margin: 0;
@@ -532,6 +535,8 @@ input[type="range"] {
 .factorio-field-grid .field,
 .factorio-field-grid .preset-field,
 .factorio-field-grid .preset-slider-field,
+.space-age-group .field,
+.space-age-group .planet-autoplace-setting-group,
 .space-age-group .preset-field {
   grid-template-columns: minmax(180px, 1.5fr) minmax(120px, 1fr);
 }
@@ -550,11 +555,31 @@ input[type="range"] {
 .space-age-group-header {
   display: flex;
   align-items: center;
+  gap: 8px;
   min-height: 36px;
   padding: 0 10px;
   border: 1px solid #222;
   border-top: 0;
   background: #3d3f3b;
+  cursor: pointer;
+  list-style: none;
+}
+
+.space-age-group-header::-webkit-details-marker {
+  display: none;
+}
+
+.space-age-group-header::before {
+  content: ">";
+  display: inline-block;
+  color: #c6b887;
+  font-size: 13px;
+  font-weight: 900;
+  transition: transform 0.12s ease;
+}
+
+.space-age-group[open] > .space-age-group-header::before {
+  transform: rotate(90deg);
 }
 
 .space-age-group-header h3 {
@@ -562,6 +587,70 @@ input[type="range"] {
   color: #ddd7c8;
   font-size: 13px;
   font-weight: 900;
+}
+
+.planet-details {
+  border: 1px solid #222;
+  border-top: 0;
+  background: #42443f;
+}
+
+.planet-details summary {
+  min-height: 36px;
+  padding: 10px;
+  color: #ddd7c8;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.planet-detail-body {
+  display: grid;
+}
+
+.planet-detail-body .field,
+.planet-detail-body .check-field,
+.planet-detail-body .planet-autoplace-setting-group {
+  border-right: 0;
+  border-left: 0;
+}
+
+.planet-setting-toolbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.5fr) minmax(120px, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.planet-setting-toolbar label {
+  color: #ded4c2;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.planet-setting-checks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 4px;
+  max-height: 260px;
+  overflow: auto;
+  margin-top: 8px;
+  padding: 6px;
+  border: 1px solid #292929;
+  background: rgba(31, 30, 28, 0.28);
+}
+
+.compact-check {
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 6px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.compact-check span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.2;
 }
 
 .preset-field,
@@ -894,6 +983,9 @@ input[type="range"] {
   .factorio-field-grid .field,
   .factorio-field-grid .preset-field,
   .factorio-field-grid .preset-slider-field,
+  .space-age-group .field,
+  .space-age-group .planet-autoplace-setting-group,
+  .planet-setting-toolbar,
   .space-age-group .preset-field {
     grid-template-columns: 1fr;
   }

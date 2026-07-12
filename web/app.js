@@ -51,6 +51,11 @@ const resourceKeys = ["coal", "iron-ore", "copper-ore", "stone", "uranium-ore", 
 const knownPlanets = ["nauvis", "vulcanus", "gleba", "fulgora", "aquilo"];
 const spaceAgeControlGroups = [
   {
+    key: "nauvis",
+    label: "Nauvis",
+    controls: [],
+  },
+  {
     key: "vulcanus",
     label: "Vulcanus",
     controls: [
@@ -91,6 +96,145 @@ const spaceAgeControlGroups = [
     ],
   },
 ];
+const planetMapGenDefaults = {
+  nauvis: {
+    top_level: {
+      aux_climate_control: true,
+      moisture_climate_control: true,
+    },
+    property_expression_names: {},
+    cliff_settings: {
+      name: "cliff",
+      control: "nauvis_cliff",
+      cliff_smoothing: 0,
+    },
+    autoplace_controls: ["iron-ore", "copper-ore", "stone", "coal", "uranium-ore", "crude-oil", "water", "trees", "enemy-base", "rocks", "starting_area_moisture", "nauvis_cliff"],
+    autoplace_settings: {
+      tile: ["grass-1", "grass-2", "grass-3", "grass-4", "dry-dirt", "dirt-1", "dirt-2", "dirt-3", "dirt-4", "dirt-5", "dirt-6", "dirt-7", "sand-1", "sand-2", "sand-3", "red-desert-0", "red-desert-1", "red-desert-2", "red-desert-3", "water", "deepwater"],
+      decorative: ["brown-hairy-grass", "green-hairy-grass", "brown-carpet-grass", "green-carpet-grass", "green-small-grass", "green-asterisk", "brown-asterisk-mini", "green-asterisk-mini", "brown-asterisk", "red-asterisk", "dark-mud-decal", "light-mud-decal", "cracked-mud-decal", "red-desert-decal", "sand-decal", "sand-dune-decal", "green-pita", "red-pita", "green-croton", "red-croton", "green-pita-mini", "brown-fluff", "brown-fluff-dry", "green-desert-bush", "red-desert-bush", "white-desert-bush", "garballo-mini-dry", "garballo", "green-bush-mini", "medium-rock", "small-rock", "tiny-rock", "medium-sand-rock", "small-sand-rock"],
+      entity: ["iron-ore", "copper-ore", "stone", "coal", "crude-oil", "uranium-ore", "fish", "big-sand-rock", "huge-rock", "big-rock"],
+    },
+  },
+  vulcanus: {
+    property_expression_names: {
+      elevation: "vulcanus_elevation",
+      temperature: "vulcanus_temperature",
+      moisture: "vulcanus_moisture",
+      aux: "vulcanus_aux",
+      cliffiness: "cliffiness_basic",
+      cliff_elevation: "cliff_elevation_from_elevation",
+      "entity:tungsten-ore:probability": "vulcanus_tungsten_ore_probability",
+      "entity:tungsten-ore:richness": "vulcanus_tungsten_ore_richness",
+      "entity:coal:probability": "vulcanus_coal_probability",
+      "entity:coal:richness": "vulcanus_coal_richness",
+      "entity:calcite:probability": "vulcanus_calcite_probability",
+      "entity:calcite:richness": "vulcanus_calcite_richness",
+      "entity:sulfuric-acid-geyser:probability": "vulcanus_sulfuric_acid_geyser_probability",
+      "entity:sulfuric-acid-geyser:richness": "vulcanus_sulfuric_acid_geyser_richness",
+    },
+    cliff_settings: {
+      name: "cliff-vulcanus",
+      cliff_elevation_interval: 120,
+      cliff_elevation_0: 70,
+    },
+    territory_settings: {
+      units: ["small-demolisher", "medium-demolisher", "big-demolisher"],
+      territory_index_expression: "demolisher_territory_expression",
+      territory_variation_expression: "demolisher_variation_expression",
+      minimum_territory_size: 10,
+    },
+    autoplace_controls: ["vulcanus_coal", "sulfuric_acid_geyser", "tungsten_ore", "calcite", "vulcanus_volcanism"],
+    autoplace_settings: {
+      tile: ["volcanic-soil-dark", "volcanic-soil-light", "volcanic-ash-soil", "volcanic-ash-flats", "volcanic-ash-light", "volcanic-ash-dark", "volcanic-cracks", "volcanic-cracks-warm", "volcanic-folds", "volcanic-folds-flat", "lava", "lava-hot", "volcanic-folds-warm", "volcanic-pumice-stones", "volcanic-cracks-hot", "volcanic-jagged-ground", "volcanic-smooth-stone", "volcanic-smooth-stone-warm", "volcanic-ash-cracks"],
+      decorative: ["v-brown-carpet-grass", "v-green-hairy-grass", "v-brown-hairy-grass", "v-red-pita", "vulcanus-rock-decal-large", "vulcanus-crack-decal-large", "vulcanus-crack-decal-huge-warm", "vulcanus-dune-decal", "vulcanus-sand-decal", "vulcanus-lava-fire", "calcite-stain", "calcite-stain-small", "sulfur-stain", "sulfur-stain-small", "sulfuric-acid-puddle", "sulfuric-acid-puddle-small", "crater-small", "crater-large", "pumice-relief-decal", "small-volcanic-rock", "medium-volcanic-rock", "tiny-volcanic-rock", "tiny-rock-cluster", "small-sulfur-rock", "tiny-sulfur-rock", "sulfur-rock-cluster", "waves-decal"],
+      entity: ["coal", "calcite", "sulfuric-acid-geyser", "tungsten-ore", "huge-volcanic-rock", "big-volcanic-rock", "crater-cliff", "vulcanus-chimney", "vulcanus-chimney-faded", "vulcanus-chimney-cold", "vulcanus-chimney-short", "vulcanus-chimney-truncated", "ashland-lichen-tree", "ashland-lichen-tree-flaming"],
+    },
+  },
+  gleba: {
+    property_expression_names: {
+      elevation: "gleba_elevation",
+      aux: "gleba_aux",
+      moisture: "gleba_moisture",
+      temperature: "gleba_temperature",
+      cliffiness: "gleba_cliffiness",
+      cliff_elevation: "cliff_elevation_from_elevation",
+      enemy_base_radius: "gleba_enemy_base_radius",
+      enemy_base_frequency: "gleba_enemy_base_frequency",
+      "entity:stone:richness": "gleba_stone_richness",
+      "entity:stone:probability": "gleba_stone_probability",
+      "decorative:red-desert-bush:probability": "gleba_red_desert_bush_probability",
+      "decorative:white-desert-bush:probability": "gleba_white_desert_bush_probability",
+      "decorative:red-pita:probability": "gleba_red_pita_probability",
+      "decorative:green-bush-mini:probability": "gleba_green_bush_probability",
+      "decorative:green-croton:probability": "gleba_green_cronton_probability",
+      "decorative:green-pita:probability": "gleba_green_pita_probability",
+      "decorative:green-pita-mini:probability": "gleba_green_pita_mini_probability",
+      "decorative:lichen-decal:probability": "gleba_orange_lichen_probability",
+      "decorative:shroom-decal:probability": "gleba_carpet_shroom_probability",
+      "decorative:cracked-mud-decal:probability": "gleba_cracked_mud_probability",
+      "decorative:light-mud-decal:probability": "gleba_light_mud_probability",
+      "decorative:dark-mud-decal:probability": "gleba_dark_mud_probability",
+      "decorative:green-carpet-grass:probability": "gleba_green_carpet_grass_probability",
+      "decorative:green-hairy-grass:probability": "gleba_green_hairy_grass_probability",
+    },
+    cliff_settings: {
+      name: "cliff-gleba",
+      control: "gleba_cliff",
+      cliff_elevation_0: 40,
+      cliff_elevation_interval: 60,
+      richness: 0.8,
+      cliff_smoothing: 0,
+    },
+    autoplace_controls: ["gleba_stone", "gleba_plants", "gleba_enemy_base", "gleba_water", "gleba_cliff"],
+    autoplace_settings: {
+      tile: ["natural-yumako-soil", "natural-jellynut-soil", "wetland-yumako", "wetland-jellynut", "wetland-blue-slime", "wetland-light-green-slime", "wetland-green-slime", "wetland-light-dead-skin", "wetland-dead-skin", "wetland-pink-tentacle", "wetland-red-tentacle", "gleba-deep-lake", "lowland-brown-blubber", "lowland-olive-blubber", "lowland-olive-blubber-2", "lowland-olive-blubber-3", "lowland-pale-green", "lowland-cream-cauliflower", "lowland-cream-cauliflower-2", "lowland-dead-skin", "lowland-dead-skin-2", "lowland-cream-red", "lowland-red-vein", "lowland-red-vein-2", "lowland-red-vein-3", "lowland-red-vein-4", "lowland-red-vein-dead", "lowland-red-infection", "midland-turquoise-bark", "midland-turquoise-bark-2", "midland-cracked-lichen", "midland-cracked-lichen-dull", "midland-cracked-lichen-dark", "midland-yellow-crust", "midland-yellow-crust-2", "midland-yellow-crust-3", "midland-yellow-crust-4", "highland-dark-rock", "highland-dark-rock-2", "highland-yellow-rock", "pit-rock"],
+      decorative: ["yellow-lettuce-lichen-1x1", "yellow-lettuce-lichen-3x3", "yellow-lettuce-lichen-6x6", "yellow-lettuce-lichen-cups-1x1", "yellow-lettuce-lichen-cups-3x3", "yellow-lettuce-lichen-cups-6x6", "green-lettuce-lichen-1x1", "green-lettuce-lichen-3x3", "green-lettuce-lichen-6x6", "green-lettuce-lichen-water-1x1", "green-lettuce-lichen-water-3x3", "green-lettuce-lichen-water-6x6", "honeycomb-fungus", "honeycomb-fungus-1x1", "honeycomb-fungus-decayed", "split-gill-1x1", "split-gill-2x2", "split-gill-dying-1x1", "split-gill-dying-2x2", "split-gill-red-1x1", "split-gill-red-2x2", "veins", "veins-small", "mycelium", "coral-water", "coral-land", "black-sceptre", "pink-phalanges", "pink-lichen-decal", "red-lichen-decal", "green-cup", "brown-cup", "blood-grape", "blood-grape-vibrant", "brambles", "polycephalum-slime", "polycephalum-balloon", "fuchsia-pita", "wispy-lichen", "grey-cracked-mud-decal", "barnacles-decal", "coral-stunted", "coral-stunted-grey", "red-nerve-roots-veins-dense", "red-nerve-roots-veins-sparse", "purple-nerve-roots-veins-dense", "purple-nerve-roots-veins-sparse", "cream-nerve-roots-veins-dense", "cream-nerve-roots-veins-sparse", "yellow-coral", "solo-barnacle", "curly-roots-orange", "knobbly-roots", "knobbly-roots-orange", "matches-small", "pale-lettuce-lichen-cups-1x1", "pale-lettuce-lichen-cups-3x3", "pale-lettuce-lichen-cups-6x6", "pale-lettuce-lichen-1x1", "pale-lettuce-lichen-3x3", "pale-lettuce-lichen-6x6", "pale-lettuce-lichen-water-1x1", "pale-lettuce-lichen-water-3x3", "pale-lettuce-lichen-water-6x6", "white-carpet-grass", "green-carpet-grass", "green-hairy-grass", "light-mud-decal", "dark-mud-decal", "cracked-mud-decal", "red-desert-bush", "white-desert-bush", "red-pita", "green-bush-mini", "green-croton", "green-pita", "green-pita-mini", "lichen-decal", "shroom-decal"],
+      entity: ["stone", "iron-stromatolite", "copper-stromatolite"],
+    },
+  },
+  fulgora: {
+    property_expression_names: {
+      elevation: "fulgora_elevation",
+      temperature: "temperature_basic",
+      moisture: "moisture_basic",
+      aux: "aux_basic",
+      cliffiness: "fulgora_cliffiness",
+      cliff_elevation: "cliff_elevation_from_elevation",
+    },
+    cliff_settings: {
+      name: "cliff-fulgora",
+      control: "fulgora_cliff",
+      cliff_elevation_0: 80,
+      cliff_elevation_interval: 40,
+      cliff_smoothing: 0,
+      richness: 0.95,
+    },
+    autoplace_controls: ["scrap", "fulgora_islands", "fulgora_cliff"],
+    autoplace_settings: {
+      tile: ["oil-ocean-shallow", "oil-ocean-deep", "fulgoran-rock", "fulgoran-dust", "fulgoran-sand", "fulgoran-dunes", "fulgoran-walls", "fulgoran-paving", "fulgoran-conduit", "fulgoran-machinery"],
+      decorative: ["fulgoran-ruin-tiny", "fulgoran-gravewort", "urchin-cactus", "medium-fulgora-rock", "small-fulgora-rock", "tiny-fulgora-rock"],
+      entity: ["scrap", "fulgoran-ruin-vault", "fulgoran-ruin-attractor", "fulgoran-ruin-colossal", "fulgoran-ruin-huge", "fulgoran-ruin-big", "fulgoran-ruin-stonehenge", "fulgoran-ruin-medium", "fulgoran-ruin-small", "fulgurite", "big-fulgora-rock"],
+    },
+  },
+  aquilo: {
+    property_expression_names: {
+      elevation: "aquilo_elevation",
+      temperature: "aquilo_temperature",
+      moisture: "moisture_basic",
+      aux: "aquilo_aux",
+      cliffiness: "cliffiness_basic",
+      cliff_elevation: "cliff_elevation_from_elevation",
+      "entity:crude-oil:probability": "aquilo_crude_oil_probability",
+      "entity:crude-oil:richness": "aquilo_crude_oil_richness",
+    },
+    autoplace_controls: ["lithium_brine", "fluorine_vent", "aquilo_crude_oil"],
+    autoplace_settings: {
+      tile: ["snow-flat", "snow-crests", "snow-lumpy", "snow-patchy", "ice-rough", "ice-smooth", "brash-ice", "ammoniacal-ocean", "ammoniacal-ocean-2"],
+      decorative: ["lithium-iceberg-medium", "lithium-iceberg-small", "lithium-iceberg-tiny", "floating-iceberg-large", "floating-iceberg-small", "aqulio-ice-decal-blue", "aqulio-snowy-decal", "snow-drift-decal"],
+      entity: ["crude-oil", "lithium-brine", "fluorine-vent", "lithium-iceberg-huge", "lithium-iceberg-big"],
+    },
+  },
+};
 const factorioScaleValues = {
   none: 0,
   "very-low": 0.25,
@@ -2110,10 +2254,11 @@ function renderAutoplace() {
 
 function renderSpaceAgeControls() {
   for (const group of spaceAgeControlGroups) {
-    const section = document.createElement("section");
+    const defaults = planetMapGenDefaults[group.key] || {};
+    const section = document.createElement("details");
     section.className = "space-age-group";
 
-    const header = document.createElement("div");
+    const header = document.createElement("summary");
     header.className = "space-age-group-header";
     const title = document.createElement("h3");
     title.textContent = group.label;
@@ -2121,12 +2266,151 @@ function renderSpaceAgeControls() {
     header.append(title);
     section.append(header);
 
+    addPresetButtons(section, "Planet preset", [
+      { label: "Apply defaults", tooltip: `Apply Factorio's bundled ${group.label} map generation defaults.`, apply: () => applyPlanetDefaults(group.key) },
+    ]);
 
     for (const resource of group.controls) {
       renderAutoplaceControl(section, resource, { materialize: false });
     }
+    renderPlanetSettings(section, group, defaults);
     els.spaceAgeControls.append(section);
   }
+}
+
+function renderPlanetSettings(parent, group, defaults) {
+  if (defaults.top_level) {
+    addPlanetDetails(parent, "Planet flags", false, (body) => {
+      renderPlanetTopLevelFields(body, defaults.top_level);
+    });
+  }
+  if (Object.keys(defaults.property_expression_names || {}).length > 0) {
+    addPlanetDetails(parent, "Property expressions", false, (body) => {
+      renderPlanetPropertyExpressionFields(body, defaults.property_expression_names || {});
+    });
+  }
+  if (defaults.cliff_settings) {
+    addPlanetDetails(parent, "Cliff settings", false, (body) => {
+      renderPlanetCliffFields(body, defaults.cliff_settings);
+    });
+  }
+  if (defaults.territory_settings) {
+    addPlanetDetails(parent, "Territory settings", false, (body) => {
+      renderTerritoryFields(body, defaults.territory_settings);
+    });
+  }
+  for (const type of ["tile", "decorative", "entity"]) {
+    const names = defaults.autoplace_settings?.[type] || [];
+    if (names.length === 0) continue;
+    addPlanetDetails(parent, `${titleCase(type)} autoplace settings`, false, (body) => {
+      renderAutoplaceSettingCheckboxGroup(body, type, names);
+    });
+  }
+}
+
+function renderPlanetTopLevelFields(parent, fields) {
+  for (const [key, fallback] of Object.entries(fields)) {
+    if (typeof fallback === "boolean") {
+      addCheckboxField(parent, readableExpressionName(key), state.mapGen, [key], { fallback });
+    } else if (typeof fallback === "number") {
+      addNumberField(parent, readableExpressionName(key), state.mapGen, [key], -1000000, 1000000, 1, fallback);
+    } else {
+      addTextField(parent, readableExpressionName(key), state.mapGen, [key], fallback);
+    }
+  }
+}
+
+function addPlanetDetails(parent, labelText, open, renderBody) {
+  const details = document.createElement("details");
+  details.className = "planet-details";
+  details.open = open;
+  const summary = document.createElement("summary");
+  summary.textContent = labelText;
+  details.append(summary);
+  const body = document.createElement("div");
+  body.className = "planet-detail-body";
+  renderBody(body);
+  details.append(body);
+  parent.append(details);
+}
+
+function renderPlanetPropertyExpressionFields(parent, expressions) {
+  for (const [key, fallback] of Object.entries(expressions)) {
+    addTextField(parent, readableExpressionName(key), state.mapGen, ["property_expression_names", key], fallback);
+  }
+}
+
+function renderPlanetCliffFields(parent, defaults) {
+  addTextField(parent, "Cliff prototype", state.mapGen, ["cliff_settings", "name"], defaults.name || "cliff");
+  if ("control" in defaults) {
+    addTextField(parent, "Cliff control", state.mapGen, ["cliff_settings", "control"], defaults.control || "");
+  }
+  if ("cliff_elevation_0" in defaults) {
+    addNumberField(parent, "Cliff base elevation", state.mapGen, ["cliff_settings", "cliff_elevation_0"], -1000, 1000, 1, defaults.cliff_elevation_0);
+  }
+  if ("cliff_elevation_interval" in defaults) {
+    addNumberField(parent, "Cliff interval", state.mapGen, ["cliff_settings", "cliff_elevation_interval"], 1, 1000, 1, defaults.cliff_elevation_interval);
+  }
+  if ("richness" in defaults) {
+    addNumberField(parent, "Cliff continuity", state.mapGen, ["cliff_settings", "richness"], 0, 10, 0.05, defaults.richness);
+  }
+  if ("cliff_smoothing" in defaults) {
+    addNumberField(parent, "Cliff smoothing", state.mapGen, ["cliff_settings", "cliff_smoothing"], 0, 1, 0.05, defaults.cliff_smoothing);
+  }
+}
+
+function renderTerritoryFields(parent, defaults) {
+  addStringArrayField(parent, "Territory units", state.mapGen, ["territory_settings", "units"], defaults.units || []);
+  addTextField(parent, "Territory index", state.mapGen, ["territory_settings", "territory_index_expression"], defaults.territory_index_expression || "");
+  addTextField(parent, "Territory variation", state.mapGen, ["territory_settings", "territory_variation_expression"], defaults.territory_variation_expression || "");
+  addNumberField(parent, "Minimum territory size", state.mapGen, ["territory_settings", "minimum_territory_size"], 0, 1000, 1, defaults.minimum_territory_size || 0);
+}
+
+function renderAutoplaceSettingCheckboxGroup(parent, type, names) {
+  const wrap = document.createElement("div");
+  wrap.className = "planet-autoplace-setting-group";
+  const toolbar = document.createElement("div");
+  toolbar.className = "planet-setting-toolbar";
+  const label = document.createElement("label");
+  label.textContent = `${titleCase(type)} prototypes`;
+  const buttons = document.createElement("div");
+  buttons.className = "preset-buttons";
+  for (const action of [
+    { label: "All", enabled: true },
+    { label: "None", enabled: false },
+  ]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "preset-button";
+    button.textContent = action.label;
+    button.addEventListener("click", () => {
+      setAllAutoplaceSettings(type, names, action.enabled);
+      afterVisualEdit();
+      renderVisualControls();
+    });
+    buttons.append(button);
+  }
+  toolbar.append(label, buttons);
+
+  const checks = document.createElement("div");
+  checks.className = "planet-setting-checks";
+  for (const name of names) {
+    const item = document.createElement("label");
+    item.className = "check-field compact-check";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = autoplaceSettingEnabled(type, name);
+    const text = document.createElement("span");
+    text.textContent = name;
+    input.addEventListener("change", () => {
+      setAutoplaceSettingEnabled(type, name, input.checked);
+      afterVisualEdit();
+    });
+    item.append(input, text);
+    checks.append(item);
+  }
+  wrap.append(toolbar, checks);
+  parent.append(wrap);
 }
 
 function renderAutoplaceControl(parent, resource, options = {}) {
@@ -2513,16 +2797,34 @@ function knownPlanetName(name) {
   return knownPlanets.includes(name) ? name : "nauvis";
 }
 
+function titleCase(value) {
+  const text = String(value || "");
+  return text ? text[0].toUpperCase() + text.slice(1) : "";
+}
+
+function readableExpressionName(key) {
+  return String(key)
+    .replace(/^entity:/, "Entity: ")
+    .replace(/^decorative:/, "Decorative: ")
+    .replace(/:probability$/, " probability")
+    .replace(/:richness$/, " richness")
+    .replaceAll("_", " ");
+}
+
 function addTooltipMark(parent, tooltip, labelText, options = {}) {
-  if (!tooltip) return;
-  parent.title = tooltip;
+  const text = typeof tooltip === "string" ? tooltip.trim() : "";
+  if (!text) {
+    parent.removeAttribute("title");
+    return;
+  }
+  parent.title = text;
   if (options.labelClass !== false) parent.classList.add("tooltip-label");
   const mark = document.createElement("span");
   mark.className = "tooltip-mark";
   mark.textContent = "i";
   mark.tabIndex = 0;
-  mark.title = tooltip;
-  mark.setAttribute("aria-label", `${labelText}: ${tooltip}`);
+  mark.title = text;
+  mark.setAttribute("aria-label", `${labelText}: ${text}`);
   parent.append(mark);
 }
 
@@ -2558,6 +2860,61 @@ function setTerrainExpressions(values) {
   for (const [key, value] of Object.entries(values)) {
     expressions[key] = value;
   }
+}
+
+function applyPlanetDefaults(planetKey) {
+  const defaults = planetMapGenDefaults[planetKey];
+  if (!defaults || !state.mapGen) return;
+  for (const key of allPlanetTopLevelKeys()) {
+    if (!defaults.top_level || !(key in defaults.top_level)) delete state.mapGen[key];
+  }
+  for (const [key, value] of Object.entries(defaults.top_level || {})) {
+    state.mapGen[key] = cloneJSON(value);
+  }
+  state.mapGen.property_expression_names = cloneJSON(defaults.property_expression_names || {});
+  if (defaults.cliff_settings) {
+    state.mapGen.cliff_settings = cloneJSON(defaults.cliff_settings);
+  } else {
+    delete state.mapGen.cliff_settings;
+  }
+  if (defaults.territory_settings) {
+    state.mapGen.territory_settings = cloneJSON(defaults.territory_settings);
+  } else {
+    delete state.mapGen.territory_settings;
+  }
+  state.mapGen.autoplace_settings = planetAutoplaceSettings(defaults.autoplace_settings || {});
+  const controls = ensurePath(state.mapGen, ["autoplace_controls"], {});
+  for (const key of defaults.autoplace_controls || []) {
+    if (!controls[key] || typeof controls[key] !== "object" || Array.isArray(controls[key])) {
+      controls[key] = {};
+    }
+  }
+  setPreviewPlanet(planetKey);
+}
+
+function allPlanetTopLevelKeys() {
+  const keys = new Set();
+  for (const defaults of Object.values(planetMapGenDefaults)) {
+    for (const key of Object.keys(defaults.top_level || {})) keys.add(key);
+  }
+  return keys;
+}
+
+function planetAutoplaceSettings(settings) {
+  const out = {};
+  for (const [type, names] of Object.entries(settings)) {
+    out[type] = { settings: {} };
+    for (const name of names) {
+      out[type].settings[name] = {};
+    }
+  }
+  return out;
+}
+
+function setPreviewPlanet(planetKey) {
+  if (!knownPlanets.includes(planetKey)) return;
+  els.previewPlanet.value = planetKey;
+  scheduleAutoPreview();
 }
 
 function applyResourcePreset(name) {
@@ -2732,7 +3089,7 @@ function sameNumericValue(left, right) {
   return Math.abs(numericValue(left) - numericValue(right)) < 1e-9;
 }
 
-function addNumberField(parent, labelText, root, path, min, max, step) {
+function addNumberField(parent, labelText, root, path, min, max, step, fallback = 0) {
   const wrap = document.createElement("div");
   wrap.className = "field";
   const label = document.createElement("label");
@@ -2745,9 +3102,28 @@ function addNumberField(parent, labelText, root, path, min, max, step) {
   input.min = String(min);
   input.max = String(max);
   input.step = String(step);
-  input.value = getPath(root, path, 0);
+  input.value = getPath(root, path, fallback);
   input.addEventListener("input", () => {
     setPath(root, path, numericValue(input.value));
+    afterVisualEdit();
+  });
+  wrap.append(label, input);
+  parent.append(wrap);
+}
+
+function addStringArrayField(parent, labelText, root, path, fallback = []) {
+  const wrap = document.createElement("div");
+  wrap.className = "field";
+  const label = document.createElement("label");
+  label.textContent = labelText;
+  addTooltipMark(label, controlTooltip(labelText), labelText);
+  const input = document.createElement("input");
+  input.type = "text";
+  const current = getPath(root, path, fallback);
+  input.value = Array.isArray(current) ? current.join(", ") : String(current || "");
+  input.addEventListener("input", () => {
+    const values = input.value.split(",").map((value) => value.trim()).filter(Boolean);
+    setPath(root, path, values);
     afterVisualEdit();
   });
   wrap.append(label, input);
@@ -2778,7 +3154,7 @@ function addCheckboxField(parent, labelText, root, path, options = {}) {
   wrap.className = "check-field";
   const input = document.createElement("input");
   input.type = "checkbox";
-  input.checked = Boolean(getPath(root, path, false));
+  input.checked = Boolean(getPath(root, path, options.fallback ?? false));
   const text = document.createElement("span");
   text.textContent = labelText;
   addTooltipMark(wrap, controlTooltip(labelText), labelText, { labelClass: false });
@@ -2909,6 +3285,15 @@ function setPath(root, path, value) {
   current[path[path.length - 1]] = value;
 }
 
+function deletePath(root, path) {
+  let current = root;
+  for (const key of path.slice(0, -1)) {
+    if (!current || typeof current !== "object") return;
+    current = current[key];
+  }
+  if (current && typeof current === "object") delete current[path[path.length - 1]];
+}
+
 function ensurePath(root, path, fallback) {
   let current = root;
   for (const key of path) {
@@ -2918,6 +3303,36 @@ function ensurePath(root, path, fallback) {
     current = current[key];
   }
   return current;
+}
+
+function autoplaceSettingEnabled(type, name) {
+  return getPath(state.mapGen, ["autoplace_settings", type, "settings", name], undefined) !== undefined;
+}
+
+function setAllAutoplaceSettings(type, names, enabled) {
+  for (const name of names) {
+    setAutoplaceSettingEnabled(type, name, enabled);
+  }
+}
+
+function setAutoplaceSettingEnabled(type, name, enabled) {
+  if (enabled) {
+    setPath(state.mapGen, ["autoplace_settings", type, "settings", name], {});
+    return;
+  }
+  deletePath(state.mapGen, ["autoplace_settings", type, "settings", name]);
+  cleanupAutoplaceSettings(type);
+}
+
+function cleanupAutoplaceSettings(type) {
+  const settings = getPath(state.mapGen, ["autoplace_settings", type, "settings"], null);
+  if (settings && typeof settings === "object" && Object.keys(settings).length === 0) {
+    deletePath(state.mapGen, ["autoplace_settings", type]);
+  }
+  const autoplaceSettings = getPath(state.mapGen, ["autoplace_settings"], null);
+  if (autoplaceSettings && typeof autoplaceSettings === "object" && Object.keys(autoplaceSettings).length === 0) {
+    delete state.mapGen.autoplace_settings;
+  }
 }
 
 function clippedClientMessage(message, limit) {
