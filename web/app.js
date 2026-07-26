@@ -380,8 +380,6 @@ const els = {
   previewZoom: $("#previewZoom"),
   previewScaleField: $("#previewScaleField"),
   previewResetView: $("#previewResetView"),
-  previewLossless: $("#previewLossless"),
-  previewLosslessField: $("#previewLosslessField"),
   autoRefreshPreview: $("#autoRefreshPreview"),
   seedValue: $("#seedValue"),
   seedRandom: $("#seedRandom"),
@@ -506,7 +504,6 @@ async function init() {
   els.previewEngine.addEventListener("change", () => {
     renderPreviewEngineControls();
     renderPreviewScaleControl(Boolean(state.selected));
-    renderPreviewLosslessControl(Boolean(state.selected));
     updatePreviewViewControls();
     renderPreview();
     scheduleAutoPreview();
@@ -548,7 +545,6 @@ async function init() {
   els.previewFrame.addEventListener("lostpointercapture", cancelPreviewPan);
   els.previewFrame.addEventListener("wheel", zoomPreviewAtPointer, { passive: false });
   els.previewImage.addEventListener("dragstart", (event) => event.preventDefault());
-  els.previewLossless.addEventListener("change", () => scheduleAutoPreview());
   els.autoRefreshPreview.addEventListener("change", () => {
     renderPreviewButtonState();
     if (els.autoRefreshPreview.checked) {
@@ -1702,7 +1698,6 @@ async function generatePreview(options = {}) {
       zoom: canUsePreviewZoom() ? currentPreviewScale() : "1",
       centerX: view.centerX,
       centerY: view.centerY,
-      lossless: canUseLosslessPreview() && els.previewLossless.checked,
       mapGen: previewMapGenPayload(),
     };
     if (seed) payload.seed = seed;
@@ -1922,7 +1917,6 @@ function fastTileSourceKey(profile, payload) {
     engine: "fast",
     planet: payload.planet,
     seed: payload.seed || "",
-    lossless: Boolean(payload.lossless),
     mapGen: payload.mapGen,
   });
 }
@@ -2279,17 +2273,6 @@ function renderPreviewScaleControl(enabled) {
   els.previewZoom.disabled = !enabled || !state.config.previewEnabled || !canUseScale;
 }
 
-function canUseLosslessPreview() {
-  return Boolean(state.session && currentPreviewEngine() === "factorio");
-}
-
-function renderPreviewLosslessControl(enabled) {
-  const canUseLossless = canUseLosslessPreview();
-  els.previewLosslessField.hidden = !canUseLossless;
-  if (!canUseLossless) els.previewLossless.checked = false;
-  els.previewLossless.disabled = !enabled || !state.config.previewEnabled || !canUseLossless;
-}
-
 function setControlsEnabled(enabled) {
   const canEdit = canEditSelectedProfile();
   const canDuplicate = canDuplicateSelectedProfile();
@@ -2320,7 +2303,6 @@ function setControlsEnabled(enabled) {
   if (Number.isFinite(selectedPreviewSize) && selectedPreviewSize > maxPreviewSize) els.previewSize.value = String(maxPreviewSize);
 
   renderPreviewScaleControl(enabled);
-  renderPreviewLosslessControl(enabled);
 
   els.previewSize.disabled = !enabled || !state.config.previewEnabled;
   els.previewPlanet.disabled = !enabled || !state.config.previewEnabled;
@@ -2331,11 +2313,16 @@ function renderPreviewEngineControls() {
   if (!els.previewEngine) return;
   const exactOption = Array.from(els.previewEngine.options).find((option) => option.value === "factorio");
   const fastOption = Array.from(els.previewEngine.options).find((option) => option.value === "fast");
-  const exactAvailable = factorioPreviewAvailable();
+  const exactAllowed = Boolean(state.session);
+  const exactAvailable = exactAllowed && factorioPreviewAvailable();
   if (fastOption) fastOption.disabled = !fastPreviewAvailable();
-  if (exactOption) exactOption.disabled = !exactAvailable;
+  if (exactOption) {
+    exactOption.hidden = !exactAllowed;
+    exactOption.disabled = !exactAvailable;
+  }
   if (currentPreviewEngine() === "factorio" && !exactAvailable) els.previewEngine.value = "fast";
   if (currentPreviewEngine() === "fast" && !fastPreviewAvailable() && exactAvailable) els.previewEngine.value = "factorio";
+  els.previewEngine.hidden = !exactAllowed;
   els.previewEngine.disabled = !state.selected || !state.config.previewEnabled;
 
   const fast = currentPreviewEngine() === "fast";

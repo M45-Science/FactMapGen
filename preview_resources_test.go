@@ -603,8 +603,7 @@ func TestResourceLayersMapGenJSONEnablesOnlyResourcesAndOptionalRocks(t *testing
 		}
 	}
 	for _, name := range []string{"trees", "enemy-base", "nauvis_cliff"} {
-		control := fastMap(controls[name])
-		if fastNumber(control["frequency"], -1) != 0 || fastNumber(control["size"], -1) != 0 {
+		if control := fastAutoplaceControl(root, name); control.enabled {
 			t.Errorf("control %s was not disabled: %#v", name, control)
 		}
 	}

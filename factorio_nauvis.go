@@ -55,24 +55,33 @@ var factorioTerrainNoiseSeeds = [...]uint32{
 }
 
 type factorioNauvisEvaluator struct {
-	segmentation float64
-	waterLevel   float64
-	starts       []factorioPoint
-	lakes        []factorioPoint
+	mapType       string
+	segmentation  float64
+	waterLevel    float64
+	starts        []factorioPoint
+	lakes         []factorioPoint
+	basicAux      bool
+	basicMoisture bool
 
-	hillsNoise        func(float64, float64) float64
-	cliffLevelTables  factorioBasisTables
-	bridgeNoise       func(float64, float64) float64
-	forestPathNoise   func(float64, float64) float64
-	detailNoise       func(float64, float64, float64) float64
-	persistenceNoise  func(float64, float64) float64
-	macroA            func(float64, float64) float64
-	macroB            func(float64, float64) float64
-	startingLakeNoise func(float64, float64) float64
-	auxNoise          func(float64, float64) float64
-	moistureNoise     func(float64, float64) float64
-	temperatureNoise  func(float64, float64) float64
-	terrainNoise      [19]func(float64, float64) float64
+	hillsNoise               func(float64, float64) float64
+	cliffLevelTables         factorioBasisTables
+	bridgeNoise              func(float64, float64) float64
+	forestPathNoise          func(float64, float64) float64
+	detailNoise              func(float64, float64, float64) float64
+	persistenceNoise         func(float64, float64) float64
+	macroA                   func(float64, float64) float64
+	macroB                   func(float64, float64) float64
+	startingLakeNoise        func(float64, float64) float64
+	auxNoise                 func(float64, float64) float64
+	moistureNoise            func(float64, float64) float64
+	temperatureNoise         func(float64, float64) float64
+	terrainNoise             [19]func(float64, float64) float64
+	specialPersistenceNoise  func(float64, float64) float64
+	specialTerrainNoise      func(float64, float64, float64) float64
+	specialCoastNoise        func(float64, float64, float64) float64
+	specialStartingLakeNoise func(float64, float64) float64
+	specialFinishTables      factorioBasisTables
+	specialSegmentation      float64
 
 	moistureBias             float64
 	startingAreaMoistureSize float64
@@ -98,15 +107,21 @@ func newFactorioNauvisEvaluator(settings fastPreviewSettings) *factorioNauvisEva
 	}
 
 	evaluator := &factorioNauvisEvaluator{
+		mapType:                  settings.mapType,
 		segmentation:             segmentation,
 		waterLevel:               10 * math.Log2(waterSize),
 		starts:                   starts,
 		lakes:                    factorioStartingLakePositions(settings.seed, starts),
+		basicAux:                 fastString(settings.propertyExpression["aux"]) == "aux_basic",
+		basicMoisture:            fastString(settings.propertyExpression["moisture"]) == "moisture_basic",
 		moistureBias:             settings.moistureBias,
 		startingAreaMoistureSize: settings.startingAreaMoistureSize,
 		startingAreaMoistureFreq: settings.startingAreaMoistureFrequency,
 		auxBias:                  settings.auxBias,
 		temperatureBias:          settings.temperatureBias,
+	}
+	if settings.mapType == "lakes" || settings.mapType == "island" {
+		evaluator.initSpecialElevation(settings.seed)
 	}
 	evaluator.hillsNoise = makeFactorioMultioctaveNoise(factorioMultioctaveParams{
 		seed0: settings.seed, seed1: 900, octaves: 4, persistence: 0.5,
@@ -193,15 +208,16 @@ func (e *factorioNauvisEvaluator) sample(x, y float64) factorioNauvisSample {
 	bridgeBillows := math.Abs(e.bridgeNoise(x, y))
 	forestPathBillows := math.Abs(e.forestPathNoise(x, y))
 	distance := factorioDistanceFromNearestPoint(x, y, e.starts, math.Inf(1))
-	elevation := e.elevationFromShared(
-		x,
-		y,
-		bridgeBillows,
-		distance,
-		0.1*hills+0.8*plateaus,
-	)
+	elevation := e.elevationFromShared(x, y, bridgeBillows, distance, 0.1*hills+0.8*plateaus)
+	if e.mapType == "lakes" || e.mapType == "island" {
+		elevation = e.specialElevation(x, y, distance)
+	}
 
-	aux := clampFloat(0.5+e.auxBias+0.06*(plateaus-0.4)+e.auxNoise(x, y), 0, 1)
+	auxPlateau := 0.06 * (plateaus - 0.4)
+	if e.basicAux {
+		auxPlateau = 0
+	}
+	aux := clampFloat(0.5+e.auxBias+auxPlateau+e.auxNoise(x, y), 0, 1)
 
 	startingBiasChange := factorioSliderToLinear(e.startingAreaMoistureSize, -0.5, 0.5)
 	startingBias := lerpFloat(
@@ -215,19 +231,21 @@ func (e *factorioNauvisEvaluator) sample(x, y float64) factorioNauvisSample {
 		1,
 	)
 	adjustedBias := lerpFloat(e.moistureBias, startingBias, startingBiasRegion)
-	moistureMain := clampFloat(
-		0.4+adjustedBias+e.moistureNoise(x, y)-0.08*(plateaus-0.6),
-		0,
-		1,
-	)
+	moistureMain := clampFloat(0.4+adjustedBias+e.moistureNoise(x, y)-0.08*(plateaus-0.6), 0, 1)
+	if e.basicMoisture {
+		moistureMain = clampFloat(0.45+adjustedBias+e.moistureNoise(x, y), 0, 1)
+	}
 	forestPathCutout := min(
 		(bridgeBillows-0.07)*5,
 		min((hills-0.1)*3, (forestPathBillows-0.07)*3),
 	)
-	moisture := max(
-		min(moistureMain, 0.45),
-		moistureMain-0.2*max(0, 1-forestPathCutout*1.5),
-	)
+	moisture := moistureMain
+	if !e.basicMoisture {
+		moisture = max(
+			min(moistureMain, 0.45),
+			moistureMain-0.2*max(0, 1-forestPathCutout*1.5),
+		)
+	}
 	temperature := clampFloat(15+e.temperatureBias+e.temperatureNoise(x, y), -20, 50)
 
 	return factorioNauvisSample{
@@ -238,7 +256,58 @@ func (e *factorioNauvisEvaluator) sample(x, y float64) factorioNauvisSample {
 
 func (e *factorioNauvisEvaluator) elevationNoCliff(x, y float64) float64 {
 	distance := factorioDistanceFromNearestPoint(x, y, e.starts, math.Inf(1))
+	if e.mapType == "lakes" || e.mapType == "island" {
+		return e.specialElevation(x, y, distance)
+	}
 	return e.elevationFromShared(x, y, math.Abs(e.bridgeNoise(x, y)), distance, 0)
+}
+
+func (e *factorioNauvisEvaluator) initSpecialElevation(seed uint32) {
+	segmentation := e.segmentation
+	if e.mapType == "island" {
+		segmentation /= 4
+	}
+	e.specialSegmentation = segmentation
+	inputScale := segmentation / 2
+	offsetX := 10000 / segmentation
+	e.specialPersistenceNoise = makeFactorioAmplitudeCorrectedNoise(factorioAmplitudeCorrectedParams{
+		seed0: seed, seed1: 1, octaves: 6, inputScale: inputScale,
+		offsetX: offsetX, persistence: 0.7, amplitude: 0.5,
+	})
+	e.specialTerrainNoise = makeFactorioVariablePersistenceNoise(factorioVariablePersistenceParams{
+		seed0: seed, seed1: 1, octaves: 8, inputScale: inputScale,
+		outputScale: 0.125, offsetX: offsetX,
+	})
+	e.specialCoastNoise = makeFactorioVariablePersistenceNoise(factorioVariablePersistenceParams{
+		seed0: seed, seed1: 2, octaves: 6, inputScale: inputScale,
+		outputScale: 0.125, offsetX: offsetX,
+	})
+	e.specialStartingLakeNoise = makeFactorioQuickPersistenceNoise(factorioQuickPersistenceParams{
+		seed0: seed, seed1: 14, octaves: 5, inputScale: 1.0 / 8,
+		outputScale: 1, octaveInputScaleMultiplier: 0.5, persistence: 0.75,
+	})
+	e.specialFinishTables = factorioBasisTablesFromSeed(seed, 123)
+}
+
+func (e *factorioNauvisEvaluator) specialElevation(x, y, distance float64) float64 {
+	persistence := clampFloat(e.specialPersistenceNoise(x, y)+0.3, 0.1, 0.9)
+	bias := 20.0
+	if e.mapType == "island" {
+		bias = -1000
+	}
+	elevation := max(
+		bias+e.specialTerrainNoise(x, y, persistence),
+		20+e.waterLevel-0.1*e.specialSegmentation*distance+
+			e.specialCoastNoise(x, y, persistence),
+	)
+	startingLakeDistance := factorioDistanceFromNearestPoint(x, y, e.lakes, 1024)
+	startingLakeNoise := e.specialStartingLakeNoise(x, y)
+	return min(
+		(elevation-e.waterLevel)/e.specialSegmentation,
+		1.5*factorioBasisNoise(x/8, y/8, &e.specialFinishTables)+startingLakeDistance/4-4,
+		-1+(startingLakeDistance+startingLakeNoise)/16,
+		max(2, 2+startingLakeDistance/16+startingLakeNoise/2),
+	)
 }
 
 func (e *factorioNauvisEvaluator) elevationFromShared(

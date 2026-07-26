@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   TilePreviewViewer,
+  perimeterPrefetchCoordinates,
   screenPointToWorld,
   snapTileScreenRect,
   tileRangeForView,
@@ -47,13 +48,65 @@ function createFakeContainer() {
   };
 }
 
+test("perimeter prefetch dimensions follow the current viewport", () => {
+  const singleTileView = { size: 512, scale: 1, centerX: 256, centerY: 256 };
+  assert.equal(perimeterPrefetchCoordinates(singleTileView).length, 8);
+
+  const fourTileView = { size: 1024, scale: 1, centerX: 0, centerY: 0 };
+  assert.equal(perimeterPrefetchCoordinates(fourTileView).length, 12);
+});
+
+test("viewer prefetches one viewport perimeter after visible tiles load", async (t) => {
+  const originalDocument = global.document;
+  global.document = { createElement: () => new FakeImage() };
+  t.after(() => { global.document = originalDocument; });
+
+  const requests = [];
+  const view = { size: 512, scale: 1, centerX: 256, centerY: 256 };
+  const coordinateKeys = (coordinates) => new Set(
+    coordinates.map(({ tileX, tileY }) => `${tileX},${tileY}`),
+  );
+  const firstRing = coordinateKeys(perimeterPrefetchCoordinates(view));
+  let resolveVisible;
+  const viewer = new TilePreviewViewer(createFakeContainer(), {
+    tileSize: 512,
+    maxTiles: 64,
+    maxConcurrent: 8,
+  });
+  viewer.configure({
+    sourceKey: "seed-123456",
+    tileScale: 1,
+    view,
+    requestTile: (tile) => {
+      requests.push(`${tile.tileX},${tile.tileY}`);
+      if (tile.tileX === 0 && tile.tileY === 0) {
+        return new Promise((resolve) => { resolveVisible = resolve; });
+      }
+      return `/tiles/${tile.tileX}/${tile.tileY}`;
+    },
+  });
+
+  const refresh = viewer.refresh();
+  await Promise.resolve();
+  assert.deepEqual(requests, ["0,0"], "offscreen requests must wait for the visible tile");
+
+  resolveVisible("/tiles/0/0");
+  assert.deepEqual(await refresh, {
+    loaded: 1, failed: 0, pending: 0, total: 1, complete: true,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(new Set(requests), new Set(["0,0", ...firstRing]));
+});
+
 test("changing settings or presets clears the prior client tile cache", async (t) => {
   const originalDocument = global.document;
   global.document = { createElement: () => new FakeImage() };
   t.after(() => { global.document = originalDocument; });
 
   const requests = [];
-  const viewer = new TilePreviewViewer(createFakeContainer(), { tileSize: 512, maxTiles: 64 });
+  const viewer = new TilePreviewViewer(createFakeContainer(), {
+    tileSize: 512, maxTiles: 64, prefetchPerimeters: false,
+  });
   const configure = (sourceKey) => viewer.configure({
     sourceKey,
     tileScale: 1,
@@ -87,7 +140,9 @@ test("tile viewer reuses one server resolution while panning and zooming", async
 
   const container = createFakeContainer();
   const requests = [];
-  const viewer = new TilePreviewViewer(container, { tileSize: 512, maxTiles: 64, maxConcurrent: 2 });
+  const viewer = new TilePreviewViewer(container, {
+    tileSize: 512, maxTiles: 64, maxConcurrent: 2, prefetchPerimeters: false,
+  });
   viewer.configure({
     sourceKey: "seed-123456",
     view: { size: 1024, scale: 1, centerX: 0, centerY: 0 },
@@ -148,6 +203,7 @@ test("zooming out requests only missing canonical source tiles", async (t) => {
     tileSize: 512,
     maxTiles: 64,
     maxConcurrent: 4,
+    prefetchPerimeters: false,
   });
   viewer.configure({
     sourceKey: "seed-123456",
@@ -185,6 +241,7 @@ test("loaded tiles remain cached until the configured LRU limit", async (t) => {
     tileSize: 512,
     maxTiles: 4,
     maxConcurrent: 2,
+    prefetchPerimeters: false,
   });
   viewer.configure({
     sourceKey: "seed-123456",
@@ -223,6 +280,7 @@ test("zooming back in aborts obsolete active and queued tile requests", async (t
     tileSize: 512,
     maxTiles: 64,
     maxConcurrent: 8,
+    prefetchPerimeters: false,
   });
   viewer.configure({
     sourceKey: "seed-123456",

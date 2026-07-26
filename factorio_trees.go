@@ -62,13 +62,14 @@ type factorioTreePoint struct {
 }
 
 type factorioTreeEvaluator struct {
-	seed       uint32
-	nauvis     *factorioNauvisEvaluator
-	starts     []factorioPoint
-	smallNoise func(float64, float64) float64
-	fields     []factorioTreeSpeciesField
-	tempRamps  [][4]float64
-	moistRamps [][4]float64
+	seed                     uint32
+	nauvis                   *factorioNauvisEvaluator
+	starts                   []factorioPoint
+	forestPathCutoutOverride *float64
+	smallNoise               func(float64, float64) float64
+	fields                   []factorioTreeSpeciesField
+	tempRamps                [][4]float64
+	moistRamps               [][4]float64
 }
 
 func newFactorioTreeEvaluator(settings fastPreviewSettings, nauvis *factorioNauvisEvaluator) *factorioTreeEvaluator {
@@ -86,6 +87,10 @@ func newFactorioTreeEvaluator(settings fastPreviewSettings, nauvis *factorioNauv
 			persistence: 0.75, inputScale: 0.2, outputScale: 0.5,
 		}),
 		fields: make([]factorioTreeSpeciesField, 0, len(factorioTreeSpeciesCatalog)),
+	}
+	if raw, ok := settings.propertyExpression["trees_forest_path_cutout"]; ok {
+		value := fastNumber(raw, 0)
+		evaluator.forestPathCutoutOverride = &value
 	}
 	if len(evaluator.starts) == 0 {
 		evaluator.starts = []factorioPoint{{}}
@@ -146,6 +151,9 @@ func (e *factorioTreeEvaluator) pointAtSample(x, y float64, sample factorioNauvi
 		(sample.bridge-0.07)*5,
 		min((sample.hills-0.1)*3, (sample.forestPath-0.07)*3),
 	)
+	if e.forestPathCutoutOverride != nil {
+		forestPathCutout = *e.forestPathCutoutOverride
+	}
 	return factorioTreePoint{
 		sample:      sample,
 		smallNoise:  smallNoise,

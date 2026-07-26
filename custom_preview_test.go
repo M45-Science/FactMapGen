@@ -78,6 +78,51 @@ func TestParseFastPreviewSettingsReadsCliffSettings(t *testing.T) {
 	}
 }
 
+func TestSpecialElevationPresetsUseCurrentEvaluators(t *testing.T) {
+	for _, mapType := range []string{"nauvis", "lakes", "island"} {
+		t.Run(mapType, func(t *testing.T) {
+			settings := defaultFactorioTerrainSettings(123456)
+			settings.mapType = mapType
+			settings.trees = fastControl{frequency: 1, size: 1, richness: 1, enabled: true}
+			settings.rocks = fastControl{frequency: 1, size: 1, richness: 1, enabled: true}
+			settings.cliffs = fastControl{frequency: 1, size: 1, richness: 1, enabled: true}
+			settings.cliffElevationInterval = 40
+			settings.cliffRichness = 1
+			settings.enemyBases = fastControl{frequency: 1, size: 1, richness: 1, enabled: true}
+
+			world := newFastPreviewWorld(settings)
+			if world.nauvis == nil || world.trees == nil || world.resources == nil ||
+				world.rocks == nil || world.cliffs == nil || world.enemies == nil {
+				t.Fatalf("%s world omitted a current evaluator: %#v", mapType, world)
+			}
+		})
+	}
+}
+
+func TestIslandElevationHasLandAndEndlessOcean(t *testing.T) {
+	settings := defaultFactorioTerrainSettings(24680)
+	settings.mapType = "island"
+	evaluator := newFactorioNauvisEvaluator(settings)
+
+	nearLand := false
+	for y := -256.0; y <= 256 && !nearLand; y += 16 {
+		for x := -256.0; x <= 256; x += 16 {
+			if evaluator.sample(x, y).elevation > 0 {
+				nearLand = true
+				break
+			}
+		}
+	}
+	if !nearLand {
+		t.Fatal("island elevation produced no land near the starting area")
+	}
+	for _, point := range []factorioPoint{{x: 4096}, {x: -4096}, {y: 4096}, {y: -4096}} {
+		if elevation := evaluator.sample(point.x, point.y).elevation; elevation >= 0 {
+			t.Fatalf("island elevation at (%g,%g) = %g, want ocean", point.x, point.y, elevation)
+		}
+	}
+}
+
 func TestRenderPreviewUsesFastEngineWithoutFactorio(t *testing.T) {
 	root := t.TempDir()
 	st := &store{

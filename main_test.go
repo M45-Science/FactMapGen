@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -617,10 +616,7 @@ func TestStoreDefaultProfilesAreReadOnly(t *testing.T) {
 }
 
 func TestPreviewRequestForUserLimitsGuestPreviewOptions(t *testing.T) {
-	guest := previewRequestForUser(previewRequest{Size: 4096, Zoom: "out-4", Lossless: true}, nil)
-	if guest.Lossless {
-		t.Fatal("guest preview retained lossless output")
-	}
+	guest := previewRequestForUser(previewRequest{Size: 4096, Zoom: "out-4"}, nil)
 	if guest.Size != guestMaxPreviewSize {
 		t.Fatalf("guest preview size = %d, want %d", guest.Size, guestMaxPreviewSize)
 	}
@@ -633,6 +629,9 @@ func TestPreviewRequestForUserLimitsGuestPreviewOptions(t *testing.T) {
 		t.Fatalf("fast guest preview zoom = %q, want 1", fastGuest.Zoom)
 	}
 	exactGuest := previewRequestForUser(previewRequest{Engine: previewEngineFactorio, Size: 512, Zoom: "2.75"}, nil)
+	if exactGuest.Engine != previewEngineFast {
+		t.Fatalf("exact guest preview engine = %q, want fast", exactGuest.Engine)
+	}
 	if exactGuest.Zoom != "1" {
 		t.Fatalf("exact guest preview zoom = %q, want normal", exactGuest.Zoom)
 	}
@@ -642,12 +641,23 @@ func TestPreviewRequestForUserLimitsGuestPreviewOptions(t *testing.T) {
 		t.Fatalf("default guest preview size = %d, want %d", defaultSizedGuest.Size, guestMaxPreviewSize)
 	}
 
-	signedIn := previewRequestForUser(previewRequest{Size: 4096, Zoom: "out-4", Lossless: true}, &authUser{ID: 1, Username: "user"})
-	if !signedIn.Lossless {
-		t.Fatal("signed-in preview lost lossless output")
-	}
+	signedIn := previewRequestForUser(previewRequest{Size: 4096, Zoom: "out-4"}, &authUser{ID: 1, Username: "user"})
 	if signedIn.Size != 4096 || signedIn.Zoom != "out-4" {
 		t.Fatalf("signed-in preview request = %#v, want unchanged", signedIn)
+	}
+}
+
+func TestGuestExactPreviewRequestIsForbidden(t *testing.T) {
+	srv := &server{store: newTestStore(t)}
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/profiles/default:Default/preview",
+		strings.NewReader(`{"engine":"factorio","size":512,"planet":"nauvis"}`),
+	)
+	rec := httptest.NewRecorder()
+	srv.handleProfile(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("guest Exact preview status = %d body=%s, want 403", rec.Code, rec.Body.String())
 	}
 }
 
@@ -808,7 +818,7 @@ cp %q "$output"
 		context.Background(),
 		profileRef{Source: profileSourceCustom, Name: "offset"},
 		mapGenPath,
-		previewRequest{Size: 256, Planet: "nauvis", Zoom: "2.75", CenterX: 12.4, CenterY: -8.6, Lossless: true},
+		previewRequest{Size: 256, Planet: "nauvis", Zoom: "2.75", CenterX: 12.4, CenterY: -8.6},
 		false,
 	)
 	if err != nil {
@@ -850,34 +860,13 @@ func TestEncodePNGPreviewImageUsesBestSpeed(t *testing.T) {
 	}
 }
 
-func TestEncodeAVIFImageWithFFmpeg(t *testing.T) {
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		t.Skip("ffmpeg not installed")
-	}
-	img := image.NewRGBA(image.Rect(0, 0, 8, 8))
-	for y := 0; y < 8; y++ {
-		for x := 0; x < 8; x++ {
-			img.Set(x, y, color.RGBA{R: uint8(x * 24), G: uint8(y * 24), B: 120, A: 255})
-		}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	data, err := encodeAVIFImage(ctx, img)
-	if err != nil {
-		t.Fatalf("encodeAVIFImage: %v", err)
-	}
-	if len(data) < 16 || string(data[4:12]) != "ftypavif" {
-		t.Fatalf("encoded AVIF header = % x", data[:min(len(data), 16)])
-	}
-}
-
 func TestPreviewImagesRemainAvailableForSaving(t *testing.T) {
 	st := newTestStore(t)
 	srv := &server{
 		store:     st,
 		previewer: &previewer{},
 	}
-	name, err := srv.previewer.storePreviewImage([]byte("jpg"), "image/jpeg", ".jpg")
+	name, err := srv.previewer.storePreviewImage([]byte("png"), "image/png", ".png")
 	if err != nil {
 		t.Fatalf("storePreviewImage: %v", err)
 	}
@@ -887,14 +876,14 @@ func TestPreviewImagesRemainAvailableForSaving(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("preview status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get("Content-Type"); got != "image/jpeg" {
-		t.Fatalf("Content-Type = %q, want image/jpeg", got)
+	if got := rec.Header().Get("Content-Type"); got != "image/png" {
+		t.Fatalf("Content-Type = %q, want image/png", got)
 	}
 	if got := rec.Header().Get("Content-Disposition"); got != `inline; filename="`+name+`"` {
 		t.Fatalf("Content-Disposition = %q, want inline filename", got)
 	}
-	if got := rec.Body.String(); got != "jpg" {
-		t.Fatalf("preview body = %q, want jpg", got)
+	if got := rec.Body.String(); got != "png" {
+		t.Fatalf("preview body = %q, want png", got)
 	}
 
 	again := httptest.NewRecorder()
@@ -902,8 +891,8 @@ func TestPreviewImagesRemainAvailableForSaving(t *testing.T) {
 	if again.Code != http.StatusOK {
 		t.Fatalf("second preview status = %d body=%s", again.Code, again.Body.String())
 	}
-	if got := again.Body.String(); got != "jpg" {
-		t.Fatalf("second preview body = %q, want jpg", got)
+	if got := again.Body.String(); got != "png" {
+		t.Fatalf("second preview body = %q, want png", got)
 	}
 
 	bad := httptest.NewRecorder()
@@ -917,7 +906,7 @@ func TestPreviewImagesAreCapped(t *testing.T) {
 	preview := &previewer{}
 	var first string
 	for i := 0; i < maxPreviewImages+1; i++ {
-		name, err := preview.storePreviewImage([]byte("jpg"), "image/jpeg", ".jpg")
+		name, err := preview.storePreviewImage([]byte("png"), "image/png", ".png")
 		if err != nil {
 			t.Fatalf("storePreviewImage %d: %v", i, err)
 		}
@@ -928,7 +917,7 @@ func TestPreviewImagesAreCapped(t *testing.T) {
 	if got := len(preview.images); got != maxPreviewImages {
 		t.Fatalf("preview image count = %d, want %d", got, maxPreviewImages)
 	}
-	if got, want := preview.imageBytes, int64(maxPreviewImages*len("jpg")); got != want {
+	if got, want := preview.imageBytes, int64(maxPreviewImages*len("png")); got != want {
 		t.Fatalf("preview image bytes = %d, want %d", got, want)
 	}
 	if _, ok := preview.getPreviewImage(first); ok {
@@ -938,11 +927,11 @@ func TestPreviewImagesAreCapped(t *testing.T) {
 
 func TestPreviewImagesAreEvictedByPayloadBytes(t *testing.T) {
 	preview := &previewer{imageByteLimit: 6}
-	first, err := preview.storePreviewImage([]byte("1234"), "image/jpeg", ".jpg")
+	first, err := preview.storePreviewImage([]byte("1234"), "image/png", ".png")
 	if err != nil {
 		t.Fatalf("store first preview: %v", err)
 	}
-	second, err := preview.storePreviewImage([]byte("abc"), "image/jpeg", ".jpg")
+	second, err := preview.storePreviewImage([]byte("abc"), "image/png", ".png")
 	if err != nil {
 		t.Fatalf("store second preview: %v", err)
 	}
@@ -964,7 +953,7 @@ func TestPreviewImagesAreEvictedByPayloadBytes(t *testing.T) {
 func TestPreviewImageExpirationReleasesPayloadBytes(t *testing.T) {
 	t.Run("during insert", func(t *testing.T) {
 		preview := &previewer{imageByteLimit: 4}
-		first, err := preview.storePreviewImage([]byte("1234"), "image/jpeg", ".jpg")
+		first, err := preview.storePreviewImage([]byte("1234"), "image/png", ".png")
 		if err != nil {
 			t.Fatalf("store first preview: %v", err)
 		}
@@ -974,7 +963,7 @@ func TestPreviewImageExpirationReleasesPayloadBytes(t *testing.T) {
 		preview.images[first] = image
 		preview.mu.Unlock()
 
-		if _, err := preview.storePreviewImage([]byte("abc"), "image/jpeg", ".jpg"); err != nil {
+		if _, err := preview.storePreviewImage([]byte("abc"), "image/png", ".png"); err != nil {
 			t.Fatalf("store after expiration: %v", err)
 		}
 		if got := len(preview.images); got != 1 {
@@ -987,7 +976,7 @@ func TestPreviewImageExpirationReleasesPayloadBytes(t *testing.T) {
 
 	t.Run("during get", func(t *testing.T) {
 		preview := &previewer{imageByteLimit: 4}
-		name, err := preview.storePreviewImage([]byte("1234"), "image/jpeg", ".jpg")
+		name, err := preview.storePreviewImage([]byte("1234"), "image/png", ".png")
 		if err != nil {
 			t.Fatalf("store preview: %v", err)
 		}
@@ -1011,15 +1000,15 @@ func TestPreviewImageExpirationReleasesPayloadBytes(t *testing.T) {
 
 func TestPinnedPreviewImageSurvivesByteEviction(t *testing.T) {
 	preview := &previewer{imageByteLimit: 10}
-	pinnedName, err := preview.storePinnedPreviewImage([]byte("pin!"), "image/jpeg", ".jpg")
+	pinnedName, err := preview.storePinnedPreviewImage([]byte("pin!"), "image/png", ".png")
 	if err != nil {
 		t.Fatalf("store pinned preview: %v", err)
 	}
-	oldName, err := preview.storePreviewImage([]byte("old!"), "image/jpeg", ".jpg")
+	oldName, err := preview.storePreviewImage([]byte("old!"), "image/png", ".png")
 	if err != nil {
 		t.Fatalf("store old preview: %v", err)
 	}
-	newName, err := preview.storePreviewImage([]byte("new!"), "image/jpeg", ".jpg")
+	newName, err := preview.storePreviewImage([]byte("new!"), "image/png", ".png")
 	if err != nil {
 		t.Fatalf("store new preview: %v", err)
 	}
@@ -1040,7 +1029,7 @@ func TestPinnedPreviewImageSurvivesByteEviction(t *testing.T) {
 
 func TestPinnedPreviewImagePayloadCapacityError(t *testing.T) {
 	preview := &previewer{imageByteLimit: 8}
-	pinnedName, err := preview.storePinnedPreviewImage([]byte("12345678"), "image/jpeg", ".jpg")
+	pinnedName, err := preview.storePinnedPreviewImage([]byte("12345678"), "image/png", ".png")
 	if err != nil {
 		t.Fatalf("store pinned preview: %v", err)
 	}
@@ -1048,7 +1037,7 @@ func TestPinnedPreviewImagePayloadCapacityError(t *testing.T) {
 		t.Fatalf("preview image bytes = %d, want 8", got)
 	}
 
-	_, err = preview.storePreviewImage([]byte("x"), "image/jpeg", ".jpg")
+	_, err = preview.storePreviewImage([]byte("x"), "image/png", ".png")
 	if err == nil || !strings.Contains(err.Error(), "pinned preview payloads use 8 of the 8-byte store limit") {
 		t.Fatalf("store over pinned capacity error = %v, want clear pinned-byte error", err)
 	}
@@ -1065,13 +1054,13 @@ func TestPinnedPreviewImagePayloadCapacityError(t *testing.T) {
 
 func TestPinnedPreviewImageSurvivesPrune(t *testing.T) {
 	preview := &previewer{}
-	pinnedName, err := preview.storePinnedPreviewImage([]byte("default"), "image/jpeg", ".jpg")
+	pinnedName, err := preview.storePinnedPreviewImage([]byte("default"), "image/png", ".png")
 	if err != nil {
 		t.Fatalf("storePinnedPreviewImage: %v", err)
 	}
 
 	for i := 0; i < maxPreviewImages+1; i++ {
-		if _, err := preview.storePreviewImage([]byte("jpg"), "image/jpeg", ".jpg"); err != nil {
+		if _, err := preview.storePreviewImage([]byte("png"), "image/png", ".png"); err != nil {
 			t.Fatalf("storePreviewImage %d: %v", i, err)
 		}
 	}

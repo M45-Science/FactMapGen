@@ -107,6 +107,32 @@
     return coordinates;
   }
 
+  function perimeterPrefetchCoordinates(view, tileSize = 512, tileScale = view.scale) {
+    const range = tileRangeForView(view, tileSize, tileScale);
+    const span = positiveNumber(tileSize, 512) * positiveNumber(tileScale, view.scale);
+    const minX = range.minX - 1;
+    const maxX = range.maxX + 1;
+    const minY = range.minY - 1;
+    const maxY = range.maxY + 1;
+    const centerTileX = finiteNumber(view.centerX) / span - 0.5;
+    const centerTileY = finiteNumber(view.centerY) / span - 0.5;
+    const coordinates = [];
+    for (let tileY = minY; tileY <= maxY; tileY++) {
+      for (let tileX = minX; tileX <= maxX; tileX++) {
+        if (tileX !== minX && tileX !== maxX && tileY !== minY && tileY !== maxY) continue;
+        coordinates.push({
+          tileX,
+          tileY,
+          priority: Math.hypot(tileX - centerTileX, tileY - centerTileY)
+            + tileOrderJitter(tileX, tileY) * 0.8,
+        });
+      }
+    }
+    coordinates.sort((first, second) => first.priority - second.priority
+      || first.tileY - second.tileY || first.tileX - second.tileX);
+    return coordinates;
+  }
+
   class TilePreviewViewer {
     constructor(container, options = {}) {
       if (!container) throw new Error("tile viewer container is required");
@@ -114,6 +140,7 @@
       this.tileSize = positiveNumber(options.tileSize, 512);
       this.maxTiles = Math.max(4, Math.round(positiveNumber(options.maxTiles, 64)));
       this.maxConcurrent = Math.max(1, Math.round(positiveNumber(options.maxConcurrent, 4)));
+      this.prefetchPerimeters = options.prefetchPerimeters !== false;
       this.onState = typeof options.onState === "function" ? options.onState : () => {};
       this.cache = new Map();
       this.queue = [];
@@ -211,7 +238,22 @@
         const rejected = results.find((result) => result.status === "rejected");
         throw rejected?.reason || new Error("map tiles failed to load");
       }
+      if (summary.complete) this.prefetchTilePerimeters(sourceKey, targetScale, viewRevision);
       return summary;
+    }
+
+    prefetchTilePerimeters(sourceKey, scale, viewRevision) {
+      if (
+        !this.prefetchPerimeters
+        || !this.active
+        || this.sourceKey !== sourceKey
+        || !sameScale(this.tileScale, scale)
+        || this.viewRevision !== viewRevision
+      ) return;
+      for (const { tileX, tileY } of perimeterPrefetchCoordinates(this.view, this.tileSize, scale)) {
+        const entry = this.ensureEntry(sourceKey, scale, tileX, tileY);
+        entry.promise.catch(() => {});
+      }
     }
 
     ensureEntry(sourceKey, scale, tileX, tileY) {
@@ -412,6 +454,7 @@
     TilePreviewViewer,
     screenPointToWorld,
     snapTileScreenRect,
+    perimeterPrefetchCoordinates,
     tileRangeForView,
     tileRequestCoordinates,
     tileScreenRect,

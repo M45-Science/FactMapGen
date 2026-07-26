@@ -193,7 +193,7 @@ func TestRenderSpeedComparison1024(t *testing.T) {
 	if fast.Bounds().Dx() != 1024 || fast.Bounds().Dy() != 1024 {
 		t.Fatalf("fast preview dimensions = %v, want 1024x1024", fast.Bounds())
 	}
-	fastPNG, _, _, err := encodePreviewImage(context.Background(), fast, true)
+	fastPNG, _, _, err := encodePNGPreviewImage(fast)
 	if err != nil {
 		t.Fatalf("encode fast preview PNG: %v", err)
 	}

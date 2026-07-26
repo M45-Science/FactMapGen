@@ -58,7 +58,7 @@ func naturalLayersMapGenJSON(body []byte, trees, cliffs bool) ([]byte, error) {
 	root["default_enable_all_autoplace_controls"] = false
 	controls := fastMap(root["autoplace_controls"])
 	for _, name := range terrainOnlyAutoplaceControls {
-		controls[name] = map[string]any{"frequency": 0, "size": 0, "richness": 0}
+		delete(controls, name)
 	}
 	if trees {
 		controls["trees"] = map[string]any{"frequency": 1, "size": 1, "richness": 1}
@@ -186,10 +186,8 @@ func TestTerrainOnlyMapGenJSONDisablesOverlays(t *testing.T) {
 	if err := json.Unmarshal(body, &root); err != nil {
 		t.Fatalf("decode terrain-only settings: %v", err)
 	}
-	controls := fastMap(root["autoplace_controls"])
 	for _, name := range terrainOnlyAutoplaceControls {
-		control := fastMap(controls[name])
-		if fastNumber(control["frequency"], -1) != 0 || fastNumber(control["size"], -1) != 0 {
+		if control := fastAutoplaceControl(root, name); control.enabled {
 			t.Errorf("control %s was not disabled: %#v", name, control)
 		}
 	}
@@ -227,11 +225,9 @@ func TestNaturalLayersMapGenJSONSelectivelyEnablesTreesAndCliffs(t *testing.T) {
 			if err := json.Unmarshal(body, &root); err != nil {
 				t.Fatalf("decode natural-layer settings: %v", err)
 			}
-			controls := fastMap(root["autoplace_controls"])
 			for _, name := range terrainOnlyAutoplaceControls {
-				control := fastMap(controls[name])
 				wantEnabled := name == "trees" && test.trees || name == "nauvis_cliff" && test.cliffs
-				gotEnabled := fastNumber(control["frequency"], 0) > 0 && fastNumber(control["size"], 0) > 0
+				gotEnabled := fastAutoplaceControl(root, name).enabled
 				if gotEnabled != wantEnabled {
 					t.Errorf("control %s enabled = %v, want %v", name, gotEnabled, wantEnabled)
 				}

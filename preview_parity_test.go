@@ -57,11 +57,10 @@ func TestExactPreviewMatchesDirectFactorioPreview(t *testing.T) {
 
 			p := &previewer{factorioBin: factorioBin, timeout: 90 * time.Second}
 			resp, err := p.render(context.Background(), ref, mapGenPath, previewRequest{
-				Size:     tc.size,
-				Planet:   "nauvis",
-				Seed:     tc.seed,
-				Lossless: true,
-				Zoom:     "1",
+				Size:   tc.size,
+				Planet: "nauvis",
+				Seed:   tc.seed,
+				Zoom:   "1",
 			}, false)
 			if err != nil {
 				t.Fatalf("render exact preview: %v", err)
@@ -288,6 +287,8 @@ func fastTerrainParityCases() []previewParityCase {
 		{name: "default-seed-12345", profile: "default:Default", seed: "12345", size: 256},
 		{name: "default-seed-1810015623", profile: "default:Default", seed: "1810015623", size: 256},
 		{name: "default-seed-3662935136", profile: "default:Default", seed: "3662935136", size: 256},
+		{name: "lakes-seed-98765", profile: "default:Lakes", seed: "98765", size: 256},
+		{name: "island-seed-24680", profile: "default:Island", seed: "24680", size: 256},
 	}
 }
 

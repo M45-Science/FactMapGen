@@ -61,26 +61,13 @@ type fastPreviewWorld struct {
 	enemies   *factorioEnemyEvaluator
 }
 
-type fastResourceDef struct {
-	name        string
-	salt        uint32
-	color       color.RGBA
-	cellSize    float64
-	radius      float64
-	chance      float64
-	starting    bool
-	startingX   float64
-	startingY   float64
-	startingRad float64
-}
-
-var fastResourceDefs = []fastResourceDef{
-	{name: "iron-ore", salt: 101, color: color.RGBA{R: 105, G: 133, B: 147, A: 255}, cellSize: 210, radius: 30, chance: 0.62, starting: true, startingX: -66, startingY: -24, startingRad: 34},
-	{name: "copper-ore", salt: 102, color: color.RGBA{R: 204, G: 98, B: 54, A: 255}, cellSize: 215, radius: 30, chance: 0.60, starting: true, startingX: 70, startingY: 22, startingRad: 34},
-	{name: "coal", salt: 103, color: color.RGBA{A: 255}, cellSize: 195, radius: 29, chance: 0.62, starting: true, startingX: -30, startingY: 78, startingRad: 32},
-	{name: "stone", salt: 104, color: color.RGBA{R: 175, G: 155, B: 108, A: 255}, cellSize: 240, radius: 25, chance: 0.54, starting: true, startingX: 58, startingY: -78, startingRad: 28},
-	{name: "crude-oil", salt: 105, color: color.RGBA{R: 199, G: 51, B: 196, A: 255}, cellSize: 520, radius: 18, chance: 0.24},
-	{name: "uranium-ore", salt: 106, color: color.RGBA{R: 0, G: 179, B: 0, A: 255}, cellSize: 560, radius: 20, chance: 0.20},
+var fastResourceNames = []string{
+	"iron-ore",
+	"copper-ore",
+	"coal",
+	"stone",
+	"crude-oil",
+	"uranium-ore",
 }
 
 var fastScaleValues = map[string]float64{
@@ -208,8 +195,8 @@ func parseFastPreviewSettings(raw json.RawMessage, seedOverride string) (fastPre
 		resourceControls:              map[string]fastControl{},
 		propertyExpression:            props,
 	}
-	for _, resource := range fastResourceDefs {
-		settings.resourceControls[resource.name] = fastAutoplaceControl(root, resource.name)
+	for _, resource := range fastResourceNames {
+		settings.resourceControls[resource] = fastAutoplaceControl(root, resource)
 	}
 	if settings.startingArea <= 0 {
 		settings.startingArea = 1
@@ -270,6 +257,9 @@ func fastAutoplaceControl(root map[string]any, name string) fastControl {
 	controls := fastMap(root["autoplace_controls"])
 	raw, ok := controls[name]
 	if !ok {
+		if enabled, explicit := root["default_enable_all_autoplace_controls"]; explicit && !fastBool(enabled) {
+			control.enabled = false
+		}
 		return control
 	}
 	m := fastMap(raw)
@@ -300,9 +290,6 @@ func renderFastMapPreviewAt(
 
 func newFastPreviewWorld(settings fastPreviewSettings) *fastPreviewWorld {
 	world := &fastPreviewWorld{settings: settings}
-	if settings.mapType != "nauvis" {
-		return world
-	}
 	world.nauvis = newFactorioNauvisEvaluator(settings)
 	if settings.trees.enabled {
 		world.trees = newFactorioTreeEvaluator(settings, world.nauvis)
@@ -396,14 +383,8 @@ func (w *fastPreviewWorld) renderBase(
 				continue
 			}
 			lastWorldX = wx
-			var c color.RGBA
-			if w.nauvis != nil {
-				nauvisPoint := w.nauvis.sample(wx, wy)
-				tile := w.nauvis.terrainTile(nauvisPoint, wx, wy)
-				c = tile.color
-			} else {
-				c, _ = fastTerrainPixel(settings, wx, wy)
-			}
+			nauvisPoint := w.nauvis.sample(wx, wy)
+			c := w.nauvis.terrainTile(nauvisPoint, wx, wy).color
 			outOfMap := fastOutOfMapBounds(settings, wx, wy)
 			if outOfMap {
 				c = color.RGBA{R: 20, G: 23, B: 20, A: 255}
@@ -454,7 +435,7 @@ func (w *fastPreviewWorld) renderBase(
 				continue
 			}
 			base = blendFastPreviewEntities(
-				settings, w.nauvis, w.trees, w.rocks, w.resources, nil,
+				w.trees, w.rocks, w.resources, nil,
 				base, nil, wx, wy, y*size+x, tpp,
 			)
 			img.Pix[offset] = base.R
@@ -561,7 +542,7 @@ func renderFastNauvisOneTileRows(
 				base = color.RGBA{R: 20, G: 23, B: 20, A: 255}
 			} else if !factorioPreviewWaterColor(base) {
 				base = blendFastPreviewEntities(
-					settings, nauvis, trees, rocks, resources, oilMask,
+					trees, rocks, resources, oilMask,
 					base, &sample, wx, wy, y*size+x, 1,
 				)
 			}
@@ -610,8 +591,6 @@ func parallelFastPreviewRows(ctx context.Context, height int, renderRow func(int
 }
 
 func blendFastPreviewEntities(
-	settings fastPreviewSettings,
-	nauvis *factorioNauvisEvaluator,
 	trees *factorioTreeEvaluator,
 	rocks *factorioRockEvaluator,
 	resources *factorioResourceEvaluator,
@@ -622,9 +601,7 @@ func blendFastPreviewEntities(
 	pixelIndex int,
 	tilesPerPixel float64,
 ) color.RGBA {
-	if nauvis == nil {
-		base = fastBlendTrees(settings, base, wx, wy)
-	} else if sample != nil && trees != nil && trees.placedAtSample(wx, wy, *sample) {
+	if sample != nil && trees != nil && trees.placedAtSample(wx, wy, *sample) {
 		base = blendFactorioTrees(base, 1)
 	}
 	entityDither := (rocks != nil || resources != nil) &&
@@ -640,30 +617,14 @@ func blendFastPreviewEntities(
 		if ok {
 			base = rock
 		}
-	} else if nauvis == nil {
-		base = fastBlendRocks(settings, base, wx, wy)
 	}
-	if resources != nil {
-		if entityDither {
-			if resource, ok := resources.resourceAt(wx, wy); ok {
-				base = resource.mapColor
-			}
+	if resources != nil && entityDither {
+		if resource, ok := resources.resourceAt(wx, wy); ok {
+			base = resource.mapColor
 		}
-	} else if resource, ok := fastResourcePixel(settings, wx, wy); ok {
-		base = resource
 	}
 	if len(oilMask) > 0 && oilMask[pixelIndex] {
 		base = factorioResourceCatalog[4].mapColor
-	}
-	if nauvis == nil {
-		if enemy, ok := fastEnemyPixel(settings, wx, wy); ok {
-			base = enemy
-		}
-	}
-	if nauvis == nil {
-		if cliff, ok := fastCliffPixel(settings, wx, wy); ok {
-			base = cliff
-		}
 	}
 	return base
 }
@@ -682,224 +643,6 @@ func factorioPreviewEntityDither(wx, wy, tilesPerPixel float64) bool {
 	return fastHashUnit(0, 0x43484152, int64(math.Floor(wx)), int64(math.Floor(wy))) < 0.5
 }
 
-func fastTerrainPixel(settings fastPreviewSettings, wx, wy float64) (color.RGBA, bool) {
-	landScore := fastLandScore(settings, wx, wy)
-	if landScore < 0 {
-		if landScore < -0.28 {
-			return color.RGBA{R: 38, G: 64, B: 73, A: 255}, true
-		}
-		return color.RGBA{R: 51, G: 83, B: 95, A: 255}, true
-	}
-
-	moisture := fastClimate(settings.seed, 31, wx, wy, settings.moistureFrequency, settings.moistureBias)
-	aux := fastClimate(settings.seed, 32, wx, wy, settings.auxFrequency, settings.auxBias)
-	jitter := fastFBM(settings.seed, 33, wx, wy, 22, 2, 0.55) * 0.08
-	if landScore < 0.08 && aux < 0.72 {
-		return fastJitterColor(color.RGBA{R: 138, G: 103, B: 58, A: 255}, jitter), false
-	}
-	if moisture > 0.72 && aux < 0.55 {
-		return fastJitterColor(color.RGBA{R: 55, G: 53, B: 11, A: 255}, jitter), false
-	}
-	if moisture > 0.56 && aux < 0.68 {
-		return fastJitterColor(color.RGBA{R: 66, G: 57, B: 15, A: 255}, jitter), false
-	}
-	if moisture < 0.22 && aux < 0.50 {
-		return fastJitterColor(color.RGBA{R: 128, G: 93, B: 52, A: 255}, jitter), false
-	}
-	if aux > 0.80 {
-		return fastJitterColor(color.RGBA{R: 128, G: 93, B: 52, A: 255}, jitter), false
-	}
-	if aux > 0.66 {
-		return fastJitterColor(color.RGBA{R: 116, G: 81, B: 39, A: 255}, jitter), false
-	}
-	if moisture < 0.38 {
-		return fastJitterColor(color.RGBA{R: 141, G: 104, B: 60, A: 255}, jitter), false
-	}
-	return fastJitterColor(color.RGBA{R: 91, G: 63, B: 38, A: 255}, jitter), false
-}
-
-func fastLandScore(settings fastPreviewSettings, wx, wy float64) float64 {
-	water := settings.water
-	if !water.enabled {
-		return 1
-	}
-	frequency := clampFloat(water.frequency, 0.1, 6)
-	size := clampFloat(water.size, 0.05, 8)
-	scale := 230 / math.Sqrt(frequency)
-	large := fastFBM(settings.seed, 11, wx, wy, scale, 4, 0.55)
-	small := fastFBM(settings.seed, 12, wx+4100, wy-2600, scale*0.42, 3, 0.52)
-	elevation := large*0.78 + small*0.22
-	threshold := clampFloat(-0.10+0.19*math.Log2(size), -0.58, 0.42)
-
-	switch settings.mapType {
-	case "lakes":
-		threshold += 0.15
-	case "island":
-		radius := 315 * math.Sqrt(clampFloat(settings.startingArea, 0.5, 6))
-		dist := math.Hypot(wx, wy)
-		elevation -= clampFloat((dist-radius)/115, -0.18, 1.45)
-		threshold += 0.02
-	}
-	return elevation - threshold
-}
-
-func fastResourcePixel(settings fastPreviewSettings, wx, wy float64) (color.RGBA, bool) {
-	var best fastResourceDef
-	bestScore := 0.0
-	for _, def := range fastResourceDefs {
-		control := settings.resourceControls[def.name]
-		if !control.enabled {
-			continue
-		}
-		score := fastResourceScore(settings, def, control, wx, wy)
-		if score > bestScore {
-			bestScore = score
-			best = def
-		}
-	}
-	if bestScore <= 0 {
-		return color.RGBA{}, false
-	}
-	return best.color, true
-}
-
-func fastResourceScore(settings fastPreviewSettings, def fastResourceDef, control fastControl, wx, wy float64) float64 {
-	score := fastStartingResourceScore(settings, def, control, wx, wy)
-	frequency := clampFloat(control.frequency, 0.1, 6)
-	size := clampFloat(control.size, 0.05, 6)
-	cell := def.cellSize / math.Sqrt(frequency)
-	patchChance := clampFloat(def.chance*(0.5+0.35*math.Sqrt(frequency)), 0.03, 0.92)
-	cx := int64(math.Floor(wx / cell))
-	cy := int64(math.Floor(wy / cell))
-	for dy := int64(-1); dy <= 1; dy++ {
-		for dx := int64(-1); dx <= 1; dx++ {
-			ix := cx + dx
-			iy := cy + dy
-			if fastHashUnit(settings.seed, def.salt, ix, iy) > patchChance {
-				continue
-			}
-			centerX := (float64(ix) + fastHashUnit(settings.seed, def.salt+17, ix, iy)) * cell
-			centerY := (float64(iy) + fastHashUnit(settings.seed, def.salt+29, ix, iy)) * cell
-			radius := def.radius * math.Sqrt(size) * (0.75 + fastHashUnit(settings.seed, def.salt+41, ix, iy)*0.72)
-			dist := math.Hypot(wx-centerX, wy-centerY)
-			if dist >= radius {
-				continue
-			}
-			local := 1 - dist/radius
-			if local > score {
-				score = local
-			}
-		}
-	}
-	return score
-}
-
-func fastStartingResourceScore(settings fastPreviewSettings, def fastResourceDef, control fastControl, wx, wy float64) float64 {
-	if !def.starting {
-		return 0
-	}
-	scale := math.Sqrt(clampFloat(settings.startingArea, 0.35, 6))
-	radius := def.startingRad * math.Sqrt(clampFloat(control.size, 0.2, 6)) * scale
-	dist := math.Hypot(wx-def.startingX*scale, wy-def.startingY*scale)
-	if dist >= radius {
-		return 0
-	}
-	edge := 1 - dist/radius
-	shape := fastFBM(settings.seed, def.salt+61, wx, wy, 18, 2, 0.6)*0.18 + 0.82
-	return edge * shape
-}
-
-func fastBlendTrees(settings fastPreviewSettings, base color.RGBA, wx, wy float64) color.RGBA {
-	if !settings.trees.enabled {
-		return base
-	}
-	moisture := fastClimate(settings.seed, 31, wx, wy, settings.moistureFrequency, settings.moistureBias)
-	temperature := fastClimate(settings.seed, 34, wx, wy, settings.temperatureFreq, settings.temperatureBias)
-	return fastBlendTreesWithClimate(settings, base, wx, wy, moisture, temperature)
-}
-
-func fastBlendTreesWithClimate(settings fastPreviewSettings, base color.RGBA, wx, wy, moisture, temperature float64) color.RGBA {
-	if !settings.trees.enabled {
-		return base
-	}
-	frequency := clampFloat(settings.trees.frequency, 0.1, 6)
-	size := clampFloat(settings.trees.size, 0.05, 6)
-	density := fastFBM(settings.seed, 71, wx, wy, 78/math.Sqrt(frequency), 3, 0.58)*0.55 + moisture*0.55 + (1-math.Abs(temperature-0.52))*0.18
-	threshold := 0.72 - 0.13*math.Log2(size)
-	if density <= threshold {
-		return base
-	}
-	alpha := clampFloat((density-threshold)*0.75, 0.10, 0.42)
-	return fastMixColor(base, color.RGBA{R: 60, G: 106, B: 45, A: 255}, alpha)
-}
-
-func fastBlendRocks(settings fastPreviewSettings, base color.RGBA, wx, wy float64) color.RGBA {
-	if !settings.rocks.enabled {
-		return base
-	}
-	control := settings.rocks
-	cell := 38 / math.Sqrt(clampFloat(control.frequency, 0.1, 6))
-	cx := int64(math.Floor(wx / cell))
-	cy := int64(math.Floor(wy / cell))
-	if fastHashUnit(settings.seed, 82, cx, cy) > 0.12*clampFloat(control.size, 0.05, 4) {
-		return base
-	}
-	centerX := (float64(cx) + fastHashUnit(settings.seed, 83, cx, cy)) * cell
-	centerY := (float64(cy) + fastHashUnit(settings.seed, 84, cx, cy)) * cell
-	if math.Hypot(wx-centerX, wy-centerY) > 1.7+control.size {
-		return base
-	}
-	return fastMixColor(base, color.RGBA{R: 131, G: 125, B: 112, A: 255}, 0.55)
-}
-
-func fastEnemyPixel(settings fastPreviewSettings, wx, wy float64) (color.RGBA, bool) {
-	if settings.noEnemies || !settings.enemyBases.enabled {
-		return color.RGBA{}, false
-	}
-	if math.Hypot(wx, wy) < 185*math.Sqrt(clampFloat(settings.startingArea, 0.5, 6)) {
-		return color.RGBA{}, false
-	}
-	control := settings.enemyBases
-	cell := 360 / math.Sqrt(clampFloat(control.frequency, 0.1, 6))
-	cx := int64(math.Floor(wx / cell))
-	cy := int64(math.Floor(wy / cell))
-	best := 0.0
-	for dy := int64(-1); dy <= 1; dy++ {
-		for dx := int64(-1); dx <= 1; dx++ {
-			ix := cx + dx
-			iy := cy + dy
-			if fastHashUnit(settings.seed, 91, ix, iy) > 0.30*clampFloat(control.frequency, 0.1, 3) {
-				continue
-			}
-			centerX := (float64(ix) + fastHashUnit(settings.seed, 92, ix, iy)) * cell
-			centerY := (float64(iy) + fastHashUnit(settings.seed, 93, ix, iy)) * cell
-			radius := 18 + 32*math.Sqrt(clampFloat(control.size, 0.05, 6))
-			dist := math.Hypot(wx-centerX, wy-centerY)
-			if dist < radius {
-				best = math.Max(best, 1-dist/radius)
-			}
-		}
-	}
-	if best <= 0 {
-		return color.RGBA{}, false
-	}
-	return color.RGBA{R: 156, G: 44, B: 42, A: 255}, true
-}
-
-func fastCliffPixel(settings fastPreviewSettings, wx, wy float64) (color.RGBA, bool) {
-	if !settings.cliffs.enabled {
-		return color.RGBA{}, false
-	}
-	frequency := clampFloat(settings.cliffs.frequency, 0.1, 6)
-	continuity := clampFloat(settings.cliffs.size, 0.05, 8)
-	ridge := math.Abs(fastFBM(settings.seed, 121, wx, wy, 110/math.Sqrt(frequency), 3, 0.55))
-	gate := fastFBM(settings.seed, 122, wx, wy, 280, 2, 0.55)
-	if ridge < 0.026*math.Sqrt(continuity) && gate > -0.05 {
-		return color.RGBA{R: 154, G: 140, B: 120, A: 255}, true
-	}
-	return color.RGBA{}, false
-}
-
 func fastOutOfMapBounds(settings fastPreviewSettings, wx, wy float64) bool {
 	if settings.width > 0 && math.Abs(wx) > settings.width/2 {
 		return true
@@ -908,78 +651,6 @@ func fastOutOfMapBounds(settings fastPreviewSettings, wx, wy float64) bool {
 		return true
 	}
 	return false
-}
-
-func fastClimate(seed uint32, salt uint32, wx, wy, frequency, bias float64) float64 {
-	frequency = clampFloat(frequency, 0.1, 6)
-	value := 0.5 + fastFBM(seed, salt, wx, wy, 165/frequency, 4, 0.55)*0.38 + bias*0.35
-	return clampFloat(value, 0, 1)
-}
-
-func fastJitterColor(c color.RGBA, amount float64) color.RGBA {
-	scale := 1 + amount
-	return color.RGBA{
-		R: uint8(clampFloat(float64(c.R)*scale, 0, 255)),
-		G: uint8(clampFloat(float64(c.G)*scale, 0, 255)),
-		B: uint8(clampFloat(float64(c.B)*scale, 0, 255)),
-		A: 255,
-	}
-}
-
-func fastMixColor(base, over color.RGBA, alpha float64) color.RGBA {
-	alpha = clampFloat(alpha, 0, 1)
-	return color.RGBA{
-		R: uint8(float64(base.R)*(1-alpha) + float64(over.R)*alpha),
-		G: uint8(float64(base.G)*(1-alpha) + float64(over.G)*alpha),
-		B: uint8(float64(base.B)*(1-alpha) + float64(over.B)*alpha),
-		A: 255,
-	}
-}
-
-func fastFBM(seed uint32, salt uint32, wx, wy, scale float64, octaves int, persistence float64) float64 {
-	if scale < 1 {
-		scale = 1
-	}
-	amp := 1.0
-	sum := 0.0
-	norm := 0.0
-	for i := 0; i < octaves; i++ {
-		sum += fastValueNoise(seed, salt+uint32(i)*13, wx, wy, scale) * amp
-		norm += amp
-		amp *= persistence
-		scale *= 0.5
-		if scale < 1 {
-			scale = 1
-		}
-	}
-	if norm == 0 {
-		return 0
-	}
-	return sum / norm
-}
-
-func fastValueNoise(seed uint32, salt uint32, wx, wy, scale float64) float64 {
-	x := wx / scale
-	y := wy / scale
-	x0 := math.Floor(x)
-	y0 := math.Floor(y)
-	tx := fastSmooth(x - x0)
-	ty := fastSmooth(y - y0)
-	ix := int64(x0)
-	iy := int64(y0)
-	a := fastHashSigned(seed, salt, ix, iy)
-	b := fastHashSigned(seed, salt, ix+1, iy)
-	c := fastHashSigned(seed, salt, ix, iy+1)
-	d := fastHashSigned(seed, salt, ix+1, iy+1)
-	return lerpFloat(lerpFloat(a, b, tx), lerpFloat(c, d, tx), ty)
-}
-
-func fastSmooth(t float64) float64 {
-	return t * t * (3 - 2*t)
-}
-
-func fastHashSigned(seed uint32, salt uint32, x, y int64) float64 {
-	return fastHashUnit(seed, salt, x, y)*2 - 1
 }
 
 func fastHashUnit(seed uint32, salt uint32, x, y int64) float64 {

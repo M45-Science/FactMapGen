@@ -10,7 +10,6 @@ import (
 	"flag"
 	"fmt"
 	"image"
-	"image/jpeg"
 	"image/png"
 	"io"
 	"io/fs"
@@ -36,9 +35,6 @@ const (
 	defaultFastPreviewWarmSeed = "123456"
 	mapGenFile                 = "map-gen-settings.json"
 	mapSettingsFile            = "map-settings.json"
-	previewJPEGQuality         = 85
-	previewAVIFCRF             = 35
-	previewAVIFCPUUsed         = 6
 	maxPreviewOutputSize       = 4096
 	maxFactorioPreviewSize     = 16384
 	minPreviewTilesPerPixel    = 1.0 / 64
@@ -139,15 +135,14 @@ type renameProfileRequest struct {
 }
 
 type previewRequest struct {
-	Engine   string          `json:"engine"`
-	Size     int             `json:"size"`
-	Planet   string          `json:"planet"`
-	Seed     string          `json:"seed"`
-	Zoom     string          `json:"zoom"`
-	CenterX  float64         `json:"centerX"`
-	CenterY  float64         `json:"centerY"`
-	Lossless bool            `json:"lossless"`
-	MapGen   json.RawMessage `json:"mapGen"`
+	Engine  string          `json:"engine"`
+	Size    int             `json:"size"`
+	Planet  string          `json:"planet"`
+	Seed    string          `json:"seed"`
+	Zoom    string          `json:"zoom"`
+	CenterX float64         `json:"centerX"`
+	CenterY float64         `json:"centerY"`
+	MapGen  json.RawMessage `json:"mapGen"`
 }
 
 type previewResponse struct {
@@ -577,6 +572,10 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 		var req previewRequest
 		if err := decodeJSONRequest(r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if user == nil && exactPreviewRequested(req.Engine) {
+			writeError(w, http.StatusForbidden, "exact previews require sign-in")
 			return
 		}
 		req = previewRequestForUser(req, user)
@@ -1321,13 +1320,22 @@ func (s *server) warmDefaultPreview(ctx context.Context) {
 
 func previewRequestForUser(req previewRequest, user *authUser) previewRequest {
 	if user == nil {
-		req.Lossless = false
+		req.Engine = previewEngineFast
 		req.Zoom = "1"
 		if req.Size == 0 || req.Size > guestMaxPreviewSize {
 			req.Size = guestMaxPreviewSize
 		}
 	}
 	return req
+}
+
+func exactPreviewRequested(engine string) bool {
+	switch strings.ToLower(strings.TrimSpace(engine)) {
+	case "exact", previewEngineFactorio:
+		return true
+	default:
+		return false
+	}
 }
 
 func previewPriorityForUser(user *authUser) int {
@@ -1572,7 +1580,7 @@ func (p *previewer) render(ctx context.Context, ref profileRef, mapGenPath strin
 		return previewResponse{}, fmt.Errorf("Factorio preview failed: %w: %s", err, factorioErrorSummary(factorioOutput))
 	}
 
-	data, contentType, ext, err := previewImageBytes(runCtx, tmpPath, req.Lossless, zoom, size)
+	data, contentType, ext, err := previewImageBytes(tmpPath, zoom, size)
 	if err != nil {
 		return previewResponse{}, err
 	}
@@ -1685,8 +1693,8 @@ func formatPreviewCenter(value float64) string {
 	return strconv.FormatFloat(value, 'g', -1, 64)
 }
 
-func previewImageBytes(ctx context.Context, srcPath string, lossless bool, zoom previewZoom, outputSize int) ([]byte, string, string, error) {
-	if lossless && zoom.tilesPerPixel == 1 {
+func previewImageBytes(srcPath string, zoom previewZoom, outputSize int) ([]byte, string, string, error) {
+	if zoom.tilesPerPixel == 1 {
 		data, err := os.ReadFile(srcPath)
 		if err != nil {
 			return nil, "", "", err
@@ -1697,10 +1705,7 @@ func previewImageBytes(ctx context.Context, srcPath string, lossless bool, zoom 
 	if err != nil {
 		return nil, "", "", err
 	}
-	if lossless {
-		return encodePreviewImage(ctx, img, true)
-	}
-	return encodePreviewImage(ctx, img, false)
+	return encodePNGPreviewImage(img)
 }
 
 func encodePNGPreviewImage(img image.Image) ([]byte, string, string, error) {
@@ -1710,22 +1715,6 @@ func encodePNGPreviewImage(img image.Image) ([]byte, string, string, error) {
 		return nil, "", "", err
 	}
 	return buf.Bytes(), "image/png", ".png", nil
-}
-
-func encodePreviewImage(ctx context.Context, img image.Image, lossless bool) ([]byte, string, string, error) {
-	if lossless {
-		return encodePNGPreviewImage(img)
-	}
-	data, err := encodeAVIFImage(ctx, img)
-	if err == nil {
-		return data, "image/avif", ".avif", nil
-	}
-	log.Printf("AVIF preview encode failed, falling back to JPEG: %v", err)
-	data, err = encodeJPEGImage(img, previewJPEGQuality)
-	if err != nil {
-		return nil, "", "", err
-	}
-	return data, "image/jpeg", ".jpg", nil
 }
 
 func transformedPreviewImage(srcPath string, zoom previewZoom, outputSize int) (image.Image, error) {
@@ -1743,62 +1732,6 @@ func transformedPreviewImage(srcPath string, zoom previewZoom, outputSize int) (
 		return img, nil
 	}
 	return scalePreviewImage(img, outputSize, zoom.tilesPerPixel), nil
-}
-
-func encodeAVIFImage(ctx context.Context, img image.Image) ([]byte, error) {
-	var pngBytes bytes.Buffer
-	if err := png.Encode(&pngBytes, img); err != nil {
-		return nil, err
-	}
-	out, err := os.CreateTemp("", "factmapgen-preview-*.avif")
-	if err != nil {
-		return nil, err
-	}
-	outPath := out.Name()
-	if err := out.Close(); err != nil {
-		_ = os.Remove(outPath)
-		return nil, err
-	}
-	defer os.Remove(outPath)
-
-	cmd := exec.CommandContext(ctx, "ffmpeg",
-		"-hide_banner",
-		"-loglevel", "error",
-		"-y",
-		"-f", "png_pipe",
-		"-i", "pipe:0",
-		"-frames:v", "1",
-		"-c:v", "libaom-av1",
-		"-still-picture", "1",
-		"-crf", strconv.Itoa(previewAVIFCRF),
-		"-cpu-used", strconv.Itoa(previewAVIFCPUUsed),
-		outPath,
-	)
-	cmd.Stdin = &pngBytes
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return nil, fmt.Errorf("AVIF encode timed out: %w", ctx.Err())
-		}
-		return nil, fmt.Errorf("ffmpeg AVIF encode failed: %w: %s", err, clippedOutput(stderr.String(), 2000))
-	}
-	data, err := os.ReadFile(outPath)
-	if err != nil {
-		return nil, err
-	}
-	if len(data) == 0 {
-		return nil, errors.New("ffmpeg AVIF encode produced no output")
-	}
-	return data, nil
-}
-
-func encodeJPEGImage(img image.Image, quality int) ([]byte, error) {
-	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: quality}); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
 }
 
 func scalePreviewImage(src image.Image, outputSize int, tilesPerPixel float64) image.Image {
@@ -1828,7 +1761,7 @@ func (p *previewer) storePinnedPreviewImage(data []byte, contentType string, ext
 }
 
 func (p *previewer) storePreviewImageWithOptions(data []byte, contentType string, ext string, pinned bool) (string, error) {
-	if ext != ".avif" && ext != ".jpg" && ext != ".png" {
+	if ext != ".png" {
 		return "", errors.New("invalid preview image extension")
 	}
 	token, err := randomToken(18)
@@ -1939,10 +1872,6 @@ func isPreviewImageName(filename string) bool {
 	}
 	stem := strings.TrimPrefix(filename, "preview-")
 	switch {
-	case strings.HasSuffix(stem, ".avif"):
-		stem = strings.TrimSuffix(stem, ".avif")
-	case strings.HasSuffix(stem, ".jpg"):
-		stem = strings.TrimSuffix(stem, ".jpg")
 	case strings.HasSuffix(stem, ".png"):
 		stem = strings.TrimSuffix(stem, ".png")
 	default:
