@@ -310,6 +310,14 @@ func renderFastMapPreview(ctx context.Context, settings fastPreviewSettings, siz
 			rocks = newFactorioRockEvaluator(settings, nauvis)
 		}
 	}
+	var oilMask []bool
+	if resources != nil && resources.hasOil() {
+		var err error
+		oilMask, err = resources.oilPreviewMask(ctx, settings, originX, originY, tpp, size, size)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
 
 	lastWorldY = math.Inf(-1)
 	for y := 0; y < size; y++ {
@@ -355,12 +363,15 @@ func renderFastMapPreview(ctx context.Context, settings fastPreviewSettings, siz
 			}
 			if resources != nil {
 				if resource, ok := resources.resourceAt(wx, wy); ok {
-					if resource.randomProbability < 1 || factorioPreviewEntityDither(wx, wy, tpp) {
+					if factorioPreviewEntityDither(wx, wy, tpp) {
 						base = resource.mapColor
 					}
 				}
 			} else if resource, ok := fastResourcePixel(settings, wx, wy); ok {
 				base = resource
+			}
+			if len(oilMask) > 0 && oilMask[y*size+x] {
+				base = factorioResourceCatalog[4].mapColor
 			}
 			if enemy, ok := fastEnemyPixel(settings, wx, wy); ok {
 				base = enemy

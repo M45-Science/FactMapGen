@@ -67,11 +67,12 @@ func TestFactorioTreeDensityMatchesOracleComposition(t *testing.T) {
 	settings := defaultFactorioNaturalSettings(fixture.Seed)
 	evaluator := newFactorioTreeEvaluator(settings, newFactorioNauvisEvaluator(settings))
 	for index, position := range fixture.Positions {
-		want := 0.0
+		miss := 1.0
 		for _, species := range factorioTreeSpeciesCatalog {
-			want = math.Max(want, fixture.Values[species.name][index])
+			probability := clampFloat(fixture.Values[species.name][index], 0, 1)
+			miss *= 1 - probability
 		}
-		want = clampFloat(want, 0, 1)
+		want := 1 - miss
 		got := evaluator.densityAt(position.X, position.Y)
 		delta := math.Abs(got - want)
 		if delta >= 2e-4 && delta >= 1e-2*math.Abs(want) {
@@ -123,17 +124,13 @@ func TestRenderFactorioTreesUsesChartBlendAndLeavesWater(t *testing.T) {
 		t.Fatalf("render trees: %v", err)
 	}
 
-	weights := [...]float64{0.5, 1, 0.5}
 	for y := 0; y < 16; y++ {
 		for x := 0; x < 16; x++ {
-			miss := 1.0
-			for dy := -1; dy <= 1; dy++ {
-				for dx := -1; dx <= 1; dx++ {
-					probability := evaluator.densityAt(float64(x+dx), float64(y+dy)) * weights[dx+1] * weights[dy+1]
-					miss *= 1 - factorioTreeMaxAlpha*probability
-				}
+			alpha := 0.0
+			if evaluator.placedAt(float64(x), float64(y)) {
+				alpha = factorioTreeMaxAlpha
 			}
-			alphaByte := int(math.Round((1 - miss) * 255))
+			alphaByte := int(math.Round(alpha * 255))
 			blend := alphaByte + (alphaByte >> 7)
 			want := color.RGBA{
 				R: uint8(((256-blend)*int(baseColor.R) + blend*int(factorioTreeMapColor.R)) >> 8),

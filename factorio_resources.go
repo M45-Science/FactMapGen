@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"image/color"
 	"math"
 )
@@ -20,6 +21,8 @@ const (
 	factorioStartingResourceSkipSpan      = 4
 	factorioResourceBlobAmplitude         = 1.0 / 8.0
 	factorioStartingResourceSplit         = 0.5
+	factorioChunkSize                     = int64(32)
+	factorioOilChartRadius                = 0.5
 )
 
 type factorioResourceParams struct {
@@ -121,7 +124,9 @@ type factorioResourceField struct {
 }
 
 type factorioResourceEvaluator struct {
-	fields []factorioResourceField
+	seed             uint32
+	fields           []factorioResourceField
+	oilPenaltyChunks map[[2]int64][]float64
 }
 
 func newFactorioResourceEvaluator(settings fastPreviewSettings, nauvis *factorioNauvisEvaluator) *factorioResourceEvaluator {
@@ -144,7 +149,11 @@ func newFactorioResourceEvaluator(settings fastPreviewSettings, nauvis *factorio
 		)
 		fields = append(fields, field)
 	}
-	return &factorioResourceEvaluator{fields: fields}
+	return &factorioResourceEvaluator{
+		seed:             settings.seed,
+		fields:           fields,
+		oilPenaltyChunks: make(map[[2]int64][]float64),
+	}
 }
 
 func newFactorioResourceField(
@@ -239,26 +248,129 @@ func newFactorioStartingResourceField(
 func (e *factorioResourceEvaluator) resourceAt(x, y float64) (factorioResourceParams, bool) {
 	for index := range e.fields {
 		field := &e.fields[index]
-		probability := clampFloat(field.fieldAt(x, y), 0, 1)
 		if field.params.randomProbability < 1 {
-			// Oil's exact roll shares a chunk stream with every other entity autoplacer.
-			// A world-position dither preserves its expected sparse coverage without
-			// claiming tile-for-tile RNG parity.
-			// The positive random-probability gate averages half strength, while a
-			// charted oil well paints several nearby map pixels. Folding both into
-			// this factor matches overall preview ink without simulating the shared
-			// entity-placement stream.
-			probability *= field.params.randomProbability * 4
-			if fastHashUnit(0, 0x4f494c, int64(x), int64(y)) < probability {
-				return field.params, true
-			}
 			continue
 		}
+		probability := clampFloat(field.fieldAt(x, y), 0, 1)
 		if probability >= 0.5 {
 			return field.params, true
 		}
 	}
 	return factorioResourceParams{}, false
+}
+
+func (e *factorioResourceEvaluator) oilAtTile(tileX, tileY int64) (factorioResourceParams, bool) {
+	for index := range e.fields {
+		field := &e.fields[index]
+		if field.params.randomProbability >= 1 {
+			continue
+		}
+		penalty := e.oilRandomPenaltyAt(tileX, tileY)
+		if penalty <= 0 {
+			return factorioResourceParams{}, false
+		}
+		probability := clampFloat(field.fieldAt(float64(tileX), float64(tileY)), 0, 1)
+		probability *= math.Max(0, penalty)
+		// Factorio performs a second entity-autoplace roll after evaluating the
+		// chunk-ordered random-penalty expression. That roll shares state with
+		// the other entity autoplacers, so use a map-seeded positional roll here.
+		if probability > 0 && fastHashUnit(e.seed, 0x4f494c, tileX, tileY) < probability {
+			return field.params, true
+		}
+	}
+	return factorioResourceParams{}, false
+}
+
+func (e *factorioResourceEvaluator) hasOil() bool {
+	for index := range e.fields {
+		if e.fields[index].params.randomProbability < 1 {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *factorioResourceEvaluator) oilPreviewMask(
+	ctx context.Context,
+	settings fastPreviewSettings,
+	originX, originY, tilesPerPixel float64,
+	width, height int,
+) ([]bool, error) {
+	mask := make([]bool, width*height)
+	for py := 0; py < height; py++ {
+		if py&31 == 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+			}
+		}
+		minTileY := int64(math.Floor(originY + float64(py)*tilesPerPixel))
+		maxTileY := int64(math.Ceil(originY+float64(py+1)*tilesPerPixel)) - 1
+		spanY := max(int64(1), maxTileY-minTileY+1)
+		samplesY := min(spanY, int64(4))
+		for px := 0; px < width; px++ {
+			minTileX := int64(math.Floor(originX + float64(px)*tilesPerPixel))
+			maxTileX := int64(math.Ceil(originX+float64(px+1)*tilesPerPixel)) - 1
+			spanX := max(int64(1), maxTileX-minTileX+1)
+			samplesX := min(spanX, int64(4))
+			for sampleY := int64(0); sampleY < samplesY; sampleY++ {
+				tileY := minTileY + sampleY*spanY/samplesY
+				for sampleX := int64(0); sampleX < samplesX; sampleX++ {
+					tileX := minTileX + sampleX*spanX/samplesX
+					if fastOutOfMapBounds(settings, float64(tileX), float64(tileY)) {
+						continue
+					}
+					if _, ok := e.oilAtTile(tileX, tileY); !ok {
+						continue
+					}
+					minX := int(math.Floor((float64(tileX) - factorioOilChartRadius - originX) / tilesPerPixel))
+					maxX := int(math.Floor((float64(tileX) + factorioOilChartRadius - originX) / tilesPerPixel))
+					minY := int(math.Floor((float64(tileY) - factorioOilChartRadius - originY) / tilesPerPixel))
+					maxY := int(math.Floor((float64(tileY) + factorioOilChartRadius - originY) / tilesPerPixel))
+					for markY := max(0, minY); markY <= min(height-1, maxY); markY++ {
+						for markX := max(0, minX); markX <= min(width-1, maxX); markX++ {
+							mask[markY*width+markX] = true
+						}
+					}
+				}
+			}
+		}
+	}
+	return mask, nil
+}
+
+func (e *factorioResourceEvaluator) oilRandomPenaltyAt(tileX, tileY int64) float64 {
+	chunkX := factorioFloorDiv(tileX, factorioChunkSize)
+	chunkY := factorioFloorDiv(tileY, factorioChunkSize)
+	key := [2]int64{chunkX, chunkY}
+	penalties, ok := e.oilPenaltyChunks[key]
+	if !ok {
+		positions := make([]factorioSpotCandidate, factorioChunkSize*factorioChunkSize)
+		source := make([]float64, len(positions))
+		originX := chunkX * factorioChunkSize
+		originY := chunkY * factorioChunkSize
+		for localY := int64(0); localY < factorioChunkSize; localY++ {
+			for localX := int64(0); localX < factorioChunkSize; localX++ {
+				index := localY*factorioChunkSize + localX
+				positions[index] = factorioSpotCandidate{x: float64(originX + localX), y: float64(originY + localY)}
+				source[index] = 1
+			}
+		}
+		penalties = factorioRandomPenaltyBatch(positions, source, 1, 1/factorioResourceCatalog[4].randomProbability)
+		e.oilPenaltyChunks[key] = penalties
+	}
+	localX := tileX - chunkX*factorioChunkSize
+	localY := tileY - chunkY*factorioChunkSize
+	return penalties[localY*factorioChunkSize+localX]
+}
+
+func factorioFloorDiv(value, divisor int64) int64 {
+	quotient := value / divisor
+	if value < 0 && value%divisor != 0 {
+		quotient--
+	}
+	return quotient
 }
 
 func (f *factorioResourceField) fieldAt(x, y float64) float64 {

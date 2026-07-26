@@ -11,6 +11,7 @@ const (
 	factorioTreeSmallNoiseSeed = 2343395516
 	factorioTreeBasisAbsMax    = 1.8
 	factorioTreeMaxAlpha       = 0.4
+	factorioTreePlacementSalt  = 0x54524545
 )
 
 var factorioTreeMapColor = color.RGBA{R: 48, G: 99, B: 48, A: 255}
@@ -59,6 +60,7 @@ type factorioTreePoint struct {
 }
 
 type factorioTreeEvaluator struct {
+	seed       uint32
 	nauvis     *factorioNauvisEvaluator
 	starts     []factorioPoint
 	smallNoise func(float64, float64) float64
@@ -72,6 +74,7 @@ func newFactorioTreeEvaluator(settings fastPreviewSettings, nauvis *factorioNauv
 	treeFrequency := positiveOr(settings.trees.frequency, 1)
 	treeSize := positiveOr(settings.trees.size, 1)
 	evaluator := &factorioTreeEvaluator{
+		seed:   settings.seed,
 		nauvis: nauvis,
 		starts: settings.startingPositions,
 		smallNoise: makeFactorioMultioctaveNoise(factorioMultioctaveParams{
@@ -157,24 +160,28 @@ func (e *factorioTreeEvaluator) speciesValueAt(index int, x, y float64) float64 
 
 func (e *factorioTreeEvaluator) densityAt(x, y float64) float64 {
 	point := e.pointAt(x, y)
-	best := 0.0
+	miss := 1.0
 	for _, field := range e.fields {
-		if field.species.cap <= best {
-			continue
-		}
 		cheap := factorioTreeCheap(field, point)
-		if cheap+field.maxNoise <= best {
+		if cheap+field.maxNoise <= 0 {
 			continue
 		}
 		value := math.Min(
 			field.species.cap,
 			math.Min(point.cutoutFaded, cheap+field.noise(x, y)),
 		)
-		if value > best {
-			best = value
+		probability := clampFloat(value, 0, 1)
+		if probability > 0 {
+			miss *= 1 - probability
 		}
 	}
-	return clampFloat(best, 0, 1)
+	return 1 - miss
+}
+
+func (e *factorioTreeEvaluator) placedAt(x, y float64) bool {
+	tileX := int64(math.Floor(x))
+	tileY := int64(math.Floor(y))
+	return fastHashUnit(e.seed, factorioTreePlacementSalt, tileX, tileY) < e.densityAt(float64(tileX), float64(tileY))
 }
 
 func renderFactorioTrees(
@@ -187,38 +194,7 @@ func renderFactorioTrees(
 	bounds := img.Bounds()
 	width := bounds.Dx()
 	height := bounds.Dy()
-	bufferWidth := width + 2
-	density := make([]float64, bufferWidth*(height+2))
 	lastWorldY := math.Inf(-1)
-	for by := 0; by < height+2; by++ {
-		if by&31 == 0 {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-		}
-		worldY := math.Floor(originY + float64(by-1)*tilesPerPixel)
-		row := by * bufferWidth
-		if by > 0 && worldY == lastWorldY {
-			copy(density[row:row+bufferWidth], density[row-bufferWidth:row])
-			continue
-		}
-		lastWorldY = worldY
-		lastWorldX := math.Inf(-1)
-		for bx := 0; bx < bufferWidth; bx++ {
-			worldX := math.Floor(originX + float64(bx-1)*tilesPerPixel)
-			if bx > 0 && worldX == lastWorldX {
-				density[row+bx] = density[row+bx-1]
-				continue
-			}
-			lastWorldX = worldX
-			density[row+bx] = evaluator.densityAt(worldX, worldY)
-		}
-	}
-
-	weights := [...]float64{0.5, 1, 0.5}
-	lastWorldY = math.Inf(-1)
 	for py := 0; py < height; py++ {
 		worldY := math.Floor(originY + float64(py)*tilesPerPixel)
 		row := py * img.Stride
@@ -243,14 +219,32 @@ func renderFactorioTrees(
 			if factorioPreviewWaterColor(base) {
 				continue
 			}
-			miss := 1.0
-			for dy := -1; dy <= 1; dy++ {
-				for dx := -1; dx <= 1; dx++ {
-					probability := density[(py+1+dy)*bufferWidth+(px+1+dx)] * weights[dy+1] * weights[dx+1]
-					miss *= 1 - factorioTreeMaxAlpha*probability
+
+			minTileX := int64(math.Floor(originX + float64(px)*tilesPerPixel))
+			maxTileX := int64(math.Ceil(originX+float64(px+1)*tilesPerPixel)) - 1
+			minTileY := int64(math.Floor(originY + float64(py)*tilesPerPixel))
+			maxTileY := int64(math.Ceil(originY+float64(py+1)*tilesPerPixel)) - 1
+			spanX := max(int64(1), maxTileX-minTileX+1)
+			spanY := max(int64(1), maxTileY-minTileY+1)
+			samplesX := min(spanX, int64(4))
+			samplesY := min(spanY, int64(4))
+			placed := int64(0)
+			for sampleY := int64(0); sampleY < samplesY; sampleY++ {
+				tileY := minTileY + sampleY*spanY/samplesY
+				for sampleX := int64(0); sampleX < samplesX; sampleX++ {
+					tileX := minTileX + sampleX*spanX/samplesX
+					if evaluator.placedAt(float64(tileX), float64(tileY)) {
+						placed++
+					}
 				}
 			}
-			alpha := 1 - miss
+			if placed == 0 {
+				continue
+			}
+			sampleCount := samplesX * samplesY
+			tileCount := spanX * spanY
+			placed = max(int64(1), int64(math.Round(float64(placed)*float64(tileCount)/float64(sampleCount))))
+			alpha := 1 - math.Pow(1-factorioTreeMaxAlpha, float64(placed))
 			if alpha <= 0 {
 				continue
 			}

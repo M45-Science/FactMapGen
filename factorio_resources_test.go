@@ -263,7 +263,7 @@ func TestFactorioResourceEvaluatorHonorsControls(t *testing.T) {
 	}
 }
 
-func TestFactorioOilDitherIsSparseAndDeterministic(t *testing.T) {
+func TestFactorioOilPlacementIsSparseAndDeterministic(t *testing.T) {
 	settings := defaultFactorioTerrainSettings(123456)
 	settings.resourceControls = make(map[string]fastControl, len(factorioResourceCatalog))
 	for _, params := range factorioResourceCatalog {
@@ -273,16 +273,16 @@ func TestFactorioOilDitherIsSparseAndDeterministic(t *testing.T) {
 	evaluator := newFactorioResourceEvaluator(settings, newFactorioNauvisEvaluator(settings))
 	placed := 0
 	eligible := 0
-	for y := 512.0; y < 1536; y += 4 {
-		for x := 512.0; x < 1536; x += 4 {
-			field := clampFloat(evaluator.fields[0].fieldAt(x, y), 0, 1)
+	for y := int64(512); y < 1536; y++ {
+		for x := int64(512); x < 1536; x++ {
+			field := clampFloat(evaluator.fields[0].fieldAt(float64(x), float64(y)), 0, 1)
 			if field > 0 {
 				eligible++
 			}
-			first, firstOK := evaluator.resourceAt(x, y)
-			second, secondOK := evaluator.resourceAt(x, y)
+			first, firstOK := evaluator.oilAtTile(x, y)
+			second, secondOK := evaluator.oilAtTile(x, y)
 			if firstOK != secondOK || first.name != second.name {
-				t.Fatalf("oil dither changed at (%g,%g)", x, y)
+				t.Fatalf("oil placement changed at (%d,%d)", x, y)
 			}
 			if firstOK {
 				placed++
@@ -295,6 +295,76 @@ func TestFactorioOilDitherIsSparseAndDeterministic(t *testing.T) {
 	coverage := float64(placed) / float64(eligible)
 	if coverage < 0.005 || coverage >= 0.15 {
 		t.Fatalf("oil dither is not sparse: %d/%d eligible samples placed", placed, eligible)
+	}
+}
+
+func TestFactorioOilPlacementVariesWithMapSeed(t *testing.T) {
+	settings := defaultFactorioTerrainSettings(123456)
+	settings.resourceControls = map[string]fastControl{
+		"crude-oil": {frequency: 1, size: 1, richness: 1, enabled: true},
+	}
+	first := newFactorioResourceEvaluator(settings, newFactorioNauvisEvaluator(settings))
+	settings.seed = 654321
+	second := newFactorioResourceEvaluator(settings, newFactorioNauvisEvaluator(settings))
+
+	different := 0
+	for y := int64(-512); y < 512; y++ {
+		for x := int64(-512); x < 512; x++ {
+			_, firstOK := first.oilAtTile(x, y)
+			_, secondOK := second.oilAtTile(x, y)
+			if firstOK != secondOK {
+				different++
+			}
+		}
+	}
+	if different == 0 {
+		t.Fatal("oil dither placement did not vary with map seed")
+	}
+}
+
+func TestFactorioOilRandomPenaltyUsesChunkRowOrder(t *testing.T) {
+	settings := defaultFactorioTerrainSettings(123456)
+	settings.resourceControls = map[string]fastControl{
+		"crude-oil": {frequency: 1, size: 1, richness: 1, enabled: true},
+	}
+	evaluator := newFactorioResourceEvaluator(settings, newFactorioNauvisEvaluator(settings))
+	const chunkX, chunkY = int64(-1), int64(2)
+	positions := make([]factorioSpotCandidate, factorioChunkSize*factorioChunkSize)
+	source := make([]float64, len(positions))
+	for localY := int64(0); localY < factorioChunkSize; localY++ {
+		for localX := int64(0); localX < factorioChunkSize; localX++ {
+			index := localY*factorioChunkSize + localX
+			positions[index] = factorioSpotCandidate{
+				x: float64(chunkX*factorioChunkSize + localX),
+				y: float64(chunkY*factorioChunkSize + localY),
+			}
+			source[index] = 1
+		}
+	}
+	want := factorioRandomPenaltyBatch(positions, source, 1, 48)
+	for _, index := range []int{0, 1, 31, 32, 511, 1023} {
+		got := evaluator.oilRandomPenaltyAt(int64(positions[index].x), int64(positions[index].y))
+		if got != want[index] {
+			t.Fatalf("oil penalty at chunk index %d = %g, want %g", index, got, want[index])
+		}
+	}
+}
+
+func TestFactorioFloorDiv(t *testing.T) {
+	for _, test := range []struct {
+		value int64
+		want  int64
+	}{
+		{value: -33, want: -2},
+		{value: -32, want: -1},
+		{value: -1, want: -1},
+		{value: 0, want: 0},
+		{value: 31, want: 0},
+		{value: 32, want: 1},
+	} {
+		if got := factorioFloorDiv(test.value, factorioChunkSize); got != test.want {
+			t.Errorf("factorioFloorDiv(%d, 32) = %d, want %d", test.value, got, test.want)
+		}
 	}
 }
 

@@ -24,8 +24,11 @@ type naturalPreviewStats struct {
 	TilesPerPixel         float64 `json:"tilesPerPixel"`
 	TreeRegionCorrelation float64 `json:"treeRegionCorrelation"`
 	TreeFastToGameInk     float64 `json:"treeFastToGameInk"`
+	TreeFastToGamePixels  float64 `json:"treeFastToGamePixels"`
 	FactorioTreeInk       float64 `json:"factorioTreeInk"`
 	FastTreeInk           float64 `json:"fastTreeInk"`
+	FactorioTreePixels    int     `json:"factorioTreePixels"`
+	FastTreePixels        int     `json:"fastTreePixels"`
 	FactorioCliffPixels   int     `json:"factorioCliffPixels"`
 	FastCliffPixels       int     `json:"fastCliffPixels"`
 	CliffFastToGameInk    float64 `json:"cliffFastToGameInk"`
@@ -65,6 +68,9 @@ func TestFastNaturalLayersMatchFactorioPreviewRegions(t *testing.T) {
 			fastTreeBlocks, fastTreeInk := previewOverlayInk(fastTerrain, fastTrees, 16)
 			correlation := previewPearsonCorrelation(factorioTreeBlocks, fastTreeBlocks)
 			inkRatio := fastTreeInk / factorioTreeInk
+			factorioTreeDiff, _, _ := previewImageDiff(factorioTerrain, factorioTrees)
+			fastTreeDiff, _, _ := previewImageDiff(fastTerrain, fastTrees)
+			pixelRatio := previewCountRatio(fastTreeDiff.ChangedPixels, factorioTreeDiff.ChangedPixels)
 
 			factorioCliffMask := previewColorMask(factorioCliffs, factorioCliffMapColor)
 			fastCliffMask := previewColorMask(fastCliffs, factorioCliffMapColor)
@@ -82,8 +88,11 @@ func TestFastNaturalLayersMatchFactorioPreviewRegions(t *testing.T) {
 				TilesPerPixel:         tilesPerPixel,
 				TreeRegionCorrelation: correlation,
 				TreeFastToGameInk:     inkRatio,
+				TreeFastToGamePixels:  pixelRatio,
 				FactorioTreeInk:       factorioTreeInk,
 				FastTreeInk:           fastTreeInk,
+				FactorioTreePixels:    factorioTreeDiff.ChangedPixels,
+				FastTreePixels:        fastTreeDiff.ChangedPixels,
 				FactorioCliffPixels:   factorioCliffPixels,
 				FastCliffPixels:       fastCliffPixels,
 				CliffFastToGameInk:    cliffInkRatio,
@@ -95,13 +104,13 @@ func TestFastNaturalLayersMatchFactorioPreviewRegions(t *testing.T) {
 			if factorioTreeInk == 0 || fastTreeInk == 0 {
 				t.Fatalf("tree overlay ink is empty: Factorio=%g fast=%g", factorioTreeInk, fastTreeInk)
 			}
-			if correlation < 0.90 || inkRatio < 0.70 || inkRatio > 1.10 {
-				t.Errorf("tree regions diverged: correlation=%.3f fast/game ink=%.3f", correlation, inkRatio)
+			if correlation < 0.90 || inkRatio < 0.70 || inkRatio > 1.10 || pixelRatio < 0.85 || pixelRatio > 1.15 {
+				t.Errorf("tree regions diverged: correlation=%.3f fast/game ink=%.3f pixels=%.3f", correlation, inkRatio, pixelRatio)
 			}
 			if cliffRecall < 0.90 || cliffPrecision < 0.85 || cliffInkRatio < 0.65 || cliffInkRatio > 1.75 {
 				t.Errorf("cliff masks diverged: recall=%.3f precision=%.3f fast/game ink=%.3f", cliffRecall, cliffPrecision, cliffInkRatio)
 			}
-			t.Logf("trees correlation=%.3f fast/game ink=%.3f; cliffs recall=%.3f precision=%.3f fast/game ink=%.3f", correlation, inkRatio, cliffRecall, cliffPrecision, cliffInkRatio)
+			t.Logf("trees correlation=%.3f fast/game ink=%.3f pixels=%.3f; cliffs recall=%.3f precision=%.3f fast/game ink=%.3f", correlation, inkRatio, pixelRatio, cliffRecall, cliffPrecision, cliffInkRatio)
 		})
 	}
 }

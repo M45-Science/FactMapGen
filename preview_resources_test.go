@@ -27,6 +27,9 @@ type resourcePreviewStats struct {
 	FactorioResourcePixels    int     `json:"factorioResourcePixels"`
 	FastResourcePixels        int     `json:"fastResourcePixels"`
 	OilFastToGameInk          float64 `json:"oilFastToGameInk"`
+	OilRegionCorrelation      float64 `json:"oilRegionCorrelation"`
+	OilRecall                 float64 `json:"oilRecall"`
+	OilPrecision              float64 `json:"oilPrecision"`
 	FactorioOilPixels         int     `json:"factorioOilPixels"`
 	FastOilPixels             int     `json:"fastOilPixels"`
 	RockRegionCorrelation     float64 `json:"rockRegionCorrelation"`
@@ -71,9 +74,10 @@ func TestFastResourceLayersMatchFactorioPreviewRegions(t *testing.T) {
 					stats.ResourceFastToGameInk,
 				)
 			}
-			if stats.FactorioOilPixels > 0 &&
-				(stats.OilFastToGameInk < 0.35 || stats.OilFastToGameInk > 2.5) {
-				t.Errorf("oil fast/game ink = %.3f", stats.OilFastToGameInk)
+			if stats.FactorioOilPixels >= 8 &&
+				(stats.OilRegionCorrelation < 0.75 || stats.OilRecall < 0.30 || stats.OilPrecision < 0.30 ||
+					stats.OilFastToGameInk < 0.35 || stats.OilFastToGameInk > 2.1) {
+				t.Errorf("oil regions diverged: correlation=%.3f recall=%.3f precision=%.3f fast/game ink=%.3f", stats.OilRegionCorrelation, stats.OilRecall, stats.OilPrecision, stats.OilFastToGameInk)
 			}
 			if stats.FactorioRockPixels > 0 && stats.FastRockPixels > 0 &&
 				(stats.RockRegionCorrelation < 0.35 || stats.RockFastToGameInk < 0.20 || stats.RockFastToGameInk > 4) {
@@ -84,9 +88,13 @@ func TestFastResourceLayersMatchFactorioPreviewRegions(t *testing.T) {
 				)
 			}
 			t.Logf(
-				"resources correlation=%.3f fast/game ink=%.3f; rocks correlation=%.3f fast/game ink=%.3f",
+				"resources correlation=%.3f fast/game ink=%.3f; oil correlation=%.3f recall=%.3f precision=%.3f fast/game ink=%.3f; rocks correlation=%.3f fast/game ink=%.3f",
 				stats.ResourceRegionCorrelation,
 				stats.ResourceFastToGameInk,
+				stats.OilRegionCorrelation,
+				stats.OilRecall,
+				stats.OilPrecision,
+				stats.OilFastToGameInk,
 				stats.RockRegionCorrelation,
 				stats.RockFastToGameInk,
 			)
@@ -125,6 +133,9 @@ func TestPreviewGalleryResourceLayersDefaultSeeds(t *testing.T) {
 		RockCorrelation     string
 		RockInkRatio        string
 		OilInkRatio         string
+		OilCorrelation      string
+		OilRecall           string
+		OilPrecision        string
 		ChangedPercent      string
 		Reference           string
 	}
@@ -156,9 +167,10 @@ func TestPreviewGalleryResourceLayersDefaultSeeds(t *testing.T) {
 				stats.ResourceFastToGameInk,
 			)
 		}
-		if stats.FactorioOilPixels > 0 &&
-			(stats.OilFastToGameInk < 0.35 || stats.OilFastToGameInk > 2.5) {
-			t.Errorf("seed %s oil fast/game ink = %.3f", seedText, stats.OilFastToGameInk)
+		if stats.FactorioOilPixels >= 8 &&
+			(stats.OilRegionCorrelation < 0.75 || stats.OilRecall < 0.30 || stats.OilPrecision < 0.30 ||
+				stats.OilFastToGameInk < 0.35 || stats.OilFastToGameInk > 2.1) {
+			t.Errorf("seed %s oil regions diverged: correlation=%.3f recall=%.3f precision=%.3f fast/game ink=%.3f", seedText, stats.OilRegionCorrelation, stats.OilRecall, stats.OilPrecision, stats.OilFastToGameInk)
 		}
 		if stats.FactorioRockPixels > 0 && stats.FastRockPixels > 0 &&
 			(stats.RockRegionCorrelation < 0.70 || stats.RockFastToGameInk < 0.20 || stats.RockFastToGameInk > 2.5) {
@@ -194,6 +206,9 @@ func TestPreviewGalleryResourceLayersDefaultSeeds(t *testing.T) {
 			RockCorrelation:     fmt.Sprintf("%.3f", stats.RockRegionCorrelation),
 			RockInkRatio:        fmt.Sprintf("%.3f", stats.RockFastToGameInk),
 			OilInkRatio:         fmt.Sprintf("%.3f", stats.OilFastToGameInk),
+			OilCorrelation:      fmt.Sprintf("%.3f", stats.OilRegionCorrelation),
+			OilRecall:           fmt.Sprintf("%.3f", stats.OilRecall),
+			OilPrecision:        fmt.Sprintf("%.3f", stats.OilPrecision),
 			ChangedPercent:      fmt.Sprintf("%.3f", diffStats.ChangedPercent),
 			Reference:           reference,
 		})
@@ -328,6 +343,9 @@ func measureResourcePreview(seed string, tilesPerPixel float64, factorioImg, fas
 		FactorioResourcePixels:    factorioResourcePixels,
 		FastResourcePixels:        fastResourcePixels,
 		OilFastToGameInk:          previewCountRatio(fastOilPixels, factorioOilPixels),
+		OilRegionCorrelation:      previewPearsonCorrelation(previewMaskBlocks(factorioOilMask, width, height, 32), previewMaskBlocks(fastOilMask, width, height, 32)),
+		OilRecall:                 previewMaskTolerance(factorioOilMask, fastOilMask, width, height, 1),
+		OilPrecision:              previewMaskTolerance(fastOilMask, factorioOilMask, width, height, 1),
 		FactorioOilPixels:         factorioOilPixels,
 		FastOilPixels:             fastOilPixels,
 		RockRegionCorrelation:     previewPearsonCorrelation(previewMaskBlocks(factorioRockMask, width, height, 32), previewMaskBlocks(fastRockMask, width, height, 32)),
@@ -423,7 +441,7 @@ func writeResourcePreviewGalleryHTML(t *testing.T, path string, rows any) {
 </head>
 <body>
   <h1>Default Resources + Oil + Rocks Comparison</h1>
-  <p class="meta">512px at 2 meters per pixel. Trees, enemies, cliffs, fish, and decorations are disabled. Solid-resource footprints use Factorio-compatible fields; oil and placed-entity positions use density-matched approximations. Left: cached Factorio headless preview. Middle: FactMapGen fast Go preview. Right: amplified RGB diff.</p>
+  <p class="meta">512px at 2 meters per pixel. Trees, enemies, cliffs, fish, and decorations are disabled. Solid-resource footprints use Factorio-compatible fields. Oil uses Factorio's chunk-ordered random-penalty stream and chart footprint with an approximated final shared-autoplace roll. Left: cached Factorio headless preview. Middle: FactMapGen fast Go preview. Right: amplified RGB diff.</p>
   <table>
     <thead><tr><th>#</th><th>Seed</th><th>Factorio</th><th>Fast Go</th><th>Diff</th><th>Stats</th></tr></thead>
     <tbody>
@@ -434,7 +452,7 @@ func writeResourcePreviewGalleryHTML(t *testing.T, path string, rows any) {
         <td><img src="{{.FactorioPath}}" alt="Factorio preview seed {{.Seed}}"></td>
         <td><img src="{{.FastPath}}" alt="Fast Go preview seed {{.Seed}}"></td>
         <td><img src="{{.DiffPath}}" alt="Diff seed {{.Seed}}"></td>
-        <td class="meta">ore corr {{.ResourceCorrelation}}<br>ore fast/game {{.ResourceInkRatio}}<br>oil fast/game {{.OilInkRatio}}<br>rock corr {{.RockCorrelation}}<br>rock fast/game {{.RockInkRatio}}<br>{{.ChangedPercent}}% RGB changed<br>Factorio: {{.Reference}}</td>
+        <td class="meta">ore corr {{.ResourceCorrelation}}<br>ore fast/game {{.ResourceInkRatio}}<br>oil corr {{.OilCorrelation}}<br>oil recall {{.OilRecall}}<br>oil precision {{.OilPrecision}}<br>oil fast/game {{.OilInkRatio}}<br>rock corr {{.RockCorrelation}}<br>rock fast/game {{.RockInkRatio}}<br>{{.ChangedPercent}}% RGB changed<br>Factorio: {{.Reference}}</td>
       </tr>
       {{end}}
     </tbody>
