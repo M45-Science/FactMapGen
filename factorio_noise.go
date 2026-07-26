@@ -310,3 +310,10 @@ func factorioFastPow2(power float64) float64 {
 func factorioFastPow(value, power float64) float64 {
 	return factorioFastPow2(float64(float32(power * factorioFastLog2(value))))
 }
+
+func factorioFastCbrt(value float64) float64 {
+	if value <= 0 {
+		return 0
+	}
+	return factorioFastPow(value, 1.0/3.0)
+}

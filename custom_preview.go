@@ -302,6 +302,14 @@ func renderFastMapPreview(ctx context.Context, settings fastPreviewSettings, siz
 			return nil, 0, err
 		}
 	}
+	var resources *factorioResourceEvaluator
+	var rocks *factorioRockEvaluator
+	if nauvis != nil {
+		resources = newFactorioResourceEvaluator(settings, nauvis)
+		if settings.rocks.enabled {
+			rocks = newFactorioRockEvaluator(settings, nauvis)
+		}
+	}
 
 	lastWorldY = math.Inf(-1)
 	for y := 0; y < size; y++ {
@@ -338,7 +346,20 @@ func renderFastMapPreview(ctx context.Context, settings fastPreviewSettings, siz
 			if nauvis == nil {
 				base = fastBlendTrees(settings, base, wx, wy)
 			}
-			if resource, ok := fastResourcePixel(settings, wx, wy); ok {
+			if rocks != nil {
+				if rock, ok := rocks.colorAt(wx, wy); ok && factorioPreviewEntityDither(wx, wy, tpp) {
+					base = rock
+				}
+			} else if nauvis == nil {
+				base = fastBlendRocks(settings, base, wx, wy)
+			}
+			if resources != nil {
+				if resource, ok := resources.resourceAt(wx, wy); ok {
+					if resource.randomProbability < 1 || factorioPreviewEntityDither(wx, wy, tpp) {
+						base = resource.mapColor
+					}
+				}
+			} else if resource, ok := fastResourcePixel(settings, wx, wy); ok {
 				base = resource
 			}
 			if enemy, ok := fastEnemyPixel(settings, wx, wy); ok {
@@ -349,7 +370,6 @@ func renderFastMapPreview(ctx context.Context, settings fastPreviewSettings, siz
 					base = cliff
 				}
 			}
-			base = fastBlendRocks(settings, base, wx, wy)
 			img.Pix[offset] = base.R
 			img.Pix[offset+1] = base.G
 			img.Pix[offset+2] = base.B
@@ -370,6 +390,13 @@ func fastTilesPerPixel(zoom previewZoom) float64 {
 		return zoom.tilesPerPixel
 	}
 	return 1
+}
+
+func factorioPreviewEntityDither(wx, wy, tilesPerPixel float64) bool {
+	if tilesPerPixel <= 2 {
+		return (int64(math.Floor(wx/2))+int64(math.Floor(wy/2)))&1 == 0
+	}
+	return fastHashUnit(0, 0x43484152, int64(math.Floor(wx)), int64(math.Floor(wy))) < 0.5
 }
 
 func fastTerrainPixel(settings fastPreviewSettings, wx, wy float64) (color.RGBA, bool) {
