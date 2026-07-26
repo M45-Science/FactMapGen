@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -327,7 +328,22 @@ func previewParityProfile(t *testing.T, st *store, identifier string) (profileRe
 	return ref, absolutePath(filepath.Join(st.profileDir(ref), mapGenFile))
 }
 
+type previewProcessUsage struct {
+	wall   time.Duration
+	user   time.Duration
+	system time.Duration
+	maxRSS int64
+}
+
 func renderFactorioPreviewPNG(t *testing.T, factorioBin, mapGenPath string, size int, seed string) []byte {
+	t.Helper()
+	body, _ := renderFactorioPreviewPNGWithUsage(t, factorioBin, mapGenPath, size, seed)
+	return body
+}
+
+func renderFactorioPreviewPNGWithUsage(
+	t *testing.T, factorioBin, mapGenPath string, size int, seed string,
+) ([]byte, previewProcessUsage) {
 	t.Helper()
 	outPath := filepath.Join(t.TempDir(), "factorio-preview.png")
 	args := []string{
@@ -343,18 +359,29 @@ func renderFactorioPreviewPNG(t *testing.T, factorioBin, mapGenPath string, size
 	if root := factorioRootFromBin(factorioBin); root != "" {
 		cmd.Dir = root
 	}
+	started := time.Now()
 	output, err := cmd.CombinedOutput()
+	usage := previewProcessUsage{wall: time.Since(started)}
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			t.Fatalf("Factorio preview timed out after 90s")
 		}
 		t.Fatalf("Factorio preview failed: %v: %s", err, clippedOutput(string(output), 4000))
 	}
+	if state, ok := cmd.ProcessState.SysUsage().(*syscall.Rusage); ok {
+		usage.user = timevalDuration(state.Utime)
+		usage.system = timevalDuration(state.Stime)
+		usage.maxRSS = state.Maxrss
+	}
 	body, err := os.ReadFile(outPath)
 	if err != nil {
 		t.Fatalf("read Factorio preview: %v", err)
 	}
-	return body
+	return body, usage
+}
+
+func timevalDuration(value syscall.Timeval) time.Duration {
+	return time.Duration(value.Sec)*time.Second + time.Duration(value.Usec)*time.Microsecond
 }
 
 func storedPreviewPNG(t *testing.T, p *previewer, rawURL string) []byte {

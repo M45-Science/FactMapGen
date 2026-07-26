@@ -3,6 +3,7 @@
 /previews/
 /test-output/
 /factmapgen
+/factmapgen.test
 /factmapgen-auth.db
 /factmapgen-auth.db-*
 /tools/factorio/

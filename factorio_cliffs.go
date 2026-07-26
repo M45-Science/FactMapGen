@@ -179,21 +179,25 @@ func (e *factorioCliffEvaluator) placedCells(
 	if !e.enabled {
 		return nil, nil
 	}
-	type cornerKey struct {
-		x int
-		y int
-	}
-	corners := make(map[cornerKey]factorioCliffCorner)
+	cxMin := int(math.Floor((x0 - factorioCliffCellCenterX) / factorioCliffGridSize))
+	cxMax := int(math.Ceil((x1 - factorioCliffCellCenterX) / factorioCliffGridSize))
+	cyMin := int(math.Floor((y0 - factorioCliffCellCenterY) / factorioCliffGridSize))
+	cyMax := int(math.Ceil((y1 - factorioCliffCellCenterY) / factorioCliffGridSize))
+	cornerWidth := cxMax - cxMin + 2
+	cornerHeight := cyMax - cyMin + 2
+	corners := make([]factorioCliffCorner, cornerWidth*cornerHeight)
+	cornerReady := make([]bool, len(corners))
 	corner := func(i, j int) factorioCliffCorner {
-		key := cornerKey{x: i, y: j}
-		if value, ok := corners[key]; ok {
-			return value
+		index := (j-cyMin)*cornerWidth + i - cxMin
+		if cornerReady[index] {
+			return corners[index]
 		}
 		value := e.cornerAt(
 			float64(i)*factorioCliffGridSize,
 			float64(j)*factorioCliffGridSize+factorioCliffCornerOffsetY,
 		)
-		corners[key] = value
+		corners[index] = value
+		cornerReady[index] = true
 		return value
 	}
 	cross := func(a, b factorioCliffCorner) int {
@@ -206,10 +210,6 @@ func (e *factorioCliffEvaluator) placedCells(
 		)
 	}
 
-	cxMin := int(math.Floor((x0 - factorioCliffCellCenterX) / factorioCliffGridSize))
-	cxMax := int(math.Ceil((x1 - factorioCliffCellCenterX) / factorioCliffGridSize))
-	cyMin := int(math.Floor((y0 - factorioCliffCellCenterY) / factorioCliffGridSize))
-	cyMax := int(math.Ceil((y1 - factorioCliffCellCenterY) / factorioCliffGridSize))
 	cells := make([]factorioPoint, 0)
 	for cy := cyMin; cy <= cyMax; cy++ {
 		if cy&31 == 0 {

@@ -9,8 +9,10 @@ import (
 	"image/color"
 	"math"
 	"net/url"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -249,6 +251,46 @@ func renderFastMapPreview(ctx context.Context, settings fastPreviewSettings, siz
 	if settings.mapType == "nauvis" {
 		nauvis = newFactorioNauvisEvaluator(settings)
 	}
+	var trees *factorioTreeEvaluator
+	var resources *factorioResourceEvaluator
+	var rocks *factorioRockEvaluator
+	if nauvis != nil {
+		if settings.trees.enabled {
+			trees = newFactorioTreeEvaluator(settings, nauvis)
+		}
+		resources = newFactorioResourceEvaluator(settings, nauvis)
+		if settings.rocks.enabled {
+			rocks = newFactorioRockEvaluator(settings, nauvis)
+		}
+	}
+	var oilMask []bool
+	if resources != nil && resources.hasOil() {
+		var err error
+		oilMask, err = resources.oilPreviewMask(ctx, settings, originX, originY, tpp, size, size)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+	if nauvis != nil && tpp == 1 {
+		resources.prepareForBounds(
+			math.Floor(originX),
+			math.Floor(originY),
+			math.Floor(originX+float64(size-1)),
+			math.Floor(originY+float64(size-1)),
+		)
+		if err := renderFastNauvisOneTileRows(
+			ctx, img, settings, nauvis, trees, rocks, resources, oilMask, originX, originY,
+		); err != nil {
+			return nil, 0, err
+		}
+		if settings.cliffs.enabled {
+			cliffs := newFactorioCliffEvaluator(settings, nauvis)
+			if err := renderFactorioCliffs(ctx, img, settings, cliffs, originX, originY, tpp); err != nil {
+				return nil, 0, err
+			}
+		}
+		return img, tpp, nil
+	}
 
 	lastWorldY := math.Inf(-1)
 	for y := 0; y < size; y++ {
@@ -275,18 +317,16 @@ func renderFastMapPreview(ctx context.Context, settings fastPreviewSettings, siz
 				continue
 			}
 			lastWorldX = wx
-			var (
-				c           color.RGBA
-				nauvisPoint factorioNauvisSample
-			)
+			var c color.RGBA
 			if nauvis != nil {
-				nauvisPoint = nauvis.sample(wx, wy)
+				nauvisPoint := nauvis.sample(wx, wy)
 				tile := nauvis.terrainTile(nauvisPoint, wx, wy)
 				c = tile.color
 			} else {
 				c, _ = fastTerrainPixel(settings, wx, wy)
 			}
-			if fastOutOfMapBounds(settings, wx, wy) {
+			outOfMap := fastOutOfMapBounds(settings, wx, wy)
+			if outOfMap {
 				c = color.RGBA{R: 20, G: 23, B: 20, A: 255}
 			}
 			img.Pix[o] = c.R
@@ -296,25 +336,8 @@ func renderFastMapPreview(ctx context.Context, settings fastPreviewSettings, siz
 		}
 	}
 
-	if nauvis != nil && settings.trees.enabled {
-		trees := newFactorioTreeEvaluator(settings, nauvis)
+	if trees != nil {
 		if err := renderFactorioTrees(ctx, img, settings, trees, originX, originY, tpp); err != nil {
-			return nil, 0, err
-		}
-	}
-	var resources *factorioResourceEvaluator
-	var rocks *factorioRockEvaluator
-	if nauvis != nil {
-		resources = newFactorioResourceEvaluator(settings, nauvis)
-		if settings.rocks.enabled {
-			rocks = newFactorioRockEvaluator(settings, nauvis)
-		}
-	}
-	var oilMask []bool
-	if resources != nil && resources.hasOil() {
-		var err error
-		oilMask, err = resources.oilPreviewMask(ctx, settings, originX, originY, tpp, size, size)
-		if err != nil {
 			return nil, 0, err
 		}
 	}
@@ -351,36 +374,10 @@ func renderFastMapPreview(ctx context.Context, settings fastPreviewSettings, siz
 			if factorioPreviewWaterColor(base) {
 				continue
 			}
-			if nauvis == nil {
-				base = fastBlendTrees(settings, base, wx, wy)
-			}
-			if rocks != nil {
-				if rock, ok := rocks.colorAt(wx, wy); ok && factorioPreviewEntityDither(wx, wy, tpp) {
-					base = rock
-				}
-			} else if nauvis == nil {
-				base = fastBlendRocks(settings, base, wx, wy)
-			}
-			if resources != nil {
-				if resource, ok := resources.resourceAt(wx, wy); ok {
-					if factorioPreviewEntityDither(wx, wy, tpp) {
-						base = resource.mapColor
-					}
-				}
-			} else if resource, ok := fastResourcePixel(settings, wx, wy); ok {
-				base = resource
-			}
-			if len(oilMask) > 0 && oilMask[y*size+x] {
-				base = factorioResourceCatalog[4].mapColor
-			}
-			if enemy, ok := fastEnemyPixel(settings, wx, wy); ok {
-				base = enemy
-			}
-			if nauvis == nil {
-				if cliff, ok := fastCliffPixel(settings, wx, wy); ok {
-					base = cliff
-				}
-			}
+			base = blendFastPreviewEntities(
+				settings, nauvis, trees, rocks, resources, oilMask,
+				base, nil, wx, wy, y*size+x, tpp,
+			)
 			img.Pix[offset] = base.R
 			img.Pix[offset+1] = base.G
 			img.Pix[offset+2] = base.B
@@ -394,6 +391,125 @@ func renderFastMapPreview(ctx context.Context, settings fastPreviewSettings, siz
 		}
 	}
 	return img, tpp, nil
+}
+
+func renderFastNauvisOneTileRows(
+	ctx context.Context,
+	img *image.RGBA,
+	settings fastPreviewSettings,
+	nauvis *factorioNauvisEvaluator,
+	trees *factorioTreeEvaluator,
+	rocks *factorioRockEvaluator,
+	resources *factorioResourceEvaluator,
+	oilMask []bool,
+	originX, originY float64,
+) error {
+	size := img.Bounds().Dx()
+	return parallelFastPreviewRows(ctx, size, func(y int) {
+		wy := math.Floor(originY + float64(y))
+		row := y * img.Stride
+		for x := 0; x < size; x++ {
+			wx := math.Floor(originX + float64(x))
+			offset := row + x*4
+			sample := nauvis.sample(wx, wy)
+			base := nauvis.terrainTile(sample, wx, wy).color
+			if fastOutOfMapBounds(settings, wx, wy) {
+				base = color.RGBA{R: 20, G: 23, B: 20, A: 255}
+			} else if !factorioPreviewWaterColor(base) {
+				base = blendFastPreviewEntities(
+					settings, nauvis, trees, rocks, resources, oilMask,
+					base, &sample, wx, wy, y*size+x, 1,
+				)
+			}
+			img.Pix[offset] = base.R
+			img.Pix[offset+1] = base.G
+			img.Pix[offset+2] = base.B
+			img.Pix[offset+3] = 255
+		}
+	})
+}
+
+func parallelFastPreviewRows(ctx context.Context, height int, renderRow func(int)) error {
+	workerCount := min(runtime.GOMAXPROCS(0), height)
+	if workerCount <= 1 {
+		for y := 0; y < height; y++ {
+			if y&7 == 0 && ctx.Err() != nil {
+				return ctx.Err()
+			}
+			renderRow(y)
+		}
+		return nil
+	}
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for worker := 0; worker < workerCount; worker++ {
+		firstRow := worker * height / workerCount
+		lastRow := (worker + 1) * height / workerCount
+		go func() {
+			defer workers.Done()
+			for y := firstRow; y < lastRow; y++ {
+				if y&7 == 0 && ctx.Err() != nil {
+					return
+				}
+				renderRow(y)
+			}
+		}()
+	}
+	workers.Wait()
+	return ctx.Err()
+}
+
+func blendFastPreviewEntities(
+	settings fastPreviewSettings,
+	nauvis *factorioNauvisEvaluator,
+	trees *factorioTreeEvaluator,
+	rocks *factorioRockEvaluator,
+	resources *factorioResourceEvaluator,
+	oilMask []bool,
+	base color.RGBA,
+	sample *factorioNauvisSample,
+	wx, wy float64,
+	pixelIndex int,
+	tilesPerPixel float64,
+) color.RGBA {
+	if nauvis == nil {
+		base = fastBlendTrees(settings, base, wx, wy)
+	} else if sample != nil && trees != nil && trees.placedAtSample(wx, wy, *sample) {
+		base = blendFactorioTrees(base, 1)
+	}
+	if rocks != nil {
+		var rock color.RGBA
+		var ok bool
+		if sample != nil {
+			rock, ok = rocks.colorAtSample(wx, wy, *sample)
+		} else {
+			rock, ok = rocks.colorAt(wx, wy)
+		}
+		if ok && factorioPreviewEntityDither(wx, wy, tilesPerPixel) {
+			base = rock
+		}
+	} else if nauvis == nil {
+		base = fastBlendRocks(settings, base, wx, wy)
+	}
+	if resources != nil {
+		if resource, ok := resources.resourceAt(wx, wy); ok && factorioPreviewEntityDither(wx, wy, tilesPerPixel) {
+			base = resource.mapColor
+		}
+	} else if resource, ok := fastResourcePixel(settings, wx, wy); ok {
+		base = resource
+	}
+	if len(oilMask) > 0 && oilMask[pixelIndex] {
+		base = factorioResourceCatalog[4].mapColor
+	}
+	if enemy, ok := fastEnemyPixel(settings, wx, wy); ok {
+		base = enemy
+	}
+	if nauvis == nil {
+		if cliff, ok := fastCliffPixel(settings, wx, wy); ok {
+			base = cliff
+		}
+	}
+	return base
 }
 
 func fastTilesPerPixel(zoom previewZoom) float64 {

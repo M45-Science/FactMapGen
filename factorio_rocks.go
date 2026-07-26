@@ -47,8 +47,14 @@ func (e *factorioRockEvaluator) densityAt(x, y float64) float64 {
 	if !e.control.enabled || e.control.size <= 0 || e.control.frequency <= 0 {
 		return 0
 	}
+	return e.densityAtSample(x, y, e.nauvis.sample(x, y))
+}
+
+func (e *factorioRockEvaluator) densityAtSample(x, y float64, climate factorioNauvisSample) float64 {
+	if !e.control.enabled || e.control.size <= 0 || e.control.frequency <= 0 {
+		return 0
+	}
 	rockDensity := e.rockDensityAt(x, y)
-	climate := e.nauvis.sample(x, y)
 	moistBand := factorioRangeSelectBase(climate.moisture, 0.35, 1, 0.2, -10, 0)
 	huge := 0.07 * e.control.size * (moistBand + rockDensity - 1.7)
 	big := 0.17 * e.control.size * (moistBand + rockDensity - 1.6)
@@ -62,6 +68,13 @@ func (e *factorioRockEvaluator) densityAt(x, y float64) float64 {
 
 func (e *factorioRockEvaluator) colorAt(x, y float64) (color.RGBA, bool) {
 	if e.densityAt(x, y) < factorioRockFootprintThreshold {
+		return color.RGBA{}, false
+	}
+	return factorioRockMapColor, true
+}
+
+func (e *factorioRockEvaluator) colorAtSample(x, y float64, sample factorioNauvisSample) (color.RGBA, bool) {
+	if e.densityAtSample(x, y, sample) < factorioRockFootprintThreshold {
 		return color.RGBA{}, false
 	}
 	return factorioRockMapColor, true

@@ -346,18 +346,20 @@ func (e *factorioResourceEvaluator) oilRandomPenaltyAt(tileX, tileY int64) float
 	key := [2]int64{chunkX, chunkY}
 	penalties, ok := e.oilPenaltyChunks[key]
 	if !ok {
-		positions := make([]factorioSpotCandidate, factorioChunkSize*factorioChunkSize)
-		source := make([]float64, len(positions))
 		originX := chunkX * factorioChunkSize
 		originY := chunkY * factorioChunkSize
-		for localY := int64(0); localY < factorioChunkSize; localY++ {
-			for localX := int64(0); localX < factorioChunkSize; localX++ {
-				index := localY*factorioChunkSize + localX
-				positions[index] = factorioSpotCandidate{x: float64(originX + localX), y: float64(originY + localY)}
-				source[index] = 1
-			}
+		x := uint32(int32(originX))
+		y := uint32(int32(originY + 1))
+		word := uint32(factorioSpotSeedBase) + x*factorioSpotRegionXPrime + y*factorioSpotRegionYPrime
+		if word < factorioMinSeedWord {
+			word = factorioMinSeedWord
 		}
-		penalties = factorioRandomPenaltyBatch(positions, source, 1, 1/factorioResourceCatalog[4].randomProbability)
+		state := newFactorioTaus88State(word)
+		penalties = make([]float64, factorioChunkSize*factorioChunkSize)
+		amplitude := 1 / factorioResourceCatalog[4].randomProbability
+		for index := len(penalties) - 1; index >= 0; index-- {
+			penalties[index] = 1 - amplitude*float64(state.next())/4294967296.0
+		}
 		e.oilPenaltyChunks[key] = penalties
 	}
 	localX := tileX - chunkX*factorioChunkSize
@@ -371,6 +373,33 @@ func factorioFloorDiv(value, divisor int64) int64 {
 		quotient--
 	}
 	return quotient
+}
+
+func (e *factorioResourceEvaluator) prepareForBounds(x0, y0, x1, y1 float64) {
+	for index := range e.fields {
+		field := &e.fields[index]
+		regularLowX := factorioResourceRegionIndex(x0-factorioRegularResourceCullRadius, factorioRegularResourceRegionSize)
+		regularHighX := factorioResourceRegionIndex(x1+factorioRegularResourceCullRadius, factorioRegularResourceRegionSize)
+		regularLowY := factorioResourceRegionIndex(y0-factorioRegularResourceCullRadius, factorioRegularResourceRegionSize)
+		regularHighY := factorioResourceRegionIndex(y1+factorioRegularResourceCullRadius, factorioRegularResourceRegionSize)
+		for regionY := regularLowY; regionY <= regularHighY; regionY++ {
+			for regionX := regularLowX; regionX <= regularHighX; regionX++ {
+				field.regular.regionSpots(regionX, regionY)
+			}
+		}
+		if field.starting == nil {
+			continue
+		}
+		startingLowX := factorioResourceRegionIndex(x0-field.starting.maxCullRadius, factorioStartingResourceRegionSize)
+		startingHighX := factorioResourceRegionIndex(x1+field.starting.maxCullRadius, factorioStartingResourceRegionSize)
+		startingLowY := factorioResourceRegionIndex(y0-field.starting.maxCullRadius, factorioStartingResourceRegionSize)
+		startingHighY := factorioResourceRegionIndex(y1+field.starting.maxCullRadius, factorioStartingResourceRegionSize)
+		for regionY := startingLowY; regionY <= startingHighY; regionY++ {
+			for regionX := startingLowX; regionX <= startingHighX; regionX++ {
+				field.starting.regionSpots(regionX, regionY)
+			}
+		}
+	}
 }
 
 func (f *factorioResourceField) fieldAt(x, y float64) float64 {

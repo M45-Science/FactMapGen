@@ -121,7 +121,10 @@ func factorioAsymmetricRamps(input float64, ramp [4]float64) float64 {
 }
 
 func (e *factorioTreeEvaluator) pointAt(x, y float64) factorioTreePoint {
-	sample := e.nauvis.sample(x, y)
+	return e.pointAtSample(x, y, e.nauvis.sample(x, y))
+}
+
+func (e *factorioTreeEvaluator) pointAtSample(x, y float64, sample factorioNauvisSample) factorioTreePoint {
 	smallNoise := e.smallNoise(x, y)
 	forestPathCutout := math.Min(
 		(sample.bridge-0.07)*5,
@@ -159,7 +162,11 @@ func (e *factorioTreeEvaluator) speciesValueAt(index int, x, y float64) float64 
 }
 
 func (e *factorioTreeEvaluator) densityAt(x, y float64) float64 {
-	point := e.pointAt(x, y)
+	return e.densityAtSample(x, y, e.nauvis.sample(x, y))
+}
+
+func (e *factorioTreeEvaluator) densityAtSample(x, y float64, sample factorioNauvisSample) float64 {
+	point := e.pointAtSample(x, y, sample)
 	miss := 1.0
 	for _, field := range e.fields {
 		cheap := factorioTreeCheap(field, point)
@@ -181,7 +188,16 @@ func (e *factorioTreeEvaluator) densityAt(x, y float64) float64 {
 func (e *factorioTreeEvaluator) placedAt(x, y float64) bool {
 	tileX := int64(math.Floor(x))
 	tileY := int64(math.Floor(y))
-	return fastHashUnit(e.seed, factorioTreePlacementSalt, tileX, tileY) < e.densityAt(float64(tileX), float64(tileY))
+	return e.placedAtSample(
+		float64(tileX), float64(tileY),
+		e.nauvis.sample(float64(tileX), float64(tileY)),
+	)
+}
+
+func (e *factorioTreeEvaluator) placedAtSample(x, y float64, sample factorioNauvisSample) bool {
+	tileX := int64(x)
+	tileY := int64(y)
+	return fastHashUnit(e.seed, factorioTreePlacementSalt, tileX, tileY) < e.densityAtSample(x, y, sample)
 }
 
 func renderFactorioTrees(
@@ -244,18 +260,29 @@ func renderFactorioTrees(
 			sampleCount := samplesX * samplesY
 			tileCount := spanX * spanY
 			placed = max(int64(1), int64(math.Round(float64(placed)*float64(tileCount)/float64(sampleCount))))
-			alpha := 1 - math.Pow(1-factorioTreeMaxAlpha, float64(placed))
-			if alpha <= 0 {
-				continue
-			}
-			alphaByte := int(math.Round(alpha * 255))
-			blend := alphaByte + (alphaByte >> 7)
-			img.Pix[offset] = uint8(((256-blend)*int(base.R) + blend*int(factorioTreeMapColor.R)) >> 8)
-			img.Pix[offset+1] = uint8(((256-blend)*int(base.G) + blend*int(factorioTreeMapColor.G)) >> 8)
-			img.Pix[offset+2] = uint8(((256-blend)*int(base.B) + blend*int(factorioTreeMapColor.B)) >> 8)
+			writeFactorioTreeBlend(img.Pix[offset:offset+4], base, placed)
 		}
 	}
 	return nil
+}
+
+func blendFactorioTrees(base color.RGBA, placed int64) color.RGBA {
+	alpha := 1 - math.Pow(1-factorioTreeMaxAlpha, float64(placed))
+	alphaByte := int(math.Round(alpha * 255))
+	blend := alphaByte + (alphaByte >> 7)
+	return color.RGBA{
+		R: uint8(((256-blend)*int(base.R) + blend*int(factorioTreeMapColor.R)) >> 8),
+		G: uint8(((256-blend)*int(base.G) + blend*int(factorioTreeMapColor.G)) >> 8),
+		B: uint8(((256-blend)*int(base.B) + blend*int(factorioTreeMapColor.B)) >> 8),
+		A: 255,
+	}
+}
+
+func writeFactorioTreeBlend(pixel []byte, base color.RGBA, placed int64) {
+	blended := blendFactorioTrees(base, placed)
+	pixel[0] = blended.R
+	pixel[1] = blended.G
+	pixel[2] = blended.B
 }
 
 func factorioPreviewWaterColor(value color.RGBA) bool {
