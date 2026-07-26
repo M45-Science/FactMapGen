@@ -91,15 +91,16 @@ var factorioResourceCatalog = [...]factorioResourceParams{
 }
 
 type factorioRegularResourceField struct {
-	params      factorioResourceParams
-	control     fastControl
-	seed0       uint32
-	starts      []factorioPoint
-	tables      factorioBasisTables
-	basement    float64
-	regionCache map[[2]int64][]factorioSelectedSpot
-	skipSpan    int
-	skipOffset  int
+	params        factorioResourceParams
+	control       fastControl
+	seed0         uint32
+	starts        []factorioPoint
+	tables        factorioBasisTables
+	basement      float64
+	maxBlobHeight float64
+	regionCache   map[[2]int64][]factorioSelectedSpot
+	skipSpan      int
+	skipOffset    int
 }
 
 type factorioStartingResourceField struct {
@@ -111,6 +112,8 @@ type factorioStartingResourceField struct {
 	tables        factorioBasisTables
 	basement      float64
 	quantity      float64
+	baseRadius    float64
+	blobAmplitude float64
 	maxCullRadius float64
 	regionCache   map[[2]int64][]factorioSelectedSpot
 	skipSpan      int
@@ -127,6 +130,12 @@ type factorioResourceEvaluator struct {
 	seed             uint32
 	fields           []factorioResourceField
 	oilPenaltyChunks map[[2]int64][]float64
+}
+
+type factorioResourceSharedPoint struct {
+	regularBlobs  float64
+	startingBlobs float64
+	distance      float64
 }
 
 func newFactorioResourceEvaluator(settings fastPreviewSettings, nauvis *factorioNauvisEvaluator) *factorioResourceEvaluator {
@@ -204,12 +213,17 @@ func newFactorioRegularResourceField(
 		starts = []factorioPoint{{}}
 	}
 	return &factorioRegularResourceField{
-		params:      params,
-		control:     control,
-		seed0:       seed0,
-		starts:      starts,
-		tables:      factorioBasisTablesFromSeed(seed0, params.seed1),
-		basement:    factorioResourceBasement(params, control),
+		params:   params,
+		control:  control,
+		seed0:    seed0,
+		starts:   starts,
+		tables:   factorioBasisTablesFromSeed(seed0, params.seed1),
+		basement: factorioResourceBasement(params, control),
+		maxBlobHeight: factorioRegularResourceSpotHeight(
+			factorioResourceDoubleDensityDistance+factorioResourceFadeInDistance,
+			params,
+			control,
+		),
 		regionCache: make(map[[2]int64][]factorioSelectedSpot),
 		skipSpan:    skipSpan,
 		skipOffset:  skipOffset,
@@ -238,6 +252,8 @@ func newFactorioStartingResourceField(
 		tables:        factorioBasisTablesFromSeed(seed0, params.seed1),
 		basement:      factorioResourceBasement(params, control),
 		quantity:      quantity,
+		baseRadius:    factorioFloat32(params.startingRQFactor * factorioFastCbrt(quantity)),
+		blobAmplitude: factorioStartingResourceBlobAmplitude(params, control),
 		maxCullRadius: 2 * params.startingRQFactor * factorioFastCbrt(quantity),
 		regionCache:   make(map[[2]int64][]factorioSelectedSpot),
 		skipSpan:      skipSpan,
@@ -246,12 +262,30 @@ func newFactorioStartingResourceField(
 }
 
 func (e *factorioResourceEvaluator) resourceAt(x, y float64) (factorioResourceParams, bool) {
+	var first *factorioRegularResourceField
+	for index := range e.fields {
+		if e.fields[index].params.randomProbability >= 1 {
+			first = e.fields[index].regular
+			break
+		}
+	}
+	if first == nil {
+		return factorioResourceParams{}, false
+	}
+	startingBlobs := factorioBasisNoise(x/8, y/8, &first.tables) +
+		factorioBasisNoise(x/24, y/24, &first.tables)
+	shared := factorioResourceSharedPoint{
+		startingBlobs: startingBlobs,
+		regularBlobs: startingBlobs +
+			1.5*factorioBasisNoise(x/64, y/64, &first.tables),
+		distance: factorioDistanceFromNearestPoint(x, y, first.starts, math.Inf(1)),
+	}
 	for index := range e.fields {
 		field := &e.fields[index]
 		if field.params.randomProbability < 1 {
 			continue
 		}
-		probability := clampFloat(field.fieldAt(x, y), 0, 1)
+		probability := clampFloat(field.fieldAtShared(x, y, shared), 0, 1)
 		if probability >= 0.5 {
 			return field.params, true
 		}
@@ -270,7 +304,7 @@ func (e *factorioResourceEvaluator) oilAtTile(tileX, tileY int64) (factorioResou
 			return factorioResourceParams{}, false
 		}
 		probability := clampFloat(field.fieldAt(float64(tileX), float64(tileY)), 0, 1)
-		probability *= math.Max(0, penalty)
+		probability *= max(0, penalty)
 		// Factorio performs a second entity-autoplace roll after evaluating the
 		// chunk-ordered random-penalty expression. That roll shares state with
 		// the other entity autoplacers, so use a map-seeded positional roll here.
@@ -405,7 +439,23 @@ func (e *factorioResourceEvaluator) prepareForBounds(x0, y0, x1, y1 float64) {
 func (f *factorioResourceField) fieldAt(x, y float64) float64 {
 	value := f.regular.fieldAt(x, y)
 	if f.starting != nil {
-		value = math.Max(value, f.starting.fieldAt(x, y))
+		value = max(value, f.starting.fieldAt(x, y))
+	}
+	return value
+}
+
+func (f *factorioResourceField) fieldAtShared(
+	x, y float64,
+	shared factorioResourceSharedPoint,
+) float64 {
+	value := f.regular.spotFieldAt(x, y) +
+		(shared.regularBlobs-1.0/3.0)*
+			f.regular.blobAmplitudeAt(shared.distance)
+	if f.starting != nil {
+		starting := f.starting.spotFieldAt(x, y) +
+			(shared.startingBlobs-0.25)*
+				f.starting.blobAmplitude
+		value = max(value, starting)
 	}
 	return value
 }
@@ -429,7 +479,7 @@ func (f *factorioRegularResourceField) spotFieldAt(x, y float64) float64 {
 				if distanceSquared > factorioRegularResourceCullRadius*factorioRegularResourceCullRadius {
 					continue
 				}
-				radius := math.Min(
+				radius := min(
 					factorioRegularResourceMaxRadius,
 					factorioFloat32(f.params.regularRQFactor*factorioFastCbrt(spot.quantity)),
 				)
@@ -443,7 +493,7 @@ func (f *factorioRegularResourceField) spotFieldAt(x, y float64) float64 {
 				cone := factorioFloat32(
 					peak - factorioFloat32(factorioFloat32(math.Sqrt(distanceSquared))*factorioFloat32(peak/radius)),
 				)
-				best = math.Max(best, cone)
+				best = max(best, cone)
 			}
 		}
 	}
@@ -522,8 +572,7 @@ func (f *factorioStartingResourceField) spotFieldAt(x, y float64) float64 {
 				if distanceSquared > f.maxCullRadius*f.maxCullRadius {
 					continue
 				}
-				baseRadius := factorioFloat32(f.params.startingRQFactor * factorioFastCbrt(f.quantity))
-				radius := factorioFloat32(baseRadius * spot.coneScale)
+				radius := factorioFloat32(f.baseRadius * spot.coneScale)
 				if radius <= 0 {
 					continue
 				}
@@ -534,7 +583,7 @@ func (f *factorioStartingResourceField) spotFieldAt(x, y float64) float64 {
 				cone := factorioFloat32(
 					peak - factorioFloat32(factorioFloat32(math.Sqrt(distanceSquared))*factorioFloat32(peak/radius)),
 				)
-				best = math.Max(best, cone)
+				best = max(best, cone)
 			}
 		}
 	}
@@ -543,7 +592,7 @@ func (f *factorioStartingResourceField) spotFieldAt(x, y float64) float64 {
 
 func (f *factorioStartingResourceField) blobTermAt(x, y float64) float64 {
 	blobs := factorioBasisNoise(x/8, y/8, &f.tables) + factorioBasisNoise(x/24, y/24, &f.tables)
-	return (blobs - 0.25) * factorioStartingResourceBlobAmplitude(f.params, f.control)
+	return (blobs - 0.25) * f.blobAmplitude
 }
 
 func (f *factorioStartingResourceField) regionSpots(regionX, regionY int64) []factorioSelectedSpot {
@@ -614,7 +663,12 @@ func factorioRegularResourceBlobAmplitude(distance float64, params factorioResou
 		control,
 	)
 	atDistance := factorioRegularResourceSpotHeight(distance, params, control)
-	return factorioResourceBlobAmplitude * math.Min(atMaximum, atDistance)
+	return factorioResourceBlobAmplitude * min(atMaximum, atDistance)
+}
+
+func (f *factorioRegularResourceField) blobAmplitudeAt(distance float64) float64 {
+	atDistance := factorioRegularResourceSpotHeight(distance, f.params, f.control)
+	return factorioResourceBlobAmplitude * min(f.maxBlobHeight, atDistance)
 }
 
 func factorioStartingResourceAmount(params factorioResourceParams, control fastControl) float64 {
@@ -645,7 +699,7 @@ func factorioStartingResourceFavorability(distance, elevation float64) float64 {
 		modulation = 1
 	}
 	return clampFloat((elevation-1)/10, 0, 1)*modulation*originExcluder*2 -
-		math.Min(1, distance/factorioStartingResourceRadius)
+		min(1, distance/factorioStartingResourceRadius)
 }
 
 func factorioStartingResourceBlobAmplitude(params factorioResourceParams, control fastControl) float64 {
@@ -661,7 +715,7 @@ func factorioResourceBasement(params factorioResourceParams, control fastControl
 		control,
 	)
 	starting := factorioStartingResourceBlobAmplitude(params, control)
-	return -6 * math.Max(regular, starting)
+	return -6 * max(regular, starting)
 }
 
 func factorioFloat32(value float64) float64 {

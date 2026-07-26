@@ -53,6 +53,25 @@ func TestFactorioTerrainTilesMatchReferenceOracles(t *testing.T) {
 	t.Logf("terrain oracle agreement = %d/%d (%.1f%%)", matches, total, matchPercent)
 }
 
+func TestFastTerrainTileMatchesReferenceSelector(t *testing.T) {
+	for _, seed := range []uint32{1, 123456, 777771} {
+		evaluator := newFactorioNauvisEvaluator(defaultFactorioTerrainSettings(seed))
+		for y := -128.0; y <= 128; y += 4 {
+			for x := -128.0; x <= 128; x += 4 {
+				sample := evaluator.sample(x, y)
+				want := evaluator.terrainTile(sample, x, y)
+				got := evaluator.terrainTileFast(sample, x, y)
+				if got != want {
+					t.Fatalf(
+						"seed %d terrain at (%g,%g) = %s, want %s",
+						seed, x, y, got.name, want.name,
+					)
+				}
+			}
+		}
+	}
+}
+
 func TestFactorioTerrainCatalogHasStableNamesAndColors(t *testing.T) {
 	if len(factorioTerrainTiles) != 21 || len(factorioTerrainNoiseSeeds) != 19 {
 		t.Fatalf("terrain catalog has %d tiles and %d land noise seeds", len(factorioTerrainTiles), len(factorioTerrainNoiseSeeds))

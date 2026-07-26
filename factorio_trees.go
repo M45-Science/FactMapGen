@@ -46,10 +46,12 @@ var factorioTreeSpeciesCatalog = [...]factorioTreeSpecies{
 }
 
 type factorioTreeSpeciesField struct {
-	species  factorioTreeSpecies
-	noise    func(float64, float64) float64
-	sizeTerm float64
-	maxNoise float64
+	species   factorioTreeSpecies
+	noise     func(float64, float64) float64
+	sizeTerm  float64
+	maxNoise  float64
+	tempRamp  int
+	moistRamp int
 }
 
 type factorioTreePoint struct {
@@ -65,6 +67,8 @@ type factorioTreeEvaluator struct {
 	starts     []factorioPoint
 	smallNoise func(float64, float64) float64
 	fields     []factorioTreeSpeciesField
+	tempRamps  [][4]float64
+	moistRamps [][4]float64
 }
 
 func newFactorioTreeEvaluator(settings fastPreviewSettings, nauvis *factorioNauvisEvaluator) *factorioTreeEvaluator {
@@ -88,7 +92,9 @@ func newFactorioTreeEvaluator(settings fastPreviewSettings, nauvis *factorioNauv
 	}
 	for _, species := range factorioTreeSpeciesCatalog {
 		evaluator.fields = append(evaluator.fields, factorioTreeSpeciesField{
-			species: species,
+			species:   species,
+			tempRamp:  factorioTreeRampIndex(&evaluator.tempRamps, species.temperature),
+			moistRamp: factorioTreeRampIndex(&evaluator.moistRamps, species.moisture),
 			noise: makeFactorioMultioctaveNoise(factorioMultioctaveParams{
 				seed0: settings.seed, seed1: species.seed, octaves: 3,
 				persistence: 0.65,
@@ -100,6 +106,16 @@ func newFactorioTreeEvaluator(settings fastPreviewSettings, nauvis *factorioNauv
 		})
 	}
 	return evaluator
+}
+
+func factorioTreeRampIndex(ramps *[][4]float64, ramp [4]float64) int {
+	for index := range *ramps {
+		if (*ramps)[index] == ramp {
+			return index
+		}
+	}
+	*ramps = append(*ramps, ramp)
+	return len(*ramps) - 1
 }
 
 func factorioTreeMaxNoise(outputScale float64) float64 {
@@ -114,7 +130,7 @@ func factorioTreeMaxNoise(outputScale float64) float64 {
 }
 
 func factorioAsymmetricRamps(input float64, ramp [4]float64) float64 {
-	return math.Min(
+	return min(
 		(input-ramp[1])/(ramp[1]-ramp[0]),
 		(ramp[2]-input)/(ramp[3]-ramp[2]),
 	)
@@ -126,15 +142,15 @@ func (e *factorioTreeEvaluator) pointAt(x, y float64) factorioTreePoint {
 
 func (e *factorioTreeEvaluator) pointAtSample(x, y float64, sample factorioNauvisSample) factorioTreePoint {
 	smallNoise := e.smallNoise(x, y)
-	forestPathCutout := math.Min(
+	forestPathCutout := min(
 		(sample.bridge-0.07)*5,
-		math.Min((sample.hills-0.1)*3, (sample.forestPath-0.07)*3),
+		min((sample.hills-0.1)*3, (sample.forestPath-0.07)*3),
 	)
 	return factorioTreePoint{
 		sample:      sample,
 		smallNoise:  smallNoise,
 		cutoutFaded: forestPathCutout*0.3 + smallNoise*0.1,
-		distanceTerm: math.Min(
+		distanceTerm: min(
 			0,
 			factorioDistanceFromNearestPoint(x, y, e.starts, math.Inf(1))/20-3,
 		),
@@ -142,9 +158,9 @@ func (e *factorioTreeEvaluator) pointAtSample(x, y float64, sample factorioNauvi
 }
 
 func factorioTreeCheap(field factorioTreeSpeciesField, point factorioTreePoint) float64 {
-	climate := math.Min(
+	climate := min(
 		0,
-		math.Min(
+		min(
 			factorioAsymmetricRamps(point.sample.temperature, field.species.temperature),
 			factorioAsymmetricRamps(point.sample.moisture, field.species.moisture),
 		),
@@ -155,9 +171,9 @@ func factorioTreeCheap(field factorioTreeSpeciesField, point factorioTreePoint) 
 func (e *factorioTreeEvaluator) speciesValueAt(index int, x, y float64) float64 {
 	point := e.pointAt(x, y)
 	field := e.fields[index]
-	return math.Min(
+	return min(
 		field.species.cap,
-		math.Min(point.cutoutFaded, factorioTreeCheap(field, point)+field.noise(x, y)),
+		min(point.cutoutFaded, factorioTreeCheap(field, point)+field.noise(x, y)),
 	)
 }
 
@@ -167,15 +183,30 @@ func (e *factorioTreeEvaluator) densityAt(x, y float64) float64 {
 
 func (e *factorioTreeEvaluator) densityAtSample(x, y float64, sample factorioNauvisSample) float64 {
 	point := e.pointAtSample(x, y, sample)
+	if point.cutoutFaded <= 0 {
+		return 0
+	}
+	var tempValues [len(factorioTreeSpeciesCatalog)]float64
+	for index, ramp := range e.tempRamps {
+		tempValues[index] = factorioAsymmetricRamps(point.sample.temperature, ramp)
+	}
+	var moistValues [len(factorioTreeSpeciesCatalog)]float64
+	for index, ramp := range e.moistRamps {
+		moistValues[index] = factorioAsymmetricRamps(point.sample.moisture, ramp)
+	}
 	miss := 1.0
 	for _, field := range e.fields {
-		cheap := factorioTreeCheap(field, point)
+		climate := min(
+			0,
+			min(tempValues[field.tempRamp], moistValues[field.moistRamp]),
+		)
+		cheap := climate + point.distanceTerm + field.sizeTerm + point.smallNoise*0.1
 		if cheap+field.maxNoise <= 0 {
 			continue
 		}
-		value := math.Min(
+		value := min(
 			field.species.cap,
-			math.Min(point.cutoutFaded, cheap+field.noise(x, y)),
+			min(point.cutoutFaded, cheap+field.noise(x, y)),
 		)
 		probability := clampFloat(value, 0, 1)
 		if probability > 0 {

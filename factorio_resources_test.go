@@ -263,6 +263,41 @@ func TestFactorioResourceEvaluatorHonorsControls(t *testing.T) {
 	}
 }
 
+func TestFactorioSharedResourceNoiseMatchesReferenceFields(t *testing.T) {
+	settings := defaultFactorioTerrainSettings(123456)
+	settings.resourceControls = make(map[string]fastControl, len(factorioResourceCatalog))
+	for _, params := range factorioResourceCatalog {
+		settings.resourceControls[params.name] = fastControl{
+			frequency: 1, size: 1, richness: 1, enabled: true,
+		}
+	}
+	evaluator := newFactorioResourceEvaluator(settings, newFactorioNauvisEvaluator(settings))
+	for y := -256.0; y <= 256; y += 17 {
+		for x := -256.0; x <= 256; x += 17 {
+			var want factorioResourceParams
+			wantOK := false
+			for index := range evaluator.fields {
+				field := &evaluator.fields[index]
+				if field.params.randomProbability < 1 {
+					continue
+				}
+				if clampFloat(field.fieldAt(x, y), 0, 1) >= 0.5 {
+					want = field.params
+					wantOK = true
+					break
+				}
+			}
+			got, gotOK := evaluator.resourceAt(x, y)
+			if gotOK != wantOK || (gotOK && got.name != want.name) {
+				t.Fatalf(
+					"resource at (%g,%g) = %q/%v, want %q/%v",
+					x, y, got.name, gotOK, want.name, wantOK,
+				)
+			}
+		}
+	}
+}
+
 func TestFactorioOilPlacementIsSparseAndDeterministic(t *testing.T) {
 	settings := defaultFactorioTerrainSettings(123456)
 	settings.resourceControls = make(map[string]fastControl, len(factorioResourceCatalog))

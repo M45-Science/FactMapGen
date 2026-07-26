@@ -412,7 +412,7 @@ func renderFastNauvisOneTileRows(
 			wx := math.Floor(originX + float64(x))
 			offset := row + x*4
 			sample := nauvis.sample(wx, wy)
-			base := nauvis.terrainTile(sample, wx, wy).color
+			base := nauvis.terrainTileFast(sample, wx, wy).color
 			if fastOutOfMapBounds(settings, wx, wy) {
 				base = color.RGBA{R: 20, G: 23, B: 20, A: 255}
 			} else if !factorioPreviewWaterColor(base) {
@@ -429,8 +429,13 @@ func renderFastNauvisOneTileRows(
 	})
 }
 
+const (
+	fastPreviewMaxWorkers   = 12
+	fastPreviewRowsPerChunk = 8
+)
+
 func parallelFastPreviewRows(ctx context.Context, height int, renderRow func(int)) error {
-	workerCount := min(runtime.GOMAXPROCS(0), height)
+	workerCount := min(runtime.GOMAXPROCS(0), height, fastPreviewMaxWorkers)
 	if workerCount <= 1 {
 		for y := 0; y < height; y++ {
 			if y&7 == 0 && ctx.Err() != nil {
@@ -443,15 +448,16 @@ func parallelFastPreviewRows(ctx context.Context, height int, renderRow func(int
 	var workers sync.WaitGroup
 	workers.Add(workerCount)
 	for worker := 0; worker < workerCount; worker++ {
-		firstRow := worker * height / workerCount
-		lastRow := (worker + 1) * height / workerCount
 		go func() {
 			defer workers.Done()
-			for y := firstRow; y < lastRow; y++ {
-				if y&7 == 0 && ctx.Err() != nil {
-					return
+			for firstRow := worker * fastPreviewRowsPerChunk; firstRow < height; firstRow += workerCount * fastPreviewRowsPerChunk {
+				lastRow := min(firstRow+fastPreviewRowsPerChunk, height)
+				for y := firstRow; y < lastRow; y++ {
+					if y == firstRow && ctx.Err() != nil {
+						return
+					}
+					renderRow(y)
 				}
-				renderRow(y)
 			}
 		}()
 	}
@@ -477,7 +483,9 @@ func blendFastPreviewEntities(
 	} else if sample != nil && trees != nil && trees.placedAtSample(wx, wy, *sample) {
 		base = blendFactorioTrees(base, 1)
 	}
-	if rocks != nil {
+	entityDither := (rocks != nil || resources != nil) &&
+		factorioPreviewEntityDither(wx, wy, tilesPerPixel)
+	if rocks != nil && entityDither {
 		var rock color.RGBA
 		var ok bool
 		if sample != nil {
@@ -485,15 +493,17 @@ func blendFastPreviewEntities(
 		} else {
 			rock, ok = rocks.colorAt(wx, wy)
 		}
-		if ok && factorioPreviewEntityDither(wx, wy, tilesPerPixel) {
+		if ok {
 			base = rock
 		}
 	} else if nauvis == nil {
 		base = fastBlendRocks(settings, base, wx, wy)
 	}
 	if resources != nil {
-		if resource, ok := resources.resourceAt(wx, wy); ok && factorioPreviewEntityDither(wx, wy, tilesPerPixel) {
-			base = resource.mapColor
+		if entityDither {
+			if resource, ok := resources.resourceAt(wx, wy); ok {
+				base = resource.mapColor
+			}
 		}
 	} else if resource, ok := fastResourcePixel(settings, wx, wy); ok {
 		base = resource

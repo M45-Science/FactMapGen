@@ -220,13 +220,13 @@ func (e *factorioNauvisEvaluator) sample(x, y float64) factorioNauvisSample {
 		0,
 		1,
 	)
-	forestPathCutout := math.Min(
+	forestPathCutout := min(
 		(bridgeBillows-0.07)*5,
-		math.Min((hills-0.1)*3, (forestPathBillows-0.07)*3),
+		min((hills-0.1)*3, (forestPathBillows-0.07)*3),
 	)
-	moisture := math.Max(
-		math.Min(moistureMain, 0.45),
-		moistureMain-0.2*math.Max(0, 1-forestPathCutout*1.5),
+	moisture := max(
+		min(moistureMain, 0.45),
+		moistureMain-0.2*max(0, 1-forestPathCutout*1.5),
 	)
 	temperature := clampFloat(15+e.temperatureBias+e.temperatureNoise(x, y), -20, 50)
 
@@ -247,8 +247,8 @@ func (e *factorioNauvisEvaluator) elevationFromShared(
 	nauvisSegmentation := 1.5 * e.segmentation
 	persistence := clampFloat(e.persistenceNoise(x, y)+0.55, 0.5, 0.65)
 	detail := e.detailNoise(x, y, persistence)
-	bridges := 1 - 0.1*bridgeBillows - 0.9*math.Max(0, -0.1+bridgeBillows)
-	macro := e.macroA(x, y) * math.Max(0, e.macroB(x, y))
+	bridges := 1 - 0.1*bridgeBillows - 0.9*max(0, -0.1+bridgeBillows)
+	macro := e.macroA(x, y) * max(0, e.macroB(x, y))
 	startingMacroMultiplier := clampFloat(distance*nauvisSegmentation/2000, 0, 1)
 	mainElevation := 20 * (lerpFloat(
 		0.5*addedCliffElevation-0.6,
@@ -258,10 +258,10 @@ func (e *factorioNauvisEvaluator) elevationFromShared(
 		0.25*detail +
 		3*macro*startingMacroMultiplier)
 	startingIsland := mainElevation + 20*(2.5-distance*e.segmentation/200)
-	waterAndLandElevation := math.Max(mainElevation-e.waterLevel*2, startingIsland)
+	waterAndLandElevation := max(mainElevation-e.waterLevel*2, startingIsland)
 	startingLakeDistance := factorioDistanceFromNearestPoint(x, y, e.lakes, 1024)
 	startingLake := (20 * (-3 + (startingLakeDistance+e.startingLakeNoise(x, y))/8)) / 8
-	return math.Min(waterAndLandElevation, startingLake)
+	return min(waterAndLandElevation, startingLake)
 }
 
 func factorioStartingLakePositions(seed uint32, starts []factorioPoint) []factorioPoint {
@@ -342,37 +342,37 @@ func (e *factorioNauvisEvaluator) terrainTile(sample factorioNauvisSample, x, y 
 		factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, 0.6, 0.65, 0.9) + e.terrainNoise[2](x, y),
 		factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, 0.5, 0.55, 0.7) + e.terrainNoise[3](x, y),
 		factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.45, -10, 0.55, 0.35) + e.terrainNoise[4](x, y),
-		math.Max(
+		max(
 			factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, 0.25, 0.45, 0.3),
 			factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.4, -10, 0.45, 0.25),
 		) + e.terrainNoise[5](x, y),
 		factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, 0.3, 0.45, 0.35) + e.terrainNoise[6](x, y),
 		factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, 0.35, 0.55, 0.4) + e.terrainNoise[7](x, y),
-		math.Max(
+		max(
 			factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.55, -10, 0.6, 0.35),
 			factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.6, 0.3, 11, 0.35),
 		) + e.terrainNoise[8](x, y),
 		factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, 0.4, 0.55, 0.45) + e.terrainNoise[9](x, y),
 		factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, 0.45, 0.55, 0.5) + e.terrainNoise[10](x, y),
 		factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, 0.5, 0.55, 0.55) + e.terrainNoise[11](x, y),
-		math.Max(
+		max(
 			factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, -10, 0.25, 0.15),
 			factorioExpressionInRange2(5, math.Inf(1), sample.elevation, sample.aux, -1.5, 0.5, 1.5, 1),
 		) + e.terrainNoise[12](x, y),
-		math.Max(
+		max(
 			factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, 0.15, 0.3, 0.2),
 			factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.25, -10, 0.3, 0.15),
 		) + e.terrainNoise[13](x, y),
-		math.Max(
+		max(
 			factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, 0.2, 0.4, 0.25),
 			factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.3, -10, 0.4, 0.2),
 		) + e.terrainNoise[14](x, y),
 		factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.55, 0.35, 11, 0.5) + e.terrainNoise[15](x, y),
-		math.Max(
+		max(
 			factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.6, -10, 0.7, 0.3),
 			factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.7, 0.25, 11, 0.3),
 		) + e.terrainNoise[16](x, y),
-		math.Max(
+		max(
 			factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.7, -10, 0.8, 0.25),
 			factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.8, 0.2, 11, 0.25),
 		) + e.terrainNoise[17](x, y),
@@ -391,7 +391,7 @@ func factorioWaterBase(elevation, maximum, influence float64) float64 {
 	if maximum < elevation {
 		return math.Inf(-1)
 	}
-	return influence * math.Min(maximum-elevation, 1)
+	return influence * min(maximum-elevation, 1)
 }
 
 func factorioExpressionInRangeBase(aux, moisture, auxFrom, moistureFrom, auxTo, moistureTo float64) float64 {
@@ -404,9 +404,9 @@ func factorioExpressionInRange2(
 	from1, from2,
 	to1, to2 float64,
 ) float64 {
-	minimum := math.Min(
-		math.Min(value1-from1, to1-value1),
-		math.Min(value2-from2, to2-value2),
+	minimum := min(
+		min(value1-from1, to1-value1),
+		min(value2-from2, to2-value2),
 	)
-	return math.Min(peakMaximum, peakMultiplier*minimum)
+	return min(peakMaximum, peakMultiplier*minimum)
 }

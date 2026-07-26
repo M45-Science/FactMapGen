@@ -91,8 +91,9 @@ func benchmarkPreviewSettings() (
 }
 
 func TestRenderSpeedComparison1024(t *testing.T) {
-	if os.Getenv("FACTMAPGEN_RENDER_SPEED_COMPARISON") != "1" {
-		t.Skip("set FACTMAPGEN_RENDER_SPEED_COMPARISON=1 to compare one 1024px fast and Factorio render")
+	mode := os.Getenv("FACTMAPGEN_RENDER_SPEED_COMPARISON")
+	if mode != "1" && mode != "fast-only" {
+		t.Skip("set FACTMAPGEN_RENDER_SPEED_COMPARISON=fast-only for Go metrics or 1 to compare with Factorio")
 	}
 	const seed = "123456"
 	mapGenPath, err := filepath.Abs(filepath.Join("default-presets", "Default", mapGenFile))
@@ -137,6 +138,15 @@ func TestRenderSpeedComparison1024(t *testing.T) {
 		system: fastSystemAfter - fastSystemBefore,
 		maxRSS: fastPeakRSS,
 	}
+	t.Logf(
+		"fast process: render=%s render+PNG=%s CPU=%s (user=%s system=%s, %.0f%%), peak RSS=%.1f MiB",
+		fastRenderDuration.Round(time.Millisecond), fastUsage.wall.Round(time.Millisecond),
+		(fastUsage.user + fastUsage.system).Round(time.Millisecond), fastUsage.user.Round(time.Millisecond),
+		fastUsage.system.Round(time.Millisecond), cpuPercent(fastUsage), float64(fastUsage.maxRSS)/1024,
+	)
+	if mode == "fast-only" {
+		return
+	}
 
 	factorioBin := requirePreviewParityFactorio(t)
 	factorioPNG, factorioUsage := renderFactorioPreviewPNGWithUsage(t, factorioBin, mapGenPath, 1024, seed)
@@ -148,11 +158,6 @@ func TestRenderSpeedComparison1024(t *testing.T) {
 		"seed %s, 1024x1024 at 1 m/px: fast render=%s, fast render+PNG=%s, Factorio render+PNG=%s, fast-throughput=%.2fx Factorio",
 		seed, fastRenderDuration.Round(time.Millisecond), fastUsage.wall.Round(time.Millisecond),
 		factorioUsage.wall.Round(time.Millisecond), durationRatio(factorioUsage.wall, fastUsage.wall),
-	)
-	t.Logf(
-		"fast process: CPU=%s (user=%s system=%s, %.0f%%), peak RSS=%.1f MiB",
-		(fastUsage.user + fastUsage.system).Round(time.Millisecond), fastUsage.user.Round(time.Millisecond),
-		fastUsage.system.Round(time.Millisecond), cpuPercent(fastUsage), float64(fastUsage.maxRSS)/1024,
 	)
 	t.Logf(
 		"Factorio process: CPU=%s (user=%s system=%s, %.0f%%), peak RSS=%.1f MiB",
