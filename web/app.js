@@ -506,6 +506,7 @@ async function init() {
   els.previewEngine.addEventListener("change", () => {
     renderPreviewEngineControls();
     renderPreviewScaleControl(Boolean(state.selected));
+    renderPreviewLosslessControl(Boolean(state.selected));
     updatePreviewViewControls();
     renderPreview();
     scheduleAutoPreview();
@@ -1927,7 +1928,7 @@ function fastTileSourceKey(profile, payload) {
 }
 
 function canUsePreviewZoom() {
-  return Boolean(state.session || currentPreviewEngine() === "fast");
+  return Boolean(state.session);
 }
 
 function currentPreviewScale() {
@@ -2279,7 +2280,14 @@ function renderPreviewScaleControl(enabled) {
 }
 
 function canUseLosslessPreview() {
-  return Boolean(state.session);
+  return Boolean(state.session && currentPreviewEngine() === "factorio");
+}
+
+function renderPreviewLosslessControl(enabled) {
+  const canUseLossless = canUseLosslessPreview();
+  els.previewLosslessField.hidden = !canUseLossless;
+  if (!canUseLossless) els.previewLossless.checked = false;
+  els.previewLossless.disabled = !enabled || !state.config.previewEnabled || !canUseLossless;
 }
 
 function setControlsEnabled(enabled) {
@@ -2312,11 +2320,7 @@ function setControlsEnabled(enabled) {
   if (Number.isFinite(selectedPreviewSize) && selectedPreviewSize > maxPreviewSize) els.previewSize.value = String(maxPreviewSize);
 
   renderPreviewScaleControl(enabled);
-
-  const canUseLossless = canUseLosslessPreview();
-  els.previewLosslessField.hidden = !canUseLossless;
-  if (!canUseLossless) els.previewLossless.checked = false;
-  els.previewLossless.disabled = !enabled || !state.config.previewEnabled || !canUseLossless;
+  renderPreviewLosslessControl(enabled);
 
   els.previewSize.disabled = !enabled || !state.config.previewEnabled;
   els.previewPlanet.disabled = !enabled || !state.config.previewEnabled;

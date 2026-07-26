@@ -1322,9 +1322,7 @@ func (s *server) warmDefaultPreview(ctx context.Context) {
 func previewRequestForUser(req previewRequest, user *authUser) previewRequest {
 	if user == nil {
 		req.Lossless = false
-		if strings.ToLower(strings.TrimSpace(req.Engine)) != previewEngineFast {
-			req.Zoom = "1"
-		}
+		req.Zoom = "1"
 		if req.Size == 0 || req.Size > guestMaxPreviewSize {
 			req.Size = guestMaxPreviewSize
 		}
@@ -1705,13 +1703,18 @@ func previewImageBytes(ctx context.Context, srcPath string, lossless bool, zoom 
 	return encodePreviewImage(ctx, img, false)
 }
 
+func encodePNGPreviewImage(img image.Image) ([]byte, string, string, error) {
+	var buf bytes.Buffer
+	encoder := png.Encoder{CompressionLevel: png.BestSpeed}
+	if err := encoder.Encode(&buf, img); err != nil {
+		return nil, "", "", err
+	}
+	return buf.Bytes(), "image/png", ".png", nil
+}
+
 func encodePreviewImage(ctx context.Context, img image.Image, lossless bool) ([]byte, string, string, error) {
 	if lossless {
-		var buf bytes.Buffer
-		if err := png.Encode(&buf, img); err != nil {
-			return nil, "", "", err
-		}
-		return buf.Bytes(), "image/png", ".png", nil
+		return encodePNGPreviewImage(img)
 	}
 	data, err := encodeAVIFImage(ctx, img)
 	if err == nil {

@@ -135,7 +135,7 @@ func (p *previewer) renderFast(ctx context.Context, ref profileRef, mapGen json.
 	if err != nil {
 		return previewResponse{}, err
 	}
-	data, contentType, ext, err := encodePreviewImage(ctx, img, req.Lossless)
+	data, contentType, ext, err := encodePNGPreviewImage(img)
 	if err != nil {
 		return previewResponse{}, err
 	}

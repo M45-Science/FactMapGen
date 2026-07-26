@@ -92,12 +92,11 @@ func TestRenderPreviewUsesFastEngineWithoutFactorio(t *testing.T) {
 		previewer: &previewer{},
 	}
 	req := previewRequest{
-		Size:     256,
-		Planet:   "nauvis",
-		Seed:     "12345",
-		CenterX:  12.4,
-		CenterY:  -8.6,
-		Lossless: true,
+		Size:    256,
+		Planet:  "nauvis",
+		Seed:    "12345",
+		CenterX: 12.4,
+		CenterY: -8.6,
 	}
 	resp, err := srv.renderPreview(
 		context.Background(), "default:Default", req, previewPriorityGuest,

@@ -47,6 +47,39 @@ function createFakeContainer() {
   };
 }
 
+test("changing settings or presets clears the prior client tile cache", async (t) => {
+  const originalDocument = global.document;
+  global.document = { createElement: () => new FakeImage() };
+  t.after(() => { global.document = originalDocument; });
+
+  const requests = [];
+  const viewer = new TilePreviewViewer(createFakeContainer(), { tileSize: 512, maxTiles: 64 });
+  const configure = (sourceKey) => viewer.configure({
+    sourceKey,
+    tileScale: 1,
+    view: { size: 512, scale: 1, centerX: 256, centerY: 256 },
+    requestTile: async (tile) => {
+      requests.push(tile.sourceKey);
+      return `/tiles/${tile.sourceKey}/${tile.tileX}/${tile.tileY}`;
+    },
+  });
+
+  configure("preset-a-settings-a");
+  await viewer.refresh();
+  const previousImages = Array.from(viewer.cache.values(), (entry) => entry.image);
+  assert.equal(viewer.cache.size, 1);
+  configure("preset-a-settings-a");
+  assert.equal(viewer.cache.size, 1, "reconfiguring the same source should retain its cached tiles");
+  assert.ok(previousImages.every((image) => !image.removed));
+
+  configure("preset-b-settings-b");
+  assert.equal(viewer.cache.size, 0, "old source tiles should be discarded before loading the new source");
+  assert.ok(previousImages.every((image) => image.removed));
+  await viewer.refresh();
+  assert.equal(viewer.cache.size, 1);
+  assert.deepEqual(requests, ["preset-a-settings-a", "preset-b-settings-b"]);
+});
+
 test("tile viewer reuses one server resolution while panning and zooming", async (t) => {
   const originalDocument = global.document;
   global.document = { createElement: () => new FakeImage() };

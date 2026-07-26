@@ -629,8 +629,8 @@ func TestPreviewRequestForUserLimitsGuestPreviewOptions(t *testing.T) {
 	}
 
 	fastGuest := previewRequestForUser(previewRequest{Engine: previewEngineFast, Size: 512, Zoom: "2.75"}, nil)
-	if fastGuest.Zoom != "2.75" {
-		t.Fatalf("fast guest preview zoom = %q, want arbitrary scale retained", fastGuest.Zoom)
+	if fastGuest.Zoom != "1" {
+		t.Fatalf("fast guest preview zoom = %q, want 1", fastGuest.Zoom)
 	}
 	exactGuest := previewRequestForUser(previewRequest{Engine: previewEngineFactorio, Size: 512, Zoom: "2.75"}, nil)
 	if exactGuest.Zoom != "1" {
@@ -823,6 +823,30 @@ cp %q "$output"
 	}
 	if !strings.Contains(string(arguments), "--map-preview-offset\n13.75,-8.25\n") {
 		t.Fatalf("Factorio arguments missing normalized offset:\n%s", arguments)
+	}
+}
+
+func TestEncodePNGPreviewImageUsesBestSpeed(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			img.Set(x, y, color.RGBA{R: uint8(x * 7), G: uint8(y * 7), B: uint8((x + y) * 3), A: 255})
+		}
+	}
+	got, contentType, ext, err := encodePNGPreviewImage(img)
+	if err != nil {
+		t.Fatalf("encodePNGPreviewImage: %v", err)
+	}
+	var want bytes.Buffer
+	encoder := png.Encoder{CompressionLevel: png.BestSpeed}
+	if err := encoder.Encode(&want, img); err != nil {
+		t.Fatalf("encode expected BestSpeed PNG: %v", err)
+	}
+	if contentType != "image/png" || ext != ".png" {
+		t.Fatalf("PNG metadata = (%q, %q)", contentType, ext)
+	}
+	if !bytes.Equal(got, want.Bytes()) {
+		t.Fatal("PNG preview did not use the BestSpeed encoder")
 	}
 }
 

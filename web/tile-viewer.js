@@ -137,8 +137,7 @@
       this.sourceKey = nextSourceKey;
       this.requestTile = options.requestTile;
       if (sourceChanged) {
-        this.cancelPending("map tile request was superseded");
-        this.required.clear();
+        this.clear();
         this.tileScale = positiveNumber(options.tileScale, options.view?.scale || this.view.scale);
       }
       this.setView(options.view || this.view);
