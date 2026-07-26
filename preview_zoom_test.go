@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"image"
 	"image/color"
@@ -72,6 +73,53 @@ func TestFastPreviewArbitraryZoomRepeatsWholeTiles(t *testing.T) {
 				if img.RGBAAt(x, y) != img.RGBAAt(x, y-1) {
 					t.Fatalf("same world tile changed between pixels (%d,%d) and (%d,%d)", x, y-1, x, y)
 				}
+			}
+		}
+	}
+}
+
+func TestFastNaturalLayersArbitraryZoomRepeatWholeTiles(t *testing.T) {
+	const (
+		size  = 128
+		scale = 0.4
+	)
+	settings := defaultFactorioNaturalSettings(123456)
+	settings.startingPositions = []factorioPoint{{x: 10_000, y: 10_000}}
+	img, _, err := renderFastMapPreview(
+		context.Background(),
+		settings,
+		size,
+		previewZoom{mode: "scale", tilesPerPixel: scale, renderSize: size},
+	)
+	if err != nil {
+		t.Fatalf("render natural layers at arbitrary zoom: %v", err)
+	}
+
+	terrainSettings := settings
+	terrainSettings.trees.enabled = false
+	terrainSettings.cliffs.enabled = false
+	terrain, _, err := renderFastMapPreview(
+		context.Background(),
+		terrainSettings,
+		size,
+		previewZoom{mode: "scale", tilesPerPixel: scale, renderSize: size},
+	)
+	if err != nil {
+		t.Fatalf("render terrain at arbitrary zoom: %v", err)
+	}
+	if img.Rect == terrain.Rect && bytes.Equal(img.Pix, terrain.Pix) {
+		t.Fatal("natural-layer zoom fixture did not render any tree or cliff overlay")
+	}
+
+	origin := -float64(size) * scale / 2
+	for y := 0; y < size; y++ {
+		worldY := math.Floor(origin + float64(y)*scale)
+		for x := 0; x < size; x++ {
+			if x > 0 && math.Floor(origin+float64(x-1)*scale) == math.Floor(origin+float64(x)*scale) && img.RGBAAt(x, y) != img.RGBAAt(x-1, y) {
+				t.Fatalf("natural overlays changed within world tile between pixels (%d,%d) and (%d,%d)", x-1, y, x, y)
+			}
+			if y > 0 && math.Floor(origin+float64(y-1)*scale) == worldY && img.RGBAAt(x, y) != img.RGBAAt(x, y-1) {
+				t.Fatalf("natural overlays changed within world tile between pixels (%d,%d) and (%d,%d)", x, y-1, x, y)
 			}
 		}
 	}

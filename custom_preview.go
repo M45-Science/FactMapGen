@@ -24,6 +24,9 @@ type fastPreviewSettings struct {
 	trees                         fastControl
 	rocks                         fastControl
 	cliffs                        fastControl
+	cliffElevation0               float64
+	cliffElevationInterval        float64
+	cliffRichness                 float64
 	enemyBases                    fastControl
 	noEnemies                     bool
 	moistureFrequency             float64
@@ -137,6 +140,7 @@ func parseFastPreviewSettings(raw json.RawMessage, seedOverride string) (fastPre
 		return fastPreviewSettings{}, err
 	}
 	props := fastMap(root["property_expression_names"])
+	cliffSettings := fastMap(root["cliff_settings"])
 	settings := fastPreviewSettings{
 		seed:                          fastPreviewSeed(root, seedOverride),
 		mapType:                       fastMapType(props),
@@ -147,6 +151,9 @@ func parseFastPreviewSettings(raw json.RawMessage, seedOverride string) (fastPre
 		trees:                         fastAutoplaceControl(root, "trees"),
 		rocks:                         fastAutoplaceControl(root, "rocks"),
 		cliffs:                        fastAutoplaceControl(root, "nauvis_cliff"),
+		cliffElevation0:               fastNumber(cliffSettings["cliff_elevation_0"], 10),
+		cliffElevationInterval:        fastNumber(cliffSettings["cliff_elevation_interval"], 40),
+		cliffRichness:                 fastNumber(cliffSettings["richness"], 1),
 		enemyBases:                    fastAutoplaceControl(root, "enemy-base"),
 		noEnemies:                     fastBool(root["no_enemies_mode"]),
 		moistureFrequency:             fastNumber(props["control:moisture:frequency"], 1),
@@ -270,39 +277,89 @@ func renderFastMapPreview(ctx context.Context, settings fastPreviewSettings, siz
 			lastWorldX = wx
 			var (
 				c           color.RGBA
-				water       bool
 				nauvisPoint factorioNauvisSample
 			)
 			if nauvis != nil {
 				nauvisPoint = nauvis.sample(wx, wy)
 				tile := nauvis.terrainTile(nauvisPoint, wx, wy)
-				c, water = tile.color, tile.water
+				c = tile.color
 			} else {
-				c, water = fastTerrainPixel(settings, wx, wy)
+				c, _ = fastTerrainPixel(settings, wx, wy)
 			}
 			if fastOutOfMapBounds(settings, wx, wy) {
 				c = color.RGBA{R: 20, G: 23, B: 20, A: 255}
-			} else if !water {
-				if nauvis != nil {
-					c = fastBlendTreesWithClimate(settings, c, wx, wy, nauvisPoint.moisture, nauvisPoint.temperature)
-				} else {
-					c = fastBlendTrees(settings, c, wx, wy)
-				}
-				if resource, ok := fastResourcePixel(settings, wx, wy); ok {
-					c = resource
-				}
-				if enemy, ok := fastEnemyPixel(settings, wx, wy); ok {
-					c = enemy
-				}
-				if cliff, ok := fastCliffPixel(settings, wx, wy); ok {
-					c = cliff
-				}
-				c = fastBlendRocks(settings, c, wx, wy)
 			}
 			img.Pix[o] = c.R
 			img.Pix[o+1] = c.G
 			img.Pix[o+2] = c.B
 			img.Pix[o+3] = 255
+		}
+	}
+
+	if nauvis != nil && settings.trees.enabled {
+		trees := newFactorioTreeEvaluator(settings, nauvis)
+		if err := renderFactorioTrees(ctx, img, settings, trees, originX, originY, tpp); err != nil {
+			return nil, 0, err
+		}
+	}
+
+	lastWorldY = math.Inf(-1)
+	for y := 0; y < size; y++ {
+		if y&31 == 0 {
+			select {
+			case <-ctx.Done():
+				return nil, 0, ctx.Err()
+			default:
+			}
+		}
+		wy := math.Floor(originY + float64(y)*tpp)
+		row := y * img.Stride
+		if y > 0 && wy == lastWorldY {
+			copy(img.Pix[row:row+img.Stride], img.Pix[row-img.Stride:row])
+			continue
+		}
+		lastWorldY = wy
+		lastWorldX := math.Inf(-1)
+		for x := 0; x < size; x++ {
+			wx := math.Floor(originX + float64(x)*tpp)
+			offset := row + x*4
+			if x > 0 && wx == lastWorldX {
+				copy(img.Pix[offset:offset+4], img.Pix[offset-4:offset])
+				continue
+			}
+			lastWorldX = wx
+			if fastOutOfMapBounds(settings, wx, wy) {
+				continue
+			}
+			base := color.RGBA{R: img.Pix[offset], G: img.Pix[offset+1], B: img.Pix[offset+2], A: 255}
+			if factorioPreviewWaterColor(base) {
+				continue
+			}
+			if nauvis == nil {
+				base = fastBlendTrees(settings, base, wx, wy)
+			}
+			if resource, ok := fastResourcePixel(settings, wx, wy); ok {
+				base = resource
+			}
+			if enemy, ok := fastEnemyPixel(settings, wx, wy); ok {
+				base = enemy
+			}
+			if nauvis == nil {
+				if cliff, ok := fastCliffPixel(settings, wx, wy); ok {
+					base = cliff
+				}
+			}
+			base = fastBlendRocks(settings, base, wx, wy)
+			img.Pix[offset] = base.R
+			img.Pix[offset+1] = base.G
+			img.Pix[offset+2] = base.B
+		}
+	}
+
+	if nauvis != nil && settings.cliffs.enabled {
+		cliffs := newFactorioCliffEvaluator(settings, nauvis)
+		if err := renderFactorioCliffs(ctx, img, settings, cliffs, originX, originY, tpp); err != nil {
+			return nil, 0, err
 		}
 	}
 	return img, tpp, nil

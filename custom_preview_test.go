@@ -48,6 +48,36 @@ func TestFastPreviewRenderIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestParseFastPreviewSettingsReadsCliffSettings(t *testing.T) {
+	settings, err := parseFastPreviewSettings([]byte(`{
+		"autoplace_controls": {
+			"nauvis_cliff": {"frequency": 0.5, "size": 2.5, "richness": 1}
+		},
+		"cliff_settings": {
+			"cliff_elevation_0": 17,
+			"cliff_elevation_interval": 23,
+			"richness": 4
+		}
+	}`), "")
+	if err != nil {
+		t.Fatalf("parse cliff settings: %v", err)
+	}
+	if !settings.cliffs.enabled || settings.cliffs.frequency != 0.5 || settings.cliffs.size != 2.5 {
+		t.Fatalf("cliff control = %#v", settings.cliffs)
+	}
+	if settings.cliffElevation0 != 17 || settings.cliffElevationInterval != 23 || settings.cliffRichness != 4 {
+		t.Fatalf("cliff settings = elevation0 %g, interval %g, richness %g", settings.cliffElevation0, settings.cliffElevationInterval, settings.cliffRichness)
+	}
+
+	defaults, err := parseFastPreviewSettings([]byte(`{}`), "")
+	if err != nil {
+		t.Fatalf("parse default cliff settings: %v", err)
+	}
+	if !defaults.cliffs.enabled || defaults.cliffElevation0 != 10 || defaults.cliffElevationInterval != 40 || defaults.cliffRichness != 1 {
+		t.Fatalf("default cliff settings = %#v", defaults)
+	}
+}
+
 func TestRenderPreviewUsesFastEngineWithoutFactorio(t *testing.T) {
 	root := t.TempDir()
 	st := &store{

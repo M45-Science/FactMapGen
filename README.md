@@ -2,7 +2,7 @@
 
 FactMapGen is a small Go web tool for creating and editing Factorio `map-gen-settings.json` and `map-settings.json` files. Map presets are stored on the server as folders; the browser edits those server-side files directly.
 
-![FactMapGen fast terrain preview at an arbitrary 2.75 meters per pixel](docs/preview.png)
+![FactMapGen fast Nauvis preview with trees and cliffs at an arbitrary 2.75 meters per pixel](docs/preview.png)
 
 ## Run
 
@@ -46,7 +46,7 @@ In `map-gen-settings.json`, `seed: null` follows Factorio's public example file 
 
 ## Map Previews
 
-FactMapGen includes a fast built-in Go preview renderer for Nauvis-style maps. Its default Nauvis terrain path ports Factorio-compatible seeded noise, elevation, climate fields, and all 21 terrain-tile probability expressions; entity and resource overlays remain approximate. The preview toolbar also offers an Exact engine that generates real Factorio map preview PNGs when a Factorio/headless binary is available. Install the Linux headless package into the default discovery path with:
+FactMapGen includes a fast built-in Go preview renderer for Nauvis-style maps. Its default Nauvis path ports Factorio-compatible seeded noise, elevation, climate fields, and all 21 terrain-tile probability expressions. Forest regions use the 15 Nauvis tree-species probability expressions and a smooth expected-density chart overlay; they reproduce where forests occur rather than each individual randomized tree. Cliffs use the deterministic Nauvis cliff fields, four-tile placement lattice, and crossing rules. Resource, enemy, and rock overlays remain approximate. The preview toolbar also offers an Exact engine that generates real Factorio map preview PNGs when a Factorio/headless binary is available. Install the Linux headless package into the default discovery path with:
 
 ```sh
 ./scripts/install-factorio-headless.sh
@@ -72,17 +72,21 @@ Exact Factorio preview generation is queued server-side so only one Factorio pro
 
 Generated preview images are transient. The server converts preview images to AVIF with JPEG fallback unless `lossless` is requested, and the browser receives a short-lived `/api/previews/...` URL. Exact Factorio previews start from Factorio's temporary PNG output and then apply the requested zoom transform. Preview images are kept in memory for up to 30 minutes with a 100-image cap, and are not cached per preset. On startup, when exact previews are configured, the server warms a pinned 512px Nauvis preview for the built-in Default preset so first page load can show an immediate exact image without waiting for autosize rendering.
 
-Preview parity tests compare rendered PNG pixels and write visual artifacts. The fast terrain integration cases disable resources, trees, rocks, enemies, cliffs, and decorations so terrain correctness is measured independently from approximate overlays:
+Preview parity tests compare rendered PNG pixels and write visual artifacts. The fast terrain integration cases disable resources, trees, rocks, enemies, cliffs, and decorations so terrain correctness is measured independently. Natural-layer cases then isolate trees and cliffs from resources and other entities, measuring coarse forest-region correlation, overlay coverage, and tolerant cliff-mask recall and precision:
 
 ```sh
 FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio go test -run TestExactPreviewMatchesDirectFactorioPreview
 FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_FAST_PREVIEW_PARITY=1 go test -run TestFastPreviewMatchesFactorioPreview
+FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_NATURAL_PREVIEW_PARITY=1 go test -run TestFastNaturalLayersMatchFactorioPreviewRegions -v
 FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_PREVIEW_GALLERY=1 go test -run TestPreviewGalleryDefaultSeeds -v
+FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_NATURAL_PREVIEW_GALLERY=1 go test -run TestPreviewGalleryNaturalLayersDefaultSeeds -v
 ```
 
-Diff artifacts are written to `test-output/preview-diffs/` as `factorio.png`, `actual.png`, `diff.png`, and `stats.json`. The exact-engine parity test runs automatically when a Factorio binary is discoverable. The fast terrain test is opt-in and enforces broad tile-color and water-mask correctness budgets rather than requiring exact pixels.
+Diff artifacts are written to `test-output/preview-diffs/` as Factorio, fast-renderer, amplified-diff, and JSON-statistics files. The exact-engine parity test runs automatically when a Factorio binary is discoverable. The fast tests are opt-in and enforce overall terrain and natural-feature correctness budgets rather than requiring exact pixels.
 
 The gallery test writes `test-output/preview-gallery/default-10-seeds-terrain/index.html`, with resource-free Factorio terrain, fast Go terrain, and amplified diff images for ten reproducible pseudo-random default-preset seeds. Existing dimension-compatible Factorio PNGs are reused; subsequent runs regenerate only fast images, diffs, statistics, and HTML.
+
+The natural-layer gallery writes `test-output/preview-gallery/default-10-seeds-trees-cliffs/index.html`, with resources, rocks, enemies, fish, and decorations disabled. Factorio references are content-addressed by their isolated map settings and reused on subsequent runs.
 
 ## Presets
 

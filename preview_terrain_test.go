@@ -47,6 +47,10 @@ func terrainOnlyMapGenPath(t *testing.T, sourcePath string) string {
 }
 
 func terrainOnlyMapGenJSON(body []byte) ([]byte, error) {
+	return naturalLayersMapGenJSON(body, false, false)
+}
+
+func naturalLayersMapGenJSON(body []byte, trees, cliffs bool) ([]byte, error) {
 	var root map[string]any
 	if err := json.Unmarshal(body, &root); err != nil {
 		return nil, err
@@ -56,17 +60,38 @@ func terrainOnlyMapGenJSON(body []byte) ([]byte, error) {
 	for _, name := range terrainOnlyAutoplaceControls {
 		controls[name] = map[string]any{"frequency": 0, "size": 0, "richness": 0}
 	}
+	if trees {
+		controls["trees"] = map[string]any{"frequency": 1, "size": 1, "richness": 1}
+	}
+	if cliffs {
+		controls["nauvis_cliff"] = map[string]any{"frequency": 1, "size": 1, "richness": 1}
+	}
 	root["autoplace_controls"] = controls
 
 	autoplace := fastMap(root["autoplace_settings"])
-	autoplace["entity"] = map[string]any{"treat_missing_as_default": false, "settings": map[string]any{}}
+	if trees {
+		autoplace["entity"] = map[string]any{
+			"treat_missing_as_default": true,
+			"settings": map[string]any{
+				"fish": map[string]any{"frequency": 0, "size": 0, "richness": 0},
+			},
+		}
+	} else {
+		autoplace["entity"] = map[string]any{"treat_missing_as_default": false, "settings": map[string]any{}}
+	}
 	autoplace["decorative"] = map[string]any{"treat_missing_as_default": false, "settings": map[string]any{}}
 	root["autoplace_settings"] = autoplace
 	root["no_enemies_mode"] = true
 	root["peaceful_mode"] = true
-	cliffs := fastMap(root["cliff_settings"])
-	cliffs["richness"] = 0
-	root["cliff_settings"] = cliffs
+	cliffSettings := fastMap(root["cliff_settings"])
+	if cliffs {
+		if fastNumber(cliffSettings["richness"], 1) <= 0 {
+			cliffSettings["richness"] = 1
+		}
+	} else {
+		cliffSettings["richness"] = 0
+	}
+	root["cliff_settings"] = cliffSettings
 	return json.MarshalIndent(root, "", "  ")
 }
 
@@ -176,6 +201,50 @@ func TestTerrainOnlyMapGenJSONDisablesOverlays(t *testing.T) {
 	}
 	if got := fastNumber(fastMap(root["cliff_settings"])["richness"], -1); got != 0 {
 		t.Fatalf("cliff richness = %g, want 0", got)
+	}
+}
+
+func TestNaturalLayersMapGenJSONSelectivelyEnablesTreesAndCliffs(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		trees  bool
+		cliffs bool
+	}{
+		{name: "trees", trees: true},
+		{name: "cliffs", cliffs: true},
+		{name: "trees and cliffs", trees: true, cliffs: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body, err := naturalLayersMapGenJSON([]byte(`{
+				"autoplace_controls": {},
+				"autoplace_settings": {},
+				"cliff_settings": {"richness": 1}
+			}`), test.trees, test.cliffs)
+			if err != nil {
+				t.Fatalf("naturalLayersMapGenJSON: %v", err)
+			}
+			var root map[string]any
+			if err := json.Unmarshal(body, &root); err != nil {
+				t.Fatalf("decode natural-layer settings: %v", err)
+			}
+			controls := fastMap(root["autoplace_controls"])
+			for _, name := range terrainOnlyAutoplaceControls {
+				control := fastMap(controls[name])
+				wantEnabled := name == "trees" && test.trees || name == "nauvis_cliff" && test.cliffs
+				gotEnabled := fastNumber(control["frequency"], 0) > 0 && fastNumber(control["size"], 0) > 0
+				if gotEnabled != wantEnabled {
+					t.Errorf("control %s enabled = %v, want %v", name, gotEnabled, wantEnabled)
+				}
+			}
+			entity := fastMap(fastMap(root["autoplace_settings"])["entity"])
+			if got := fastBool(entity["treat_missing_as_default"]); got != test.trees {
+				t.Errorf("entity treat_missing_as_default = %v, want %v", got, test.trees)
+			}
+			gotCliffRichness := fastNumber(fastMap(root["cliff_settings"])["richness"], -1)
+			if (gotCliffRichness > 0) != test.cliffs {
+				t.Errorf("cliff richness = %g, cliffs enabled = %v", gotCliffRichness, test.cliffs)
+			}
+		})
 	}
 }
 

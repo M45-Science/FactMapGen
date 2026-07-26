@@ -15,6 +15,9 @@ type factorioNauvisSample struct {
 	aux         float64
 	moisture    float64
 	temperature float64
+	hills       float64
+	bridge      float64
+	forestPath  float64
 }
 
 type factorioTerrainTile struct {
@@ -189,26 +192,14 @@ func (e *factorioNauvisEvaluator) sample(x, y float64) factorioNauvisSample {
 	plateaus := 0.5 + clampFloat((hills-cliffLevel)*10, -0.5, 0.5)
 	bridgeBillows := math.Abs(e.bridgeNoise(x, y))
 	forestPathBillows := math.Abs(e.forestPathNoise(x, y))
-
-	persistence := clampFloat(e.persistenceNoise(x, y)+0.55, 0.5, 0.65)
-	detail := e.detailNoise(x, y, persistence)
-	bridges := 1 - 0.1*bridgeBillows - 0.9*math.Max(0, -0.1+bridgeBillows)
-	macro := e.macroA(x, y) * math.Max(0, e.macroB(x, y))
-	addedCliffElevation := 0.1*hills + 0.8*plateaus
 	distance := factorioDistanceFromNearestPoint(x, y, e.starts, math.Inf(1))
-	startingMacroMultiplier := clampFloat(distance*nauvisSegmentation/2000, 0, 1)
-	mainElevation := 20 * (lerpFloat(
-		0.5*addedCliffElevation-0.6,
-		1.9*addedCliffElevation+1.6,
-		0.1+0.5*bridges,
-	) +
-		0.25*detail +
-		3*macro*startingMacroMultiplier)
-	startingIsland := mainElevation + 20*(2.5-distance*e.segmentation/200)
-	waterAndLandElevation := math.Max(mainElevation-e.waterLevel*2, startingIsland)
-	startingLakeDistance := factorioDistanceFromNearestPoint(x, y, e.lakes, 1024)
-	startingLake := (20 * (-3 + (startingLakeDistance+e.startingLakeNoise(x, y))/8)) / 8
-	elevation := math.Min(waterAndLandElevation, startingLake)
+	elevation := e.elevationFromShared(
+		x,
+		y,
+		bridgeBillows,
+		distance,
+		0.1*hills+0.8*plateaus,
+	)
 
 	aux := clampFloat(0.5+e.auxBias+0.06*(plateaus-0.4)+e.auxNoise(x, y), 0, 1)
 
@@ -241,7 +232,36 @@ func (e *factorioNauvisEvaluator) sample(x, y float64) factorioNauvisSample {
 
 	return factorioNauvisSample{
 		elevation: elevation, aux: aux, moisture: moisture, temperature: temperature,
+		hills: hills, bridge: bridgeBillows, forestPath: forestPathBillows,
 	}
+}
+
+func (e *factorioNauvisEvaluator) elevationNoCliff(x, y float64) float64 {
+	distance := factorioDistanceFromNearestPoint(x, y, e.starts, math.Inf(1))
+	return e.elevationFromShared(x, y, math.Abs(e.bridgeNoise(x, y)), distance, 0)
+}
+
+func (e *factorioNauvisEvaluator) elevationFromShared(
+	x, y, bridgeBillows, distance, addedCliffElevation float64,
+) float64 {
+	nauvisSegmentation := 1.5 * e.segmentation
+	persistence := clampFloat(e.persistenceNoise(x, y)+0.55, 0.5, 0.65)
+	detail := e.detailNoise(x, y, persistence)
+	bridges := 1 - 0.1*bridgeBillows - 0.9*math.Max(0, -0.1+bridgeBillows)
+	macro := e.macroA(x, y) * math.Max(0, e.macroB(x, y))
+	startingMacroMultiplier := clampFloat(distance*nauvisSegmentation/2000, 0, 1)
+	mainElevation := 20 * (lerpFloat(
+		0.5*addedCliffElevation-0.6,
+		1.9*addedCliffElevation+1.6,
+		0.1+0.5*bridges,
+	) +
+		0.25*detail +
+		3*macro*startingMacroMultiplier)
+	startingIsland := mainElevation + 20*(2.5-distance*e.segmentation/200)
+	waterAndLandElevation := math.Max(mainElevation-e.waterLevel*2, startingIsland)
+	startingLakeDistance := factorioDistanceFromNearestPoint(x, y, e.lakes, 1024)
+	startingLake := (20 * (-3 + (startingLakeDistance+e.startingLakeNoise(x, y))/8)) / 8
+	return math.Min(waterAndLandElevation, startingLake)
 }
 
 func factorioStartingLakePositions(seed uint32, starts []factorioPoint) []factorioPoint {
