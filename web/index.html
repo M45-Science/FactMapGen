@@ -151,8 +151,8 @@
                   <option value="3072">3K</option>
                   <option value="4096">4K</option>
                 </select>
-                <label id="previewScaleField" class="preview-scale-field" title="Map scale in meters per output pixel. Enter any value from 0.015625 to 64; larger values show more area.">
-                  <input id="previewZoom" type="number" min="0.015625" max="64" step="any" value="1" list="previewScalePresets" aria-label="Preview scale in meters per pixel" />
+                <label id="previewScaleField" class="preview-scale-field" title="Map scale in meters per output pixel. Enter any value from 0.015625 to 25; larger values show more area.">
+                  <input id="previewZoom" type="number" min="0.015625" max="25" step="any" value="1" list="previewScalePresets" aria-label="Preview scale in meters per pixel" />
                   <span>m/px</span>
                 </label>
                 <datalist id="previewScalePresets">
@@ -165,6 +165,7 @@
                   <option value="4"></option>
                   <option value="8"></option>
                   <option value="16"></option>
+                  <option value="25"></option>
                 </datalist>
                 <label id="previewLosslessField" class="check-field" title="Use PNG output for exact pixels. Leave off for high-quality JPEG previews that load faster.">
                   <input id="previewLossless" type="checkbox" />
@@ -175,8 +176,10 @@
               </div>
               <div class="preview-scroll">
                 <div class="preview-frame">
+                  <div id="previewTiles" class="preview-tiles" aria-hidden="true"></div>
                   <img id="previewImage" alt="Factorio map preview" draggable="false" />
                   <div id="previewEmpty" class="preview-empty">No preview image</div>
+                  <div id="previewCoordinates" class="preview-coordinates" aria-hidden="true" hidden></div>
                 </div>
               </div>
               <div id="previewStatus" class="preview-status"></div>
@@ -371,6 +374,7 @@
       <div id="toastMessage" class="toast-message"></div>
       <button id="toastClose" type="button" class="toast-close" aria-label="Dismiss message">Dismiss</button>
     </div>
+    <script src="/tile-viewer.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>

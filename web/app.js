@@ -25,8 +25,14 @@ const minPreviewSize = 256;
 const maxPreviewSizePx = 4096;
 const guestMaxPreviewSize = 512;
 const minPreviewScale = 1 / 64;
-const maxPreviewScale = 64;
+const maxPreviewScale = 25;
 const previewWheelDebounceMs = 180;
+const previewTileSize = 512;
+const previewTileSourceScale = 1;
+const clientPreviewCacheMiB = 512;
+const decodedPreviewTileBytes = previewTileSize * previewTileSize * 4;
+const maxClientPreviewTiles = Math.floor(clientPreviewCacheMiB * 1024 * 1024 / decodedPreviewTileBytes);
+const maxConcurrentPreviewTileRequests = 8;
 const safePreviewSizes = [256, 512, 768, 1024, 1536, 2048, 3072, 4096];
 const maxPreviewSeed = 4294967295;
 const minAutoplaceFrequency = 0.1;
@@ -39,6 +45,7 @@ let previewImageLoadID = 0;
 let previewRequestRevision = 0;
 let previewWheelTimer = null;
 let previewPanGesture = null;
+let previewTileViewer = null;
 let displayedPreview = null;
 let previewPointerView = null;
 let factorioUpdateNoticeShown = false;
@@ -380,8 +387,10 @@ const els = {
   seedRandom: $("#seedRandom"),
   seedRerollBtn: $("#seedRerollBtn"),
   previewFrame: $(".preview-frame"),
+  previewTiles: $("#previewTiles"),
   previewImage: $("#previewImage"),
   previewEmpty: $("#previewEmpty"),
+  previewCoordinates: $("#previewCoordinates"),
   previewStatus: $("#previewStatus"),
   mapgenSubtabs: document.querySelectorAll(".mapgen-subtab"),
   mapgenSubpanels: {
@@ -435,6 +444,12 @@ const els = {
 document.addEventListener("DOMContentLoaded", init);
 
 async function init() {
+  previewTileViewer = new TilePreviewViewer(els.previewTiles, {
+    tileSize: previewTileSize,
+    maxTiles: maxClientPreviewTiles,
+    maxConcurrent: maxConcurrentPreviewTileRequests,
+    onState: updateFastTileViewerState,
+  });
   els.loginForm.addEventListener("submit", login);
   els.guestBtn.addEventListener("click", continueAsGuest);
   els.loginBtn.addEventListener("click", showLogin);
@@ -501,10 +516,23 @@ async function init() {
   });
   window.addEventListener("resize", () => {
     const changed = updatePreviewFrameSize();
-    if (changed && previewSizeIsAuto()) scheduleAutoPreview();
+    if (!changed) return;
+    if (fastTileViewerActive()) {
+      const displayed = displayedPreviewForCurrentProfile();
+      setFastTileView(displayed.centerX, displayed.centerY, displayed.tilesPerPixel, currentPreviewSize());
+      refreshVisibleFastTiles();
+    } else if (previewSizeIsAuto()) {
+      scheduleAutoPreview();
+    }
   });
   els.previewPlanet.addEventListener("change", () => scheduleAutoPreview());
   els.previewZoom.addEventListener("input", () => {
+    if (fastTileViewerActive()) {
+      const displayed = displayedPreviewForCurrentProfile();
+      setFastTileView(displayed.centerX, displayed.centerY, Number(currentPreviewScale()), displayed.size);
+      refreshVisibleFastTiles();
+      return;
+    }
     previewPointerView = null;
     updatePreviewViewControls();
     scheduleAutoPreview();
@@ -512,6 +540,8 @@ async function init() {
   els.previewResetView.addEventListener("click", resetPreviewView);
   els.previewFrame.addEventListener("pointerdown", beginPreviewPan);
   els.previewFrame.addEventListener("pointermove", updatePreviewPan);
+  els.previewFrame.addEventListener("pointermove", updatePreviewCoordinates);
+  els.previewFrame.addEventListener("pointerleave", hidePreviewCoordinates);
   els.previewFrame.addEventListener("pointerup", finishPreviewPan);
   els.previewFrame.addEventListener("pointercancel", cancelPreviewPan);
   els.previewFrame.addEventListener("lostpointercapture", cancelPreviewPan);
@@ -1675,6 +1705,11 @@ async function generatePreview(options = {}) {
       mapGen: previewMapGenPayload(),
     };
     if (seed) payload.seed = seed;
+    if (payload.engine === "fast") {
+      await showFastTilePreview(previewProfile, payload, requestRevision);
+      if (!automatic) showToast("Preview generated.");
+      return true;
+    }
     const body = await api(`/api/profiles/${encodeURIComponent(previewProfile)}/preview`, {
       method: "POST",
       body: JSON.stringify(payload),
@@ -1876,6 +1911,21 @@ function currentPreviewEngine() {
   return els.previewEngine?.value === "factorio" ? "factorio" : "fast";
 }
 
+function fastTileViewerActive() {
+  return Boolean(previewTileViewer?.isActive() && displayedPreviewForCurrentProfile()?.tiled);
+}
+
+function fastTileSourceKey(profile, payload) {
+  return JSON.stringify({
+    profile,
+    engine: "fast",
+    planet: payload.planet,
+    seed: payload.seed || "",
+    lossless: Boolean(payload.lossless),
+    mapGen: payload.mapGen,
+  });
+}
+
 function canUsePreviewZoom() {
   return Boolean(state.session || currentPreviewEngine() === "fast");
 }
@@ -1936,7 +1986,7 @@ function updatePreviewViewControls() {
   const interactive = Boolean(
     enabled
     && displayed
-    && els.previewImage.getAttribute("src")
+    && (displayed.tiled ? previewTileViewer?.isActive() : els.previewImage.getAttribute("src"))
     && els.previewEmpty.style.display === "none",
   );
   els.previewResetView.disabled = !enabled || previewViewIsReset();
@@ -1964,11 +2014,63 @@ function resetPreviewView() {
     showDefaultCachedPreview();
     return;
   }
+  if (fastTileViewerActive()) {
+    setFastTileView(0, 0, 1, displayedPreview.size);
+    refreshVisibleFastTiles();
+    return;
+  }
   scheduleAutoPreview();
 }
 
 function previewInteractionEnabled() {
   return els.previewFrame.classList.contains("preview-interactive");
+}
+
+function updatePreviewCoordinates(event) {
+  const pointerView = pointerViewForCurrentPreview();
+  if (!previewInteractionEnabled() || !pointerView) {
+    hidePreviewCoordinates();
+    return;
+  }
+  const rect = els.previewFrame.getBoundingClientRect();
+  const screenX = event.clientX - rect.left;
+  const screenY = event.clientY - rect.top;
+  if (
+    rect.width <= 0
+    || rect.height <= 0
+    || screenX < 0
+    || screenY < 0
+    || screenX >= rect.width
+    || screenY >= rect.height
+  ) {
+    hidePreviewCoordinates();
+    return;
+  }
+  let coordinateView = pointerView;
+  if (previewPanGesture && previewPanGesture.pointerID === event.pointerId && !fastTileViewerActive()) {
+    coordinateView = {
+      ...pointerView,
+      centerX: previewPanGesture.centerX - previewPanGesture.dx * previewPanGesture.worldUnitsPerClientX,
+      centerY: previewPanGesture.centerY - previewPanGesture.dy * previewPanGesture.worldUnitsPerClientY,
+    };
+  }
+  const point = TilePreviewViewer.screenPointToWorld(
+    coordinateView, screenX, screenY, rect.width, rect.height,
+  );
+  const precision = coordinateView.tilesPerPixel < 0.1 ? 2 : coordinateView.tilesPerPixel < 1 ? 1 : 0;
+  els.previewCoordinates.textContent =
+    `x ${formatPreviewCoordinate(point.x, precision)}  y ${formatPreviewCoordinate(point.y, precision)}`;
+  els.previewCoordinates.hidden = false;
+}
+
+function formatPreviewCoordinate(value, precision) {
+  const zeroThreshold = 0.5 * 10 ** -precision;
+  const normalized = Math.abs(value) < zeroThreshold ? 0 : value;
+  return normalized.toFixed(precision);
+}
+
+function hidePreviewCoordinates() {
+  els.previewCoordinates.hidden = true;
 }
 
 function beginPreviewPan(event) {
@@ -2002,7 +2104,14 @@ function updatePreviewPan(event) {
   if (!gesture || gesture.pointerID !== event.pointerId) return;
   gesture.dx = event.clientX - gesture.startClientX;
   gesture.dy = event.clientY - gesture.startClientY;
-  els.previewImage.style.transform = `translate(${gesture.dx}px, ${gesture.dy}px)`;
+  if (fastTileViewerActive()) {
+    const centerX = gesture.centerX - gesture.dx * gesture.worldUnitsPerClientX;
+    const centerY = gesture.centerY - gesture.dy * gesture.worldUnitsPerClientY;
+    setFastTileView(centerX, centerY, gesture.tilesPerPixel, gesture.size);
+    refreshVisibleFastTiles();
+  } else {
+    els.previewImage.style.transform = `translate(${gesture.dx}px, ${gesture.dy}px)`;
+  }
   event.preventDefault();
 }
 
@@ -2018,6 +2127,12 @@ function finishPreviewPan(event) {
   if (moved) {
     const centerX = gesture.centerX - gesture.dx * gesture.worldUnitsPerClientX;
     const centerY = gesture.centerY - gesture.dy * gesture.worldUnitsPerClientY;
+    if (fastTileViewerActive()) {
+      setFastTileView(centerX, centerY, gesture.tilesPerPixel, gesture.size);
+      refreshVisibleFastTiles();
+      event.preventDefault();
+      return;
+    }
     const view = previewViewForCurrentProfile();
     view.centerX = centerX;
     view.centerY = centerY;
@@ -2031,6 +2146,9 @@ function finishPreviewPan(event) {
     };
     updatePreviewViewControls();
     scheduleAutoPreview();
+  } else if (fastTileViewerActive()) {
+    setFastTileView(gesture.centerX, gesture.centerY, gesture.tilesPerPixel, gesture.size);
+    refreshVisibleFastTiles();
   }
   event.preventDefault();
 }
@@ -2039,6 +2157,10 @@ function cancelPreviewPan(event) {
   const gesture = previewPanGesture;
   if (event && gesture && gesture.pointerID !== event.pointerId) return;
   previewPanGesture = null;
+  if (gesture && fastTileViewerActive()) {
+    setFastTileView(gesture.centerX, gesture.centerY, gesture.tilesPerPixel, gesture.size);
+    refreshVisibleFastTiles();
+  }
   clearPreviewPanTransform();
   if (gesture && els.previewFrame.hasPointerCapture(gesture.pointerID)) {
     els.previewFrame.releasePointerCapture(gesture.pointerID);
@@ -2048,6 +2170,53 @@ function cancelPreviewPan(event) {
 function clearPreviewPanTransform() {
   els.previewFrame.classList.remove("preview-panning");
   els.previewImage.style.removeProperty("transform");
+}
+
+function setFastTileView(centerX, centerY, scale, size) {
+  const displayed = displayedPreviewForCurrentProfile();
+  if (!displayed?.tiled || !previewTileViewer?.isActive()) return false;
+  const nextCenterX = finitePreviewNumber(centerX, displayed.centerX);
+  const nextCenterY = finitePreviewNumber(centerY, displayed.centerY);
+  const nextScale = positivePreviewNumber(scale, displayed.tilesPerPixel);
+  const nextSize = positivePreviewNumber(size, displayed.size);
+  const view = previewViewForCurrentProfile();
+  view.centerX = nextCenterX;
+  view.centerY = nextCenterY;
+  displayed.centerX = nextCenterX;
+  displayed.centerY = nextCenterY;
+  displayed.tilesPerPixel = nextScale;
+  displayed.size = nextSize;
+  previewPointerView = {
+    profile: displayed.profile,
+    displayedLoadID: displayed.loadID,
+    size: nextSize,
+    tilesPerPixel: nextScale,
+    centerX: nextCenterX,
+    centerY: nextCenterY,
+  };
+  els.previewZoom.value = String(nextScale);
+  previewTileViewer.setView({
+    size: nextSize,
+    scale: nextScale,
+    centerX: nextCenterX,
+    centerY: nextCenterY,
+  });
+  updatePreviewViewControls();
+  return true;
+}
+
+function refreshVisibleFastTiles() {
+  const displayed = displayedPreviewForCurrentProfile();
+  if (!displayed?.tiled || !previewTileViewer?.isActive()) return Promise.resolve(null);
+  const loadID = displayed.loadID;
+  const sourceKey = displayed.sourceKey;
+  return previewTileViewer.refresh().catch((error) => {
+    const current = displayedPreviewForCurrentProfile();
+    if (!current?.tiled || current.loadID !== loadID || current.sourceKey !== sourceKey) return null;
+    els.previewStatus.classList.add("error");
+    els.previewStatus.textContent = clippedClientMessage(error.message, 1200);
+    return null;
+  });
 }
 
 function zoomPreviewAtPointer(event) {
@@ -2087,6 +2256,12 @@ function zoomPreviewAtPointer(event) {
   };
   els.previewZoom.value = String(nextScale);
   updatePreviewViewControls();
+
+  if (fastTileViewerActive()) {
+    setFastTileView(centerX, centerY, nextScale, size);
+    refreshVisibleFastTiles();
+    return;
+  }
 
   invalidatePreviewResponse();
   clearPreviewWheelTimer();
@@ -2160,6 +2335,7 @@ function renderPreviewEngineControls() {
   els.previewEngine.disabled = !state.selected || !state.config.previewEnabled;
 
   const fast = currentPreviewEngine() === "fast";
+  els.previewSize.hidden = fast;
   for (const option of els.previewPlanet.options) {
     option.disabled = fast && option.value !== "nauvis";
   }
@@ -2528,7 +2704,9 @@ function previewSizeIsAuto() {
 }
 
 function currentPreviewSize() {
-  if (previewSizeIsAuto()) return clampPreviewSize(autoPreviewSize());
+  if (currentPreviewEngine() === "fast" || previewSizeIsAuto()) {
+    return clampPreviewSize(autoPreviewSize());
+  }
   const size = Number(els.previewSize.value || defaultPreviewSize);
   if (!Number.isFinite(size)) return defaultPreviewSize;
   return clampPreviewSize(size);
@@ -2547,6 +2725,7 @@ function autoPreviewSize() {
   const availableHeight = pane.clientHeight - usedHeight;
   const fit = Math.min(availableWidth, availableHeight);
   if (!Number.isFinite(fit) || fit <= 0) return defaultPreviewSize;
+  if (currentPreviewEngine() === "fast") return Math.round(fit);
   return largestSafePreviewSize(fit);
 }
 
@@ -2572,7 +2751,8 @@ function numericCSSPixels(value) {
 }
 
 function clampPreviewSize(size) {
-  return Math.min(maxPreviewSizeForSession(), Math.max(minPreviewSize, Math.round(size)));
+  const maximum = currentPreviewEngine() === "fast" ? maxPreviewSizePx : maxPreviewSizeForSession();
+  return Math.min(maximum, Math.max(minPreviewSize, Math.round(size)));
 }
 
 function updatePreviewFrameSize(size = currentPreviewSize()) {
@@ -2604,12 +2784,14 @@ function setPreviewUpdating(message) {
   els.previewEmpty.textContent = message;
   els.previewEmpty.classList.add("updating");
   els.previewImage.classList.add("updating");
+  if (fastTileViewerActive()) els.previewTiles.classList.add("updating");
   updatePreviewViewControls();
 }
 
 function clearPreviewUpdating() {
   els.previewEmpty.classList.remove("updating");
   els.previewImage.classList.remove("updating");
+  els.previewTiles.classList.remove("updating");
   els.previewStatus.classList.remove("error");
   els.previewStatus.textContent = "";
 }
@@ -2629,6 +2811,19 @@ function settlePreviewUpdating(message = state.config.previewEnabled ? "No previ
     hidePreview(message);
     return false;
   }
+  if (preview.tiled) {
+    const summary = previewTileViewer?.stateSummary();
+    if (!summary || summary.loaded === 0) {
+      hidePreview(message);
+      return false;
+    }
+    clearPreviewUpdating();
+    els.previewEmpty.style.display = "none";
+    els.previewTiles.style.display = "block";
+    els.previewImage.style.display = "none";
+    updatePreviewViewControls();
+    return true;
+  }
   if (els.previewImage.getAttribute("src") !== preview.url) {
     showPreviewImage(
       preview.url,
@@ -2644,7 +2839,91 @@ function settlePreviewUpdating(message = state.config.previewEnabled ? "No previ
   return true;
 }
 
+async function showFastTilePreview(profile, payload, requestRevision) {
+  if (!previewRequestIsCurrent(profile, requestRevision)) return false;
+  const size = positivePreviewNumber(payload.size, currentPreviewSize());
+  const scale = positivePreviewNumber(payload.zoom, 1);
+  const centerX = finitePreviewNumber(payload.centerX, 0);
+  const centerY = finitePreviewNumber(payload.centerY, 0);
+  const sourceKey = fastTileSourceKey(profile, payload);
+  const loadID = ++previewImageLoadID;
+  displayedPreview = {
+    profile,
+    size,
+    tilesPerPixel: scale,
+    centerX,
+    centerY,
+    tiled: true,
+    sourceKey,
+    loadID,
+  };
+  previewPointerView = null;
+  const view = previewViewForCurrentProfile();
+  view.centerX = centerX;
+  view.centerY = centerY;
+  els.previewZoom.value = String(scale);
+  els.previewImage.onload = null;
+  els.previewImage.onerror = null;
+  els.previewImage.removeAttribute("src");
+  els.previewImage.style.display = "none";
+  els.previewTiles.style.display = "block";
+  els.previewEmpty.style.display = "grid";
+  els.previewEmpty.textContent = "Loading map tiles...";
+  els.previewEmpty.classList.add("updating");
+  els.previewTiles.classList.add("updating");
+
+  previewTileViewer.configure({
+    sourceKey,
+    tileScale: previewTileSourceScale,
+    view: { size, scale, centerX, centerY },
+    requestTile: async (tile) => {
+      const tilePayload = {
+        ...payload,
+        size: previewTileSize,
+        zoom: String(tile.scale),
+        centerX: tile.centerX,
+        centerY: tile.centerY,
+      };
+      const body = await api(`/api/profiles/${encodeURIComponent(profile)}/preview`, {
+        method: "POST",
+        body: JSON.stringify(tilePayload),
+        signal: tile.signal,
+      });
+      if (body.engine && body.engine !== "fast") throw new Error("tile request did not use the Fast renderer");
+      if (!body.url) throw new Error("tile response did not include an image URL");
+      return body.url;
+    },
+  });
+  updatePreviewViewControls();
+  const summary = await previewTileViewer.refresh();
+  if (!previewRequestIsCurrent(profile, requestRevision) || displayedPreview?.loadID !== loadID) return false;
+  if (summary.loaded === 0) throw new Error("map tiles failed to load");
+  if (summary.failed === 0) settlePreviewUpdating();
+  else updateFastTileViewerState(summary);
+  return true;
+}
+
+function updateFastTileViewerState(summary) {
+  if (!fastTileViewerActive()) return;
+  if (summary.loaded > 0) {
+    els.previewEmpty.classList.remove("updating");
+    els.previewEmpty.style.display = "none";
+    els.previewTiles.classList.remove("updating");
+  }
+  els.previewStatus.classList.toggle("error", summary.failed > 0);
+  if (summary.failed > 0) {
+    els.previewStatus.textContent = `${summary.failed} of ${summary.total} visible map tiles failed to load.`;
+  } else if (summary.pending > 0) {
+    els.previewStatus.textContent = `Loading map tiles (${summary.loaded}/${summary.total})...`;
+  } else if (summary.complete) {
+    els.previewStatus.textContent = "";
+  }
+  updatePreviewViewControls();
+}
+
 function showPreviewImage(url, metadata = {}, options = {}) {
+  previewTileViewer?.deactivate();
+  els.previewTiles.classList.remove("updating");
   const requestRevision = Number.isInteger(options.revision)
     ? options.revision
     : previewRequestRevision;
@@ -2708,6 +2987,9 @@ function showPreviewImage(url, metadata = {}, options = {}) {
 
 function hidePreview(message) {
   cancelPreviewPan();
+  hidePreviewCoordinates();
+  previewTileViewer?.deactivate();
+  els.previewTiles.classList.remove("updating");
   displayedPreview = null;
   previewPointerView = null;
   previewImageLoadID++;

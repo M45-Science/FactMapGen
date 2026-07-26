@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"image"
+	"image/draw"
 	"math"
 	"runtime"
 	"sync"
@@ -104,6 +105,44 @@ func TestFastPreviewTileCacheAlignedStandardColdAndWarm(t *testing.T) {
 	if warmStats.Misses != coldStats.Misses || warmStats.Hits-coldStats.Hits != 64 {
 		t.Fatalf("warm aligned cache stats = %#v after %#v, want 64 hits and no misses", warmStats, coldStats)
 	}
+}
+
+func TestFastPreviewClientTilesStitchToStandardView(t *testing.T) {
+	_, _, _, settings := benchmarkPreviewSettings()
+	const (
+		fullSize  = 1024
+		tileSize  = 512
+		tileScale = 1.0
+	)
+	cache := newFastPreviewCache(16<<20, 2)
+	key := fastPreviewWorldKey{0x34}
+	ctx := context.Background()
+	full, err := cache.render(ctx, key, settings, fullSize, tileScale, 0, 0)
+	if err != nil {
+		t.Fatalf("render full preview: %v", err)
+	}
+
+	stitched := image.NewRGBA(image.Rect(0, 0, fullSize, fullSize))
+	for tileY := 0; tileY < 2; tileY++ {
+		for tileX := 0; tileX < 2; tileX++ {
+			centerX := float64((tileX*2)-1) * tileSize / 2
+			centerY := float64((tileY*2)-1) * tileSize / 2
+			tile, renderErr := cache.render(
+				ctx, key, settings, tileSize, tileScale, centerX, centerY,
+			)
+			if renderErr != nil {
+				t.Fatalf("render client tile %d,%d: %v", tileX, tileY, renderErr)
+			}
+			target := image.Rect(
+				tileX*tileSize,
+				tileY*tileSize,
+				(tileX+1)*tileSize,
+				(tileY+1)*tileSize,
+			)
+			draw.Draw(stitched, target, tile, tile.Bounds().Min, draw.Src)
+		}
+	}
+	assertFastPreviewImagesEqual(t, stitched, full)
 }
 
 func TestFastPreviewTileCacheMinimumScaleHistorySeams(t *testing.T) {
