@@ -45,6 +45,73 @@ func BenchmarkRenderFastPreview1024(b *testing.B) {
 	}
 }
 
+func BenchmarkFastPreviewCache1024(b *testing.B) {
+	_, _, _, settings := benchmarkPreviewSettings()
+	key := fastPreviewWorldKey{1}
+	ctx := context.Background()
+	render := func(b *testing.B, cache *fastPreviewCache, scale, centerX, centerY float64) {
+		img, err := cache.render(ctx, key, settings, 1024, scale, centerX, centerY)
+		if err != nil {
+			b.Fatal(err)
+		}
+		benchmarkPreviewImage = img
+	}
+
+	b.Run("cold-1m", func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			render(b, newFastPreviewCache(defaultFastPreviewCacheBytes, defaultFastPreviewCacheWorlds), 1, 0, 0)
+		}
+	})
+	b.Run("warm-repeat-1m", func(b *testing.B) {
+		cache := newFastPreviewCache(defaultFastPreviewCacheBytes, defaultFastPreviewCacheWorlds)
+		render(b, cache, 1, 0, 0)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			render(b, cache, 1, 0, 0)
+		}
+	})
+	for _, pan := range []float64{1, 64, 128} {
+		b.Run("pan-"+formatPreviewCenter(pan)+"px-1m", func(b *testing.B) {
+			b.ReportAllocs()
+			for range b.N {
+				b.StopTimer()
+				cache := newFastPreviewCache(defaultFastPreviewCacheBytes, defaultFastPreviewCacheWorlds)
+				render(b, cache, 1, 0, 0)
+				b.StartTimer()
+				render(b, cache, 1, pan, 0)
+			}
+		})
+	}
+	b.Run("cold-2m", func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			render(b, newFastPreviewCache(defaultFastPreviewCacheBytes, defaultFastPreviewCacheWorlds), 2, 0, 0)
+		}
+	})
+	b.Run("warm-repeat-2m", func(b *testing.B) {
+		cache := newFastPreviewCache(defaultFastPreviewCacheBytes, defaultFastPreviewCacheWorlds)
+		render(b, cache, 2, 0, 0)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			render(b, cache, 2, 0, 0)
+		}
+	})
+	b.Run("zoom-back-1m", func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			b.StopTimer()
+			cache := newFastPreviewCache(defaultFastPreviewCacheBytes, defaultFastPreviewCacheWorlds)
+			render(b, cache, 1, 0, 0)
+			render(b, cache, 2, 0, 0)
+			b.StartTimer()
+			render(b, cache, 1, 0, 0)
+		}
+	})
+}
+
 func TestFastPreviewPixelGolden(t *testing.T) {
 	_, _, _, full := benchmarkPreviewSettings()
 	for _, test := range []struct {

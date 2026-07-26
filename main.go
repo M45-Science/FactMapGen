@@ -30,20 +30,24 @@ import (
 )
 
 const (
-	guestMaxPreviewSize      = 512
-	defaultCachedPreviewSize = 512
-	mapGenFile               = "map-gen-settings.json"
-	mapSettingsFile          = "map-settings.json"
-	previewJPEGQuality       = 85
-	previewAVIFCRF           = 35
-	previewAVIFCPUUsed       = 6
-	maxPreviewOutputSize     = 4096
-	maxFactorioPreviewSize   = 16384
-	minPreviewTilesPerPixel  = 1.0 / 64
-	maxPreviewTilesPerPixel  = 64.0
-	maxProfileNameLength     = 64
-	previewImageRetention    = 30 * time.Minute
-	maxPreviewImages         = 100
+	guestMaxPreviewSize        = 512
+	defaultCachedPreviewSize   = 512
+	defaultFastPreviewWarmSize = 1024
+	defaultFastPreviewWarmSeed = "123456"
+	mapGenFile                 = "map-gen-settings.json"
+	mapSettingsFile            = "map-settings.json"
+	previewJPEGQuality         = 85
+	previewAVIFCRF             = 35
+	previewAVIFCPUUsed         = 6
+	maxPreviewOutputSize       = 4096
+	maxFactorioPreviewSize     = 16384
+	minPreviewTilesPerPixel    = 1.0 / 64
+	maxPreviewTilesPerPixel    = 64.0
+	maxPreviewCenter           = 1_000_000_000.0
+	maxProfileNameLength       = 64
+	previewImageRetention      = 30 * time.Minute
+	maxPreviewImages           = 100
+	maxPreviewImageBytes       = 128 << 20
 )
 
 const (
@@ -69,11 +73,16 @@ type store struct {
 }
 
 type previewer struct {
-	mu             sync.RWMutex
-	factorioBin    string
-	timeout        time.Duration
-	images         map[string]previewImage
-	defaultPreview *previewResponse
+	mu                    sync.RWMutex
+	factorioBin           string
+	timeout               time.Duration
+	images                map[string]previewImage
+	imageBytes            int64
+	imageByteLimit        int64
+	defaultPreview        *previewResponse
+	fastCacheOnce         sync.Once
+	fastPreviewCacheBytes int64
+	fastPreviewCache      *fastPreviewCache
 }
 
 type previewImage struct {
@@ -85,14 +94,15 @@ type previewImage struct {
 }
 
 type appConfig struct {
-	PresetDir          string           `json:"presetDir"`
-	DefaultPresetDir   string           `json:"defaultPresetDir"`
-	CustomPresetDir    string           `json:"customPresetDir"`
-	PreviewEnabled     bool             `json:"previewEnabled"`
-	FastPreviewEnabled bool             `json:"fastPreviewEnabled"`
-	DefaultPreview     *previewResponse `json:"defaultPreview,omitempty"`
-	FactorioBin        string           `json:"factorioBin,omitempty"`
-	Factorio           factorioStatus   `json:"factorio"`
+	PresetDir           string           `json:"presetDir"`
+	DefaultPresetDir    string           `json:"defaultPresetDir"`
+	CustomPresetDir     string           `json:"customPresetDir"`
+	PreviewEnabled      bool             `json:"previewEnabled"`
+	FastPreviewEnabled  bool             `json:"fastPreviewEnabled"`
+	FastPreviewWarmSeed string           `json:"fastPreviewWarmSeed,omitempty"`
+	DefaultPreview      *previewResponse `json:"defaultPreview,omitempty"`
+	FactorioBin         string           `json:"factorioBin,omitempty"`
+	Factorio            factorioStatus   `json:"factorio"`
 }
 
 type createProfileRequest struct {
@@ -133,18 +143,23 @@ type previewRequest struct {
 	Size     int             `json:"size"`
 	Planet   string          `json:"planet"`
 	Seed     string          `json:"seed"`
-	Lossless bool            `json:"lossless"`
 	Zoom     string          `json:"zoom"`
+	CenterX  float64         `json:"centerX"`
+	CenterY  float64         `json:"centerY"`
+	Lossless bool            `json:"lossless"`
 	MapGen   json.RawMessage `json:"mapGen"`
 }
 
 type previewResponse struct {
-	URL         string `json:"url"`
-	GeneratedAt string `json:"generatedAt"`
-	Size        int    `json:"size"`
-	Planet      string `json:"planet"`
-	Engine      string `json:"engine,omitempty"`
-	Output      string `json:"output"`
+	URL           string  `json:"url"`
+	GeneratedAt   string  `json:"generatedAt"`
+	Size          int     `json:"size"`
+	Planet        string  `json:"planet"`
+	Engine        string  `json:"engine,omitempty"`
+	CenterX       float64 `json:"centerX"`
+	CenterY       float64 `json:"centerY"`
+	TilesPerPixel float64 `json:"tilesPerPixel"`
+	Output        string  `json:"output"`
 }
 
 type profileSummary struct {
@@ -204,8 +219,13 @@ func main() {
 	factorioDir := flag.String("factorio-dir", "tools/factorio", "directory used to discover Factorio headless")
 	previewTimeout := flag.Duration("preview-timeout", 60*time.Second, "maximum time allowed for one map preview render")
 	previewQueueSize := flag.Int("preview-queue", 8, "maximum number of queued map preview jobs")
+	fastPreviewCacheMiB := flag.Int64("fast-preview-cache-mib", defaultFastPreviewCacheBytes>>20, "Fast preview tile-cache budget in MiB")
 	authDB := flag.String("auth-db", "factmapgen-auth.db", "SQLite database path for users, sessions, and audit logs")
 	flag.Parse()
+	fastPreviewCacheBytes, err := fastPreviewCacheBytesForMiB(*fastPreviewCacheMiB)
+	if err != nil {
+		log.Fatalf("invalid -fast-preview-cache-mib: %v", err)
+	}
 
 	if *factorioBin == "" {
 		*factorioBin = discoverFactorioBin(*factorioDir)
@@ -238,8 +258,9 @@ func main() {
 	}
 
 	p := &previewer{
-		factorioBin: *factorioBin,
-		timeout:     *previewTimeout,
+		factorioBin:           *factorioBin,
+		timeout:               *previewTimeout,
+		fastPreviewCacheBytes: fastPreviewCacheBytes,
 	}
 	factorio := newFactorioManager(*factorioDir, p, factorioInstallIsManaged(*factorioDir, *factorioBin))
 
@@ -250,16 +271,19 @@ func main() {
 		auth:         auth,
 		factorio:     factorio,
 		config: appConfig{
-			PresetDir:          customPresetDir,
-			DefaultPresetDir:   defaultPresetDir,
-			CustomPresetDir:    customPresetDir,
-			PreviewEnabled:     true,
-			FastPreviewEnabled: true,
-			FactorioBin:        *factorioBin,
+			PresetDir:           customPresetDir,
+			DefaultPresetDir:    defaultPresetDir,
+			CustomPresetDir:     customPresetDir,
+			PreviewEnabled:      true,
+			FastPreviewEnabled:  true,
+			FastPreviewWarmSeed: defaultFastPreviewWarmSeed,
+			FactorioBin:         *factorioBin,
 		},
 	}
+	log.Printf("Warming Default Fast preview cache at %dx%d with seed %s...", defaultFastPreviewWarmSize, defaultFastPreviewWarmSize, defaultFastPreviewWarmSeed)
+	srv.warmDefaultFastPreviewCache(context.Background())
 	if p.factorioBin != "" {
-		log.Printf("Warming default preview cache...")
+		log.Printf("Warming default Exact preview response...")
 		srv.warmDefaultPreview(context.Background())
 	}
 	mux := http.NewServeMux()
@@ -285,6 +309,7 @@ func main() {
 	log.Printf("FactMapGen listening on %s", listenURL(*addr))
 	log.Printf("Default preset directory: %s", st.defaultRoot)
 	log.Printf("Custom preset directory: %s", st.customRoot)
+	log.Printf("Fast preview tile-cache budget: %d MiB", fastPreviewCacheBytes>>20)
 	log.Printf("Auth database: %s", *authDB)
 	if initialAdminPassword != "" {
 		log.Printf("Created initial admin login: username=admin password=%s", initialAdminPassword)
@@ -297,6 +322,16 @@ func main() {
 	if err := httpServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
+}
+
+func fastPreviewCacheBytesForMiB(mebibytes int64) (int64, error) {
+	if mebibytes < 1 {
+		return 0, errors.New("must be at least 1 MiB")
+	}
+	if mebibytes > math.MaxInt64>>20 {
+		return 0, errors.New("is too large")
+	}
+	return mebibytes << 20, nil
 }
 
 func listenURL(addr string) string {
@@ -1230,13 +1265,45 @@ func (p *previewer) setDefaultCachedPreview(resp previewResponse) {
 	p.defaultPreview = &resp
 }
 
+func (s *server) warmDefaultFastPreviewCache(ctx context.Context) {
+	if s.previewer == nil {
+		return
+	}
+	ref := profileRef{Source: profileSourceDefault, Name: "Default"}
+	mapGen, err := readNormalizedMapGenJSON(filepath.Join(s.store.profileDir(ref), mapGenFile))
+	if err != nil {
+		log.Printf("Default Fast preview cache warm failed: %v", err)
+		return
+	}
+	settings, err := parseFastPreviewSettings(mapGen, defaultFastPreviewWarmSeed)
+	if err != nil {
+		log.Printf("Default Fast preview cache warm failed: %v", err)
+		return
+	}
+	key, err := fastPreviewCacheKey(mapGen, settings.seed)
+	if err != nil {
+		log.Printf("Default Fast preview cache warm failed: %v", err)
+		return
+	}
+	if _, err := s.previewer.fastCache().render(ctx, key, settings, defaultFastPreviewWarmSize, 1, 0, 0); err != nil {
+		log.Printf("Default Fast preview cache warm failed: %v", err)
+		return
+	}
+	log.Printf("Default Fast preview cache warmed")
+}
+
 func (s *server) warmDefaultPreview(ctx context.Context) {
 	if s.previewer == nil || s.previewer.factorioBinary() == "" {
 		return
 	}
 	ref := profileRef{Source: profileSourceDefault, Name: "Default"}
 	mapGenPath := absolutePath(filepath.Join(s.store.profileDir(ref), mapGenFile))
-	req := previewRequest{Size: defaultCachedPreviewSize, Planet: "nauvis", Zoom: "1"}
+	req := previewRequest{
+		Size:   defaultCachedPreviewSize,
+		Planet: "nauvis",
+		Seed:   defaultFastPreviewWarmSeed,
+		Zoom:   "1",
+	}
 	resp, err := s.previewer.render(ctx, ref, mapGenPath, req, true)
 	if err != nil {
 		log.Printf("Default preview cache warm failed: %v", err)
@@ -1447,6 +1514,10 @@ func (p *previewer) render(ctx context.Context, ref profileRef, mapGenPath strin
 	if err != nil {
 		return previewResponse{}, err
 	}
+	centerX, centerY, err := normalizedPreviewCenter(req.CenterX, req.CenterY, zoom.tilesPerPixel)
+	if err != nil {
+		return previewResponse{}, err
+	}
 
 	tmp, err := os.CreateTemp("", "factmapgen-preview-*.png")
 	if err != nil {
@@ -1469,6 +1540,9 @@ func (p *previewer) render(ctx context.Context, ref profileRef, mapGenPath strin
 		"--map-gen-settings", mapGenPath,
 		"--map-preview-size", strconv.Itoa(zoom.renderSize),
 		"--map-preview-planet", planet,
+	}
+	if centerX != 0 || centerY != 0 {
+		args = append(args, "--map-preview-offset", formatPreviewCenter(centerX)+","+formatPreviewCenter(centerY))
 	}
 	if seed := strings.TrimSpace(req.Seed); seed != "" {
 		if !regexp.MustCompile(`^[0-9]+$`).MatchString(seed) {
@@ -1510,12 +1584,15 @@ func (p *previewer) render(ctx context.Context, ref profileRef, mapGenPath strin
 
 	generatedAt := time.Now().UTC().Format(time.RFC3339)
 	return previewResponse{
-		URL:         "/api/previews/" + url.PathEscape(previewName) + "?ts=" + url.QueryEscape(generatedAt),
-		GeneratedAt: generatedAt,
-		Size:        size,
-		Planet:      planet,
-		Engine:      previewEngineFactorio,
-		Output:      clippedOutput(output.String(), 6000),
+		URL:           "/api/previews/" + url.PathEscape(previewName) + "?ts=" + url.QueryEscape(generatedAt),
+		GeneratedAt:   generatedAt,
+		Size:          size,
+		Planet:        planet,
+		Engine:        previewEngineFactorio,
+		CenterX:       centerX,
+		CenterY:       centerY,
+		TilesPerPixel: zoom.tilesPerPixel,
+		Output:        clippedOutput(output.String(), 6000),
 	}, nil
 }
 
@@ -1570,6 +1647,38 @@ func previewZoomSpec(value string, outputSize int) (previewZoom, error) {
 		}
 	}
 	return previewZoom{mode: "scale", tilesPerPixel: tilesPerPixel, renderSize: renderSize}, nil
+}
+
+func normalizedPreviewCenter(centerX, centerY, tilesPerPixel float64) (float64, float64, error) {
+	if tilesPerPixel <= 0 || math.IsNaN(tilesPerPixel) || math.IsInf(tilesPerPixel, 0) {
+		return 0, 0, errors.New("preview scale must be a positive finite number")
+	}
+	normalize := func(value float64) (float64, error) {
+		if math.IsNaN(value) || math.IsInf(value, 0) || math.Abs(value) > maxPreviewCenter {
+			return 0, fmt.Errorf("preview center must be between -%.0f and %.0f meters", maxPreviewCenter, maxPreviewCenter)
+		}
+		value = math.Round(value/tilesPerPixel) * tilesPerPixel
+		if math.Abs(value) > maxPreviewCenter {
+			return 0, fmt.Errorf("preview center must be between -%.0f and %.0f meters after scale alignment", maxPreviewCenter, maxPreviewCenter)
+		}
+		if value == 0 {
+			return 0, nil
+		}
+		return value, nil
+	}
+	x, err := normalize(centerX)
+	if err != nil {
+		return 0, 0, err
+	}
+	y, err := normalize(centerY)
+	if err != nil {
+		return 0, 0, err
+	}
+	return x, y, nil
+}
+
+func formatPreviewCenter(value float64) string {
+	return strconv.FormatFloat(value, 'g', -1, 64)
 }
 
 func previewImageBytes(ctx context.Context, srcPath string, lossless bool, zoom previewZoom, outputSize int) ([]byte, string, string, error) {
@@ -1729,18 +1838,48 @@ func (p *previewer) storePreviewImageWithOptions(data []byte, contentType string
 	if p.images == nil {
 		p.images = map[string]previewImage{}
 	}
-	p.prunePreviewImagesLocked(now, maxPreviewImages-1)
+	p.expirePreviewImagesLocked(now)
+
+	payloadBytes := int64(len(data))
+	byteLimit := p.imageByteLimit
+	if byteLimit <= 0 {
+		byteLimit = maxPreviewImageBytes
+	}
+	if payloadBytes > byteLimit {
+		return "", fmt.Errorf("preview image payload of %d bytes exceeds the %d-byte store limit", payloadBytes, byteLimit)
+	}
+
+	pinnedCount := 0
+	var pinnedBytes int64
+	for _, image := range p.images {
+		if image.pinned {
+			pinnedCount++
+			pinnedBytes += int64(len(image.data))
+		}
+	}
+	if pinnedBytes+payloadBytes > byteLimit {
+		return "", fmt.Errorf("preview image payload of %d bytes cannot fit: pinned preview payloads use %d of the %d-byte store limit", payloadBytes, pinnedBytes, byteLimit)
+	}
+	if pinnedCount >= maxPreviewImages {
+		return "", fmt.Errorf("preview image cannot be stored: %d pinned previews consume the %d-image store limit", pinnedCount, maxPreviewImages)
+	}
+
+	p.prunePreviewImagesLocked(maxPreviewImages-1, byteLimit-payloadBytes)
 	p.images[name] = previewImage{data: data, contentType: contentType, createdAt: now, expiresAt: expiresAt, pinned: pinned}
+	p.imageBytes += payloadBytes
 	return name, nil
 }
 
-func (p *previewer) prunePreviewImagesLocked(now time.Time, maxRemaining int) {
+func (p *previewer) expirePreviewImagesLocked(now time.Time) {
 	for key, image := range p.images {
 		if !image.pinned && now.After(image.expiresAt) {
-			delete(p.images, key)
+			p.deletePreviewImageLocked(key)
 		}
 	}
-	for len(p.images) > maxRemaining {
+}
+
+func (p *previewer) prunePreviewImagesLocked(maxRemaining int, maxRemainingBytes int64) {
+	for len(p.images) > maxRemaining || p.imageBytes > maxRemainingBytes {
 		var oldestKey string
 		var oldestTime time.Time
 		for key, image := range p.images {
@@ -1755,8 +1894,17 @@ func (p *previewer) prunePreviewImagesLocked(now time.Time, maxRemaining int) {
 		if oldestKey == "" {
 			return
 		}
-		delete(p.images, oldestKey)
+		p.deletePreviewImageLocked(oldestKey)
 	}
+}
+
+func (p *previewer) deletePreviewImageLocked(name string) {
+	image, ok := p.images[name]
+	if !ok {
+		return
+	}
+	delete(p.images, name)
+	p.imageBytes -= int64(len(image.data))
 }
 
 func (p *previewer) getPreviewImage(name string) (previewImage, bool) {
@@ -1770,7 +1918,7 @@ func (p *previewer) getPreviewImage(name string) (previewImage, bool) {
 		return previewImage{}, false
 	}
 	if !img.pinned && time.Now().UTC().After(img.expiresAt) {
-		delete(p.images, name)
+		p.deletePreviewImageLocked(name)
 		return previewImage{}, false
 	}
 	return img, true

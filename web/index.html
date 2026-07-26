@@ -170,11 +170,12 @@
                   <input id="previewLossless" type="checkbox" />
                   <span>Lossless</span>
                 </label>
+                <button id="previewResetView" type="button" class="preview-reset-button" title="Return the preview to the map origin at 1 meter per pixel." disabled>Reset view</button>
                 <button id="previewBtn" type="button" class="preview-button" aria-label="Generate preview">Preview</button>
               </div>
               <div class="preview-scroll">
                 <div class="preview-frame">
-                  <img id="previewImage" alt="Factorio map preview" />
+                  <img id="previewImage" alt="Factorio map preview" draggable="false" />
                   <div id="previewEmpty" class="preview-empty">No preview image</div>
                 </div>
               </div>

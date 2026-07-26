@@ -86,22 +86,47 @@ func factorioBasisNoise(x, y float64, tables *factorioBasisTables) float64 {
 	iy := int64(math.Floor(y))
 	fx := x - float64(ix)
 	fy := y - float64(iy)
+	// Preserve the old loop's 00, 10, 01, 11 arithmetic and accumulation order.
+	dx0 := fx - float64(0)
+	dx1 := fx - float64(1)
+	dy0 := fy - float64(0)
+	dy1 := fy - float64(1)
+	ax0 := tables.a[uint8(ix)]
+	ax1 := tables.a[uint8(ix+1)]
+	by0 := tables.b[uint8(iy)]
+	by1 := tables.b[uint8(iy+1)]
 	value := 0.0
-	for cornerY := int64(0); cornerY <= 1; cornerY++ {
-		for cornerX := int64(0); cornerX <= 1; cornerX++ {
-			dx := fx - float64(cornerX)
-			dy := fy - float64(cornerY)
-			distanceSquared := dx*dx + dy*dy
-			if distanceSquared >= 1 {
-				continue
-			}
-			ax := tables.a[uint8(ix+cornerX)]
-			by := tables.b[uint8(iy+cornerY)]
-			gradient := tables.sigma[ax^by]
-			falloff := 1 - distanceSquared
-			falloff *= falloff * falloff
-			value += falloff * 4.2 * (dx*factorioGradientX[gradient] + dy*factorioGradientY[gradient])
-		}
+
+	distanceSquared := dx0*dx0 + dy0*dy0
+	if !(distanceSquared >= 1) {
+		gradient := tables.sigma[ax0^by0]
+		falloff := 1 - distanceSquared
+		falloff *= falloff * falloff
+		value += falloff * 4.2 * (dx0*factorioGradientX[gradient] + dy0*factorioGradientY[gradient])
+	}
+
+	distanceSquared = dx1*dx1 + dy0*dy0
+	if !(distanceSquared >= 1) {
+		gradient := tables.sigma[ax1^by0]
+		falloff := 1 - distanceSquared
+		falloff *= falloff * falloff
+		value += falloff * 4.2 * (dx1*factorioGradientX[gradient] + dy0*factorioGradientY[gradient])
+	}
+
+	distanceSquared = dx0*dx0 + dy1*dy1
+	if !(distanceSquared >= 1) {
+		gradient := tables.sigma[ax0^by1]
+		falloff := 1 - distanceSquared
+		falloff *= falloff * falloff
+		value += falloff * 4.2 * (dx0*factorioGradientX[gradient] + dy1*factorioGradientY[gradient])
+	}
+
+	distanceSquared = dx1*dx1 + dy1*dy1
+	if !(distanceSquared >= 1) {
+		gradient := tables.sigma[ax1^by1]
+		falloff := 1 - distanceSquared
+		falloff *= falloff * falloff
+		value += falloff * 4.2 * (dx1*factorioGradientX[gradient] + dy1*factorioGradientY[gradient])
 	}
 	return value
 }

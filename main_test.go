@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
+	"image/png"
 	"io"
 	"math"
 	"net/http"
@@ -690,6 +692,140 @@ func TestPreviewZoomSpec(t *testing.T) {
 	}
 }
 
+func TestNormalizedPreviewCenterRejectsScaleAlignmentOutsideBounds(t *testing.T) {
+	for _, center := range []float64{maxPreviewCenter, -maxPreviewCenter} {
+		if _, _, err := normalizedPreviewCenter(center, 0, 63); err == nil {
+			t.Fatalf("normalizedPreviewCenter(%g, 0, 63) succeeded outside aligned bounds", center)
+		}
+	}
+}
+
+func TestFastPreviewCacheBudgetFromMiB(t *testing.T) {
+	for _, test := range []struct {
+		mebibytes int64
+		wantBytes int64
+		wantError bool
+	}{
+		{mebibytes: 1, wantBytes: 1 << 20},
+		{mebibytes: 2048, wantBytes: 2 << 30},
+		{mebibytes: 0, wantError: true},
+		{mebibytes: (math.MaxInt64 >> 20) + 1, wantError: true},
+	} {
+		got, err := fastPreviewCacheBytesForMiB(test.mebibytes)
+		if test.wantError {
+			if err == nil {
+				t.Fatalf("fastPreviewCacheBytesForMiB(%d) succeeded with %d", test.mebibytes, got)
+			}
+			continue
+		}
+		if err != nil || got != test.wantBytes {
+			t.Fatalf("fastPreviewCacheBytesForMiB(%d) = %d, %v; want %d, nil", test.mebibytes, got, err, test.wantBytes)
+		}
+	}
+
+	preview := &previewer{fastPreviewCacheBytes: 7 << 20}
+	if got := preview.fastCache().maxBytes; got != 7<<20 {
+		t.Fatalf("configured Fast cache bytes = %d, want %d", got, 7<<20)
+	}
+}
+
+func TestWarmDefaultFastPreviewCache(t *testing.T) {
+	st := newTestStore(t)
+	preview := &previewer{fastPreviewCacheBytes: 8 << 20}
+	srv := &server{store: st, previewer: preview}
+	srv.warmDefaultFastPreviewCache(context.Background())
+
+	stats := preview.fastCache().stats()
+	wantBytes := int64(1024 * 1024 * 4)
+	if stats.Worlds != 1 || stats.Tiles != 64 || stats.Bytes != wantBytes {
+		t.Fatalf("warm Default cache stats = %#v, want one world, 64 tiles, and %d bytes", stats, wantBytes)
+	}
+
+	ref := profileRef{Source: profileSourceDefault, Name: "Default"}
+	mapGen, err := readNormalizedMapGenJSON(filepath.Join(st.profileDir(ref), mapGenFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := parseFastPreviewSettings(mapGen, defaultFastPreviewWarmSeed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := fastPreviewCacheKey(mapGen, settings.seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := preview.fastCache().render(context.Background(), key, settings, 1024, 1, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	after := preview.fastCache().stats()
+	if after.Misses != stats.Misses || after.Hits-stats.Hits != 64 {
+		t.Fatalf("repeat Default cache stats = %#v after %#v, want 64 hits and no misses", after, stats)
+	}
+}
+
+func TestExactPreviewPassesNormalizedMapOffset(t *testing.T) {
+	dir := t.TempDir()
+	argsPath := filepath.Join(dir, "args.txt")
+	pngPath := filepath.Join(dir, "source.png")
+	pngFile, err := os.Create(pngPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(pngFile, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+		_ = pngFile.Close()
+		t.Fatal(err)
+	}
+	if err := pngFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	bin := filepath.Join(dir, "fake-factorio")
+	script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$@" > %q
+output=
+next_is_output=0
+for argument in "$@"; do
+  if [ "$next_is_output" = 1 ]; then
+    output="$argument"
+    break
+  fi
+  if [ "$argument" = "--generate-map-preview" ]; then
+    next_is_output=1
+  fi
+done
+cp %q "$output"
+`, argsPath, pngPath)
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mapGenPath := filepath.Join(dir, mapGenFile)
+	if err := os.WriteFile(mapGenPath, []byte(`{"seed":123456}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	preview := &previewer{factorioBin: bin, timeout: 5 * time.Second}
+	response, err := preview.render(
+		context.Background(),
+		profileRef{Source: profileSourceCustom, Name: "offset"},
+		mapGenPath,
+		previewRequest{Size: 256, Planet: "nauvis", Zoom: "2.75", CenterX: 12.4, CenterY: -8.6, Lossless: true},
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.CenterX != 13.75 || response.CenterY != -8.25 || response.TilesPerPixel != 2.75 {
+		t.Fatalf("response viewport = (%g,%g) at %g, want (13.75,-8.25) at 2.75", response.CenterX, response.CenterY, response.TilesPerPixel)
+	}
+	arguments, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(arguments), "--map-preview-offset\n13.75,-8.25\n") {
+		t.Fatalf("Factorio arguments missing normalized offset:\n%s", arguments)
+	}
+}
+
 func TestEncodeAVIFImageWithFFmpeg(t *testing.T) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg not installed")
@@ -768,8 +904,138 @@ func TestPreviewImagesAreCapped(t *testing.T) {
 	if got := len(preview.images); got != maxPreviewImages {
 		t.Fatalf("preview image count = %d, want %d", got, maxPreviewImages)
 	}
+	if got, want := preview.imageBytes, int64(maxPreviewImages*len("jpg")); got != want {
+		t.Fatalf("preview image bytes = %d, want %d", got, want)
+	}
 	if _, ok := preview.getPreviewImage(first); ok {
 		t.Fatal("oldest preview was retained after exceeding cap")
+	}
+}
+
+func TestPreviewImagesAreEvictedByPayloadBytes(t *testing.T) {
+	preview := &previewer{imageByteLimit: 6}
+	first, err := preview.storePreviewImage([]byte("1234"), "image/jpeg", ".jpg")
+	if err != nil {
+		t.Fatalf("store first preview: %v", err)
+	}
+	second, err := preview.storePreviewImage([]byte("abc"), "image/jpeg", ".jpg")
+	if err != nil {
+		t.Fatalf("store second preview: %v", err)
+	}
+
+	if got := len(preview.images); got != 1 {
+		t.Fatalf("preview image count = %d, want 1", got)
+	}
+	if got := preview.imageBytes; got != 3 {
+		t.Fatalf("preview image bytes = %d, want 3", got)
+	}
+	if _, ok := preview.getPreviewImage(first); ok {
+		t.Fatal("oldest preview was retained after exceeding byte cap")
+	}
+	if img, ok := preview.getPreviewImage(second); !ok || string(img.data) != "abc" {
+		t.Fatalf("new preview = (%q, %v), want (abc, true)", img.data, ok)
+	}
+}
+
+func TestPreviewImageExpirationReleasesPayloadBytes(t *testing.T) {
+	t.Run("during insert", func(t *testing.T) {
+		preview := &previewer{imageByteLimit: 4}
+		first, err := preview.storePreviewImage([]byte("1234"), "image/jpeg", ".jpg")
+		if err != nil {
+			t.Fatalf("store first preview: %v", err)
+		}
+		preview.mu.Lock()
+		image := preview.images[first]
+		image.expiresAt = time.Now().UTC().Add(-time.Second)
+		preview.images[first] = image
+		preview.mu.Unlock()
+
+		if _, err := preview.storePreviewImage([]byte("abc"), "image/jpeg", ".jpg"); err != nil {
+			t.Fatalf("store after expiration: %v", err)
+		}
+		if got := len(preview.images); got != 1 {
+			t.Fatalf("preview image count = %d, want 1", got)
+		}
+		if got := preview.imageBytes; got != 3 {
+			t.Fatalf("preview image bytes = %d, want 3", got)
+		}
+	})
+
+	t.Run("during get", func(t *testing.T) {
+		preview := &previewer{imageByteLimit: 4}
+		name, err := preview.storePreviewImage([]byte("1234"), "image/jpeg", ".jpg")
+		if err != nil {
+			t.Fatalf("store preview: %v", err)
+		}
+		preview.mu.Lock()
+		image := preview.images[name]
+		image.expiresAt = time.Now().UTC().Add(-time.Second)
+		preview.images[name] = image
+		preview.mu.Unlock()
+
+		if _, ok := preview.getPreviewImage(name); ok {
+			t.Fatal("expired preview was returned")
+		}
+		if got := len(preview.images); got != 0 {
+			t.Fatalf("preview image count = %d, want 0", got)
+		}
+		if got := preview.imageBytes; got != 0 {
+			t.Fatalf("preview image bytes = %d, want 0", got)
+		}
+	})
+}
+
+func TestPinnedPreviewImageSurvivesByteEviction(t *testing.T) {
+	preview := &previewer{imageByteLimit: 10}
+	pinnedName, err := preview.storePinnedPreviewImage([]byte("pin!"), "image/jpeg", ".jpg")
+	if err != nil {
+		t.Fatalf("store pinned preview: %v", err)
+	}
+	oldName, err := preview.storePreviewImage([]byte("old!"), "image/jpeg", ".jpg")
+	if err != nil {
+		t.Fatalf("store old preview: %v", err)
+	}
+	newName, err := preview.storePreviewImage([]byte("new!"), "image/jpeg", ".jpg")
+	if err != nil {
+		t.Fatalf("store new preview: %v", err)
+	}
+
+	if _, ok := preview.getPreviewImage(pinnedName); !ok {
+		t.Fatal("pinned preview was evicted to satisfy byte cap")
+	}
+	if _, ok := preview.getPreviewImage(oldName); ok {
+		t.Fatal("old unpinned preview survived byte eviction")
+	}
+	if _, ok := preview.getPreviewImage(newName); !ok {
+		t.Fatal("new preview was not retained")
+	}
+	if got := preview.imageBytes; got != 8 {
+		t.Fatalf("preview image bytes = %d, want 8", got)
+	}
+}
+
+func TestPinnedPreviewImagePayloadCapacityError(t *testing.T) {
+	preview := &previewer{imageByteLimit: 8}
+	pinnedName, err := preview.storePinnedPreviewImage([]byte("12345678"), "image/jpeg", ".jpg")
+	if err != nil {
+		t.Fatalf("store pinned preview: %v", err)
+	}
+	if got := preview.imageBytes; got != 8 {
+		t.Fatalf("preview image bytes = %d, want 8", got)
+	}
+
+	_, err = preview.storePreviewImage([]byte("x"), "image/jpeg", ".jpg")
+	if err == nil || !strings.Contains(err.Error(), "pinned preview payloads use 8 of the 8-byte store limit") {
+		t.Fatalf("store over pinned capacity error = %v, want clear pinned-byte error", err)
+	}
+	if got := len(preview.images); got != 1 {
+		t.Fatalf("preview image count after failed insert = %d, want 1", got)
+	}
+	if got := preview.imageBytes; got != 8 {
+		t.Fatalf("preview image bytes after failed insert = %d, want 8", got)
+	}
+	if _, ok := preview.getPreviewImage(pinnedName); !ok {
+		t.Fatal("pinned preview was lost after capacity error")
 	}
 }
 

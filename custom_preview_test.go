@@ -91,12 +91,17 @@ func TestRenderPreviewUsesFastEngineWithoutFactorio(t *testing.T) {
 		store:     st,
 		previewer: &previewer{},
 	}
-	resp, err := srv.renderPreview(context.Background(), "default:Default", previewRequest{
+	req := previewRequest{
 		Size:     256,
 		Planet:   "nauvis",
 		Seed:     "12345",
+		CenterX:  12.4,
+		CenterY:  -8.6,
 		Lossless: true,
-	}, previewPriorityGuest)
+	}
+	resp, err := srv.renderPreview(
+		context.Background(), "default:Default", req, previewPriorityGuest,
+	)
 	if err != nil {
 		t.Fatalf("renderPreview fast fallback: %v", err)
 	}
@@ -105,6 +110,12 @@ func TestRenderPreviewUsesFastEngineWithoutFactorio(t *testing.T) {
 	}
 	if resp.Size != 256 || resp.Planet != "nauvis" {
 		t.Fatalf("preview response = %#v", resp)
+	}
+	if resp.CenterX != 12 || resp.CenterY != -9 || resp.TilesPerPixel != 1 {
+		t.Fatalf(
+			"preview viewport = (%g,%g) at %g, want (12,-9) at 1",
+			resp.CenterX, resp.CenterY, resp.TilesPerPixel,
+		)
 	}
 	name := filepath.Base(resp.URL)
 	if i := bytes.IndexByte([]byte(name), '?'); i >= 0 {
@@ -116,6 +127,17 @@ func TestRenderPreviewUsesFastEngineWithoutFactorio(t *testing.T) {
 	}
 	if img.contentType != "image/png" {
 		t.Fatalf("content type = %q, want image/png", img.contentType)
+	}
+
+	before := srv.previewer.fastCache().stats()
+	if _, err := srv.renderPreview(
+		context.Background(), "default:Default", req, previewPriorityGuest,
+	); err != nil {
+		t.Fatalf("repeat cached preview: %v", err)
+	}
+	after := srv.previewer.fastCache().stats()
+	if after.Hits <= before.Hits || after.Misses != before.Misses {
+		t.Fatalf("repeat cache stats = %#v after %#v, want hits without misses", after, before)
 	}
 }
 

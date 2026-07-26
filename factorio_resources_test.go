@@ -87,6 +87,38 @@ func TestFactorioRegularResourceFieldsMatchOracle(t *testing.T) {
 	}
 }
 
+func TestFactorioResourceRegionCachesAreTrimmed(t *testing.T) {
+	settings := defaultFactorioTerrainSettings(123456)
+	settings.resourceControls = make(map[string]fastControl, len(factorioResourceCatalog))
+	for _, resource := range factorioResourceCatalog {
+		settings.resourceControls[resource.name] = fastControl{
+			frequency: 1,
+			size:      1,
+			richness:  1,
+			enabled:   true,
+		}
+	}
+	evaluator := newFactorioResourceEvaluator(settings, newFactorioNauvisEvaluator(settings))
+	const limit = 64
+	for fieldIndex := range evaluator.fields {
+		field := &evaluator.fields[fieldIndex]
+		for region := 0; region <= limit; region++ {
+			key := [2]int64{int64(region), int64(fieldIndex)}
+			field.regular.regionCache[key] = nil
+			if field.starting != nil {
+				field.starting.regionCache[key] = nil
+			}
+		}
+	}
+	if evaluator.cachedRegionCount() == 0 {
+		t.Fatal("test did not populate resource region caches")
+	}
+	evaluator.trimRegionCaches(limit)
+	if got := evaluator.cachedRegionCount(); got != 0 {
+		t.Fatalf("cached resource regions after trim = %d, want 0", got)
+	}
+}
+
 func TestFactorioStartingResourceFieldsMatchOracle(t *testing.T) {
 	fixture := readResourceOracle[factorioResourceOracle](t, "oracle-resource-starting.seed123456.json")
 	control := fastControl{frequency: 1, size: 1, richness: 1, enabled: true}
@@ -357,30 +389,57 @@ func TestFactorioOilPlacementVariesWithMapSeed(t *testing.T) {
 	}
 }
 
-func TestFactorioOilRandomPenaltyUsesChunkRowOrder(t *testing.T) {
-	settings := defaultFactorioTerrainSettings(123456)
-	settings.resourceControls = map[string]fastControl{
-		"crude-oil": {frequency: 1, size: 1, richness: 1, enabled: true},
+func TestFactorioTaus88RandomAccessMatchesSequential(t *testing.T) {
+	words := make([]uint32, 0, 40)
+	for bit := 0; bit < 32; bit++ {
+		words = append(words, uint32(1)<<bit)
 	}
-	evaluator := newFactorioResourceEvaluator(settings, newFactorioNauvisEvaluator(settings))
-	const chunkX, chunkY = int64(-1), int64(2)
-	positions := make([]factorioSpotCandidate, factorioChunkSize*factorioChunkSize)
-	source := make([]float64, len(positions))
-	for localY := int64(0); localY < factorioChunkSize; localY++ {
-		for localX := int64(0); localX < factorioChunkSize; localX++ {
-			index := localY*factorioChunkSize + localX
-			positions[index] = factorioSpotCandidate{
-				x: float64(chunkX*factorioChunkSize + localX),
-				y: float64(chunkY*factorioChunkSize + localY),
+	words = append(words, 0, factorioMinSeedWord, 0x3fbe2c, 0x01234567, 0xdeadbeef, ^uint32(0))
+	for _, word := range words {
+		state := newFactorioTaus88State(word)
+		for draw := range factorioOilPenaltyRandomColumns {
+			want := state.next()
+			if got := factorioTaus88RandomAt(word, draw); got != want {
+				t.Fatalf("word %#08x draw %d = %#08x, want %#08x", word, draw, got, want)
 			}
-			source[index] = 1
 		}
 	}
-	want := factorioRandomPenaltyBatch(positions, source, 1, 48)
-	for _, index := range []int{0, 1, 31, 32, 511, 1023} {
-		got := evaluator.oilRandomPenaltyAt(int64(positions[index].x), int64(positions[index].y))
-		if got != want[index] {
-			t.Fatalf("oil penalty at chunk index %d = %g, want %g", index, got, want[index])
+}
+
+func TestFactorioOilRandomPenaltyUsesChunkRowOrder(t *testing.T) {
+	evaluator := &factorioResourceEvaluator{}
+	chunks := [][2]int64{
+		{0, 0},
+		{-1, 2},
+		{1, -1},
+		{-15_355_650, 0}, // Raw seed word 335 exercises the minimum-word clamp.
+		{-4096, -2048},
+		{67_108_863, 67_108_863},
+		{-67_108_864, -67_108_864},
+	}
+	for _, chunk := range chunks {
+		chunkX, chunkY := chunk[0], chunk[1]
+		positions := make([]factorioSpotCandidate, factorioChunkSize*factorioChunkSize)
+		source := make([]float64, len(positions))
+		for localY := int64(0); localY < factorioChunkSize; localY++ {
+			for localX := int64(0); localX < factorioChunkSize; localX++ {
+				index := localY*factorioChunkSize + localX
+				positions[index] = factorioSpotCandidate{
+					x: float64(chunkX*factorioChunkSize + localX),
+					y: float64(chunkY*factorioChunkSize + localY),
+				}
+				source[index] = 1
+			}
+		}
+		want := factorioRandomPenaltyBatch(positions, source, 1, 48)
+		for index, position := range positions {
+			got := evaluator.oilRandomPenaltyAt(int64(position.x), int64(position.y))
+			if got != want[index] {
+				t.Fatalf(
+					"oil penalty at chunk (%d,%d) index %d = %g, want %g",
+					chunkX, chunkY, index, got, want[index],
+				)
+			}
 		}
 	}
 }

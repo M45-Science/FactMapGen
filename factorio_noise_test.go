@@ -5,6 +5,116 @@ import (
 	"testing"
 )
 
+var benchmarkFactorioBasisNoise float64
+
+func factorioBasisNoiseReference(x, y float64, tables *factorioBasisTables) float64 {
+	ix := int64(math.Floor(x))
+	iy := int64(math.Floor(y))
+	fx := x - float64(ix)
+	fy := y - float64(iy)
+	value := 0.0
+	for cornerY := int64(0); cornerY <= 1; cornerY++ {
+		for cornerX := int64(0); cornerX <= 1; cornerX++ {
+			dx := fx - float64(cornerX)
+			dy := fy - float64(cornerY)
+			distanceSquared := dx*dx + dy*dy
+			if distanceSquared >= 1 {
+				continue
+			}
+			ax := tables.a[uint8(ix+cornerX)]
+			by := tables.b[uint8(iy+cornerY)]
+			gradient := tables.sigma[ax^by]
+			falloff := 1 - distanceSquared
+			falloff *= falloff * falloff
+			value += falloff * 4.2 * (dx*factorioGradientX[gradient] + dy*factorioGradientY[gradient])
+		}
+	}
+	return value
+}
+
+func TestFactorioBasisNoiseMatchesLoopExactly(t *testing.T) {
+	coordinates := [][2]float64{
+		{0, 0},
+		{math.Copysign(0, -1), math.Copysign(0, -1)},
+		{math.Nextafter(0, math.Inf(-1)), math.Nextafter(0, math.Inf(1))},
+		{math.Nextafter(1, math.Inf(-1)), math.Nextafter(-1, math.Inf(1))},
+		{1, -1},
+		{-0.5, 0.5},
+		{255.99999999999997, -256.00000000000006},
+		{256, -256},
+		{-13763.35546875 * 0.125, -6886.4921875 * 0.125},
+		{225.984375 * 0.125, 71.328125 * 0.125},
+		{float64(int64(1)<<40) + 0.25, -float64(int64(1)<<40) + 0.75},
+	}
+
+	state := uint64(0x6a09e667f3bcc909)
+	next := func() uint64 {
+		state ^= state << 13
+		state ^= state >> 7
+		state ^= state << 17
+		return state
+	}
+	for range 4096 {
+		x := float64(int64(next()%2_000_001)-1_000_000) +
+			float64(next()&0xffff)/65536
+		y := float64(int64(next()%2_000_001)-1_000_000) +
+			float64(next()&0xffff)/65536
+		coordinates = append(coordinates, [2]float64{x, y})
+	}
+
+	for _, seeds := range [][2]uint32{
+		{0, 0},
+		{1, 1},
+		{341, 256},
+		{342, 257},
+		{123456, 0},
+		{123456, 5000},
+		{math.MaxUint32, math.MaxUint32},
+	} {
+		tables := factorioBasisTablesFromSeed(seeds[0], seeds[1])
+		for _, coordinate := range coordinates {
+			x, y := coordinate[0], coordinate[1]
+			want := factorioBasisNoiseReference(x, y, &tables)
+			got := factorioBasisNoise(x, y, &tables)
+			if math.Float64bits(got) != math.Float64bits(want) {
+				t.Fatalf(
+					"basis seed=(%d,%d) at (%g,%g) bits = %016x, want %016x (%.17g vs %.17g)",
+					seeds[0], seeds[1], x, y,
+					math.Float64bits(got), math.Float64bits(want), got, want,
+				)
+			}
+		}
+	}
+}
+
+func BenchmarkFactorioBasisNoise(b *testing.B) {
+	tables := factorioBasisTablesFromSeed(123456, 5000)
+	coordinates := make([][2]float64, 256)
+	for index := range coordinates {
+		coordinates[index] = [2]float64{
+			-2048 + float64(index)*15.875,
+			1024 - float64(index)*7.9375,
+		}
+	}
+	for _, benchmark := range []struct {
+		name string
+		run  func(float64, float64, *factorioBasisTables) float64
+	}{
+		{name: "specialized", run: factorioBasisNoise},
+		{name: "loop-reference", run: factorioBasisNoiseReference},
+	} {
+		b.Run(benchmark.name, func(b *testing.B) {
+			b.ReportAllocs()
+			sum := 0.0
+			for index := 0; index < b.N; index++ {
+				coordinate := coordinates[index&(len(coordinates)-1)]
+				sum += benchmark.run(coordinate[0], coordinate[1], &tables)
+			}
+			benchmarkFactorioBasisNoise = sum
+		})
+	}
+}
+
 func TestFactorioBasisNoiseMatchesOracle(t *testing.T) {
 	tests := []struct {
 		seed0 uint32

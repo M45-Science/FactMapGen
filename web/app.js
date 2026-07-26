@@ -15,6 +15,7 @@ const state = {
   mapGen: null,
   mapSettings: null,
   previewSeeds: {},
+  previewViews: {},
   dirty: false,
   session: null,
 };
@@ -25,6 +26,7 @@ const maxPreviewSizePx = 4096;
 const guestMaxPreviewSize = 512;
 const minPreviewScale = 1 / 64;
 const maxPreviewScale = 64;
+const previewWheelDebounceMs = 180;
 const safePreviewSizes = [256, 512, 768, 1024, 1536, 2048, 3072, 4096];
 const maxPreviewSeed = 4294967295;
 const minAutoplaceFrequency = 0.1;
@@ -34,6 +36,11 @@ let autoPreviewTimer = null;
 let autoPreviewPending = false;
 let previewInFlight = false;
 let previewImageLoadID = 0;
+let previewRequestRevision = 0;
+let previewWheelTimer = null;
+let previewPanGesture = null;
+let displayedPreview = null;
+let previewPointerView = null;
 let factorioUpdateNoticeShown = false;
 
 const resources = [
@@ -365,12 +372,14 @@ const els = {
   previewPlanet: $("#previewPlanet"),
   previewZoom: $("#previewZoom"),
   previewScaleField: $("#previewScaleField"),
+  previewResetView: $("#previewResetView"),
   previewLossless: $("#previewLossless"),
   previewLosslessField: $("#previewLosslessField"),
   autoRefreshPreview: $("#autoRefreshPreview"),
   seedValue: $("#seedValue"),
   seedRandom: $("#seedRandom"),
   seedRerollBtn: $("#seedRerollBtn"),
+  previewFrame: $(".preview-frame"),
   previewImage: $("#previewImage"),
   previewEmpty: $("#previewEmpty"),
   previewStatus: $("#previewStatus"),
@@ -482,6 +491,7 @@ async function init() {
   els.previewEngine.addEventListener("change", () => {
     renderPreviewEngineControls();
     renderPreviewScaleControl(Boolean(state.selected));
+    updatePreviewViewControls();
     renderPreview();
     scheduleAutoPreview();
   });
@@ -494,7 +504,19 @@ async function init() {
     if (changed && previewSizeIsAuto()) scheduleAutoPreview();
   });
   els.previewPlanet.addEventListener("change", () => scheduleAutoPreview());
-  els.previewZoom.addEventListener("input", () => scheduleAutoPreview());
+  els.previewZoom.addEventListener("input", () => {
+    previewPointerView = null;
+    updatePreviewViewControls();
+    scheduleAutoPreview();
+  });
+  els.previewResetView.addEventListener("click", resetPreviewView);
+  els.previewFrame.addEventListener("pointerdown", beginPreviewPan);
+  els.previewFrame.addEventListener("pointermove", updatePreviewPan);
+  els.previewFrame.addEventListener("pointerup", finishPreviewPan);
+  els.previewFrame.addEventListener("pointercancel", cancelPreviewPan);
+  els.previewFrame.addEventListener("lostpointercapture", cancelPreviewPan);
+  els.previewFrame.addEventListener("wheel", zoomPreviewAtPointer, { passive: false });
+  els.previewImage.addEventListener("dragstart", (event) => event.preventDefault());
   els.previewLossless.addEventListener("change", () => scheduleAutoPreview());
   els.autoRefreshPreview.addEventListener("change", () => {
     renderPreviewButtonState();
@@ -1126,6 +1148,15 @@ function notifyFactorioUpdate() {
 async function loadConfig() {
   try {
     state.config = await api("/api/config");
+    // Match the server's boot-warmed Default world. The cache itself is entirely
+    // server-side; this only gives a seed:null preset a stable initial cache key.
+    const warmSeed = Number(state.config.fastPreviewWarmSeed);
+    if (
+      !state.previewSeeds["default:Default"]
+      && Number.isInteger(warmSeed)
+      && warmSeed >= 1
+      && warmSeed <= maxPreviewSeed
+    ) state.previewSeeds["default:Default"] = String(warmSeed);
     state.config.fastPreviewEnabled = state.config.fastPreviewEnabled !== false;
     state.config.previewEnabled = Boolean(state.config.fastPreviewEnabled || state.config.factorio?.previewEnabled);
     renderFactorioStatus();
@@ -1351,6 +1382,10 @@ async function renameProfile(event) {
         state.previewSeeds[profile.id] = state.previewSeeds[oldID];
         delete state.previewSeeds[oldID];
       }
+      if (state.previewViews[oldID]) {
+        state.previewViews[profile.id] = state.previewViews[oldID];
+        delete state.previewViews[oldID];
+      }
       state.selected = profile.id;
       closeRenameDialog();
       await loadProfiles(true);
@@ -1387,6 +1422,10 @@ async function renameProfile(event) {
     if (oldID !== newID && state.previewSeeds[oldID]) {
       state.previewSeeds[newID] = state.previewSeeds[oldID];
       delete state.previewSeeds[oldID];
+    }
+    if (oldID !== newID && state.previewViews[oldID]) {
+      state.previewViews[newID] = state.previewViews[oldID];
+      delete state.previewViews[oldID];
     }
     state.selected = newID;
     state.mapGen = wasDirty ? currentMapGen : body.mapGen;
@@ -1544,13 +1583,31 @@ function canAutoRefreshPreview() {
   return Boolean(state.selected && state.config.previewEnabled && els.autoRefreshPreview.checked);
 }
 
+function invalidatePreviewResponse() {
+  previewRequestRevision++;
+  return previewRequestRevision;
+}
+
+function clearPreviewWheelTimer() {
+  window.clearTimeout(previewWheelTimer);
+  previewWheelTimer = null;
+}
+
 function cancelAutoPreview() {
   window.clearTimeout(autoPreviewTimer);
   autoPreviewTimer = null;
+  clearPreviewWheelTimer();
   autoPreviewPending = false;
+  invalidatePreviewResponse();
 }
 
 function scheduleAutoPreview() {
+  invalidatePreviewResponse();
+  clearPreviewWheelTimer();
+  requestAutoPreview();
+}
+
+function requestAutoPreview() {
   if (!canAutoRefreshPreview()) return;
   if (previewInFlight) {
     autoPreviewPending = true;
@@ -1559,7 +1616,7 @@ function scheduleAutoPreview() {
   }
   window.clearTimeout(autoPreviewTimer);
   autoPreviewTimer = null;
-  generatePreview({ automatic: true });
+  generatePreview({ automatic: true, revision: previewRequestRevision });
 }
 
 async function generatePreview(options = {}) {
@@ -1577,6 +1634,9 @@ async function generatePreview(options = {}) {
     }
     return false;
   }
+  const requestRevision = Number.isInteger(options.revision)
+    ? options.revision
+    : invalidatePreviewResponse();
   previewInFlight = true;
   const previewProfile = state.selected;
 
@@ -1588,18 +1648,39 @@ async function generatePreview(options = {}) {
     setPreviewUpdating("Generating preview...");
 
     const seed = previewSeedOverride();
-    const payload = { engine: currentPreviewEngine(), size, planet, zoom: canUsePreviewZoom() ? currentPreviewScale() : "1", lossless: canUseLosslessPreview() && els.previewLossless.checked, mapGen: previewMapGenPayload() };
+    const view = previewViewForCurrentProfile();
+    const payload = {
+      engine: currentPreviewEngine(),
+      size,
+      planet,
+      zoom: canUsePreviewZoom() ? currentPreviewScale() : "1",
+      centerX: view.centerX,
+      centerY: view.centerY,
+      lossless: canUseLosslessPreview() && els.previewLossless.checked,
+      mapGen: previewMapGenPayload(),
+    };
     if (seed) payload.seed = seed;
     const body = await api(`/api/profiles/${encodeURIComponent(previewProfile)}/preview`, {
       method: "POST",
       body: JSON.stringify(payload),
     });
-    if (state.selected !== previewProfile) return true;
-    updatePreviewFrameSize(body.size);
-    showPreviewImage(body.url);
+    if (!previewRequestIsCurrent(previewProfile, requestRevision)) return true;
+    const renderedSize = positivePreviewNumber(body.size, size);
+    const renderedScale = positivePreviewNumber(body.tilesPerPixel, Number(payload.zoom));
+    const renderedCenterX = finitePreviewNumber(body.centerX, payload.centerX);
+    const renderedCenterY = finitePreviewNumber(body.centerY, payload.centerY);
+    updatePreviewFrameSize(renderedSize);
+    showPreviewImage(body.url, {
+      profile: previewProfile,
+      size: renderedSize,
+      tilesPerPixel: renderedScale,
+      centerX: renderedCenterX,
+      centerY: renderedCenterY,
+    }, { revision: requestRevision });
     if (!automatic) showToast("Preview generated.");
   } catch (error) {
-    clearPreviewUpdating();
+    if (!previewRequestIsCurrent(previewProfile, requestRevision)) return true;
+    settlePreviewUpdating();
     els.previewStatus.classList.add("error");
     els.previewStatus.textContent = clippedClientMessage(error.message, 1200);
     if (!automatic) showToast("Preview failed.", true);
@@ -1609,10 +1690,20 @@ async function generatePreview(options = {}) {
     renderPreviewButtonState();
     if (autoPreviewPending) {
       autoPreviewPending = false;
-      scheduleAutoPreview();
+      if (previewWheelTimer === null) requestAutoPreview();
+    } else if (
+      requestRevision !== previewRequestRevision
+      && previewWheelTimer === null
+      && state.selected === previewProfile
+    ) {
+      settlePreviewUpdating();
     }
   }
   return true;
+}
+
+function previewRequestIsCurrent(profile, revision) {
+  return state.selected === profile && previewRequestRevision === revision;
 }
 
 function setMapgenTab(tabName) {
@@ -1782,6 +1873,214 @@ function currentPreviewScale() {
   return String(bounded);
 }
 
+function previewViewForCurrentProfile() {
+  if (!state.selected) return { centerX: 0, centerY: 0 };
+  let view = state.previewViews[state.selected];
+  if (!view) {
+    view = { centerX: 0, centerY: 0 };
+    state.previewViews[state.selected] = view;
+  }
+  if (!Number.isFinite(view.centerX)) view.centerX = 0;
+  if (!Number.isFinite(view.centerY)) view.centerY = 0;
+  return view;
+}
+
+function displayedPreviewForCurrentProfile() {
+  if (!displayedPreview || displayedPreview.profile !== state.selected) return null;
+  return displayedPreview;
+}
+
+function pointerViewForCurrentPreview() {
+  const displayed = displayedPreviewForCurrentProfile();
+  if (!displayed) return null;
+  if (
+    previewPointerView
+    && previewPointerView.profile === displayed.profile
+    && previewPointerView.displayedLoadID === displayed.loadID
+  ) {
+    return previewPointerView;
+  }
+  return {
+    profile: displayed.profile,
+    displayedLoadID: displayed.loadID,
+    size: displayed.size,
+    tilesPerPixel: displayed.tilesPerPixel,
+    centerX: displayed.centerX,
+    centerY: displayed.centerY,
+  };
+}
+
+function previewViewIsReset() {
+  const view = previewViewForCurrentProfile();
+  return view.centerX === 0 && view.centerY === 0 && currentPreviewScale() === "1";
+}
+
+function updatePreviewViewControls() {
+  const enabled = Boolean(state.selected && state.config.previewEnabled);
+  const displayed = displayedPreviewForCurrentProfile();
+  const interactive = Boolean(
+    enabled
+    && displayed
+    && els.previewImage.getAttribute("src")
+    && els.previewEmpty.style.display === "none",
+  );
+  els.previewResetView.disabled = !enabled || previewViewIsReset();
+  els.previewFrame.classList.toggle("preview-interactive", interactive);
+  els.previewFrame.title = interactive
+    ? canUsePreviewZoom()
+      ? "Drag to pan. Use the mouse wheel to zoom around the pointer."
+      : "Drag to pan."
+    : "";
+}
+
+function resetPreviewView() {
+  if (!state.selected) return;
+  cancelPreviewPan();
+  previewPointerView = null;
+  const view = previewViewForCurrentProfile();
+  view.centerX = 0;
+  view.centerY = 0;
+  els.previewZoom.value = "1";
+  updatePreviewViewControls();
+  if (canUseDefaultCachedPreview()) {
+    invalidatePreviewResponse();
+    clearPreviewWheelTimer();
+    autoPreviewPending = false;
+    showDefaultCachedPreview();
+    return;
+  }
+  scheduleAutoPreview();
+}
+
+function previewInteractionEnabled() {
+  return els.previewFrame.classList.contains("preview-interactive");
+}
+
+function beginPreviewPan(event) {
+  if (!previewInteractionEnabled() || event.isPrimary === false || event.button !== 0) return;
+  const rect = els.previewFrame.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return;
+  const pointerView = pointerViewForCurrentPreview();
+  if (!pointerView) return;
+  previewPanGesture = {
+    pointerID: event.pointerId,
+    profile: pointerView.profile,
+    displayedLoadID: pointerView.displayedLoadID,
+    size: pointerView.size,
+    tilesPerPixel: pointerView.tilesPerPixel,
+    startClientX: event.clientX,
+    startClientY: event.clientY,
+    centerX: pointerView.centerX,
+    centerY: pointerView.centerY,
+    worldUnitsPerClientX: pointerView.tilesPerPixel * pointerView.size / rect.width,
+    worldUnitsPerClientY: pointerView.tilesPerPixel * pointerView.size / rect.height,
+    dx: 0,
+    dy: 0,
+  };
+  els.previewFrame.classList.add("preview-panning");
+  els.previewFrame.setPointerCapture(event.pointerId);
+  event.preventDefault();
+}
+
+function updatePreviewPan(event) {
+  const gesture = previewPanGesture;
+  if (!gesture || gesture.pointerID !== event.pointerId) return;
+  gesture.dx = event.clientX - gesture.startClientX;
+  gesture.dy = event.clientY - gesture.startClientY;
+  els.previewImage.style.transform = `translate(${gesture.dx}px, ${gesture.dy}px)`;
+  event.preventDefault();
+}
+
+function finishPreviewPan(event) {
+  const gesture = previewPanGesture;
+  if (!gesture || gesture.pointerID !== event.pointerId) return;
+  const moved = Math.hypot(gesture.dx, gesture.dy) >= 2;
+  previewPanGesture = null;
+  clearPreviewPanTransform();
+  if (els.previewFrame.hasPointerCapture(event.pointerId)) {
+    els.previewFrame.releasePointerCapture(event.pointerId);
+  }
+  if (moved) {
+    const centerX = gesture.centerX - gesture.dx * gesture.worldUnitsPerClientX;
+    const centerY = gesture.centerY - gesture.dy * gesture.worldUnitsPerClientY;
+    const view = previewViewForCurrentProfile();
+    view.centerX = centerX;
+    view.centerY = centerY;
+    previewPointerView = {
+      profile: gesture.profile,
+      displayedLoadID: gesture.displayedLoadID,
+      size: gesture.size,
+      tilesPerPixel: gesture.tilesPerPixel,
+      centerX,
+      centerY,
+    };
+    updatePreviewViewControls();
+    scheduleAutoPreview();
+  }
+  event.preventDefault();
+}
+
+function cancelPreviewPan(event) {
+  const gesture = previewPanGesture;
+  if (event && gesture && gesture.pointerID !== event.pointerId) return;
+  previewPanGesture = null;
+  clearPreviewPanTransform();
+  if (gesture && els.previewFrame.hasPointerCapture(gesture.pointerID)) {
+    els.previewFrame.releasePointerCapture(gesture.pointerID);
+  }
+}
+
+function clearPreviewPanTransform() {
+  els.previewFrame.classList.remove("preview-panning");
+  els.previewImage.style.removeProperty("transform");
+}
+
+function zoomPreviewAtPointer(event) {
+  if (!previewInteractionEnabled() || !canUsePreviewZoom()) return;
+  const rect = els.previewFrame.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return;
+
+  const pointerView = pointerViewForCurrentPreview();
+  if (!pointerView) return;
+  const oldScale = pointerView.tilesPerPixel;
+  let delta = event.deltaY;
+  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) delta *= 16;
+  if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) delta *= rect.height;
+  const scaled = Math.min(
+    maxPreviewScale,
+    Math.max(minPreviewScale, oldScale * Math.pow(2, delta / 300)),
+  );
+  const nextScale = Number(scaled.toPrecision(8));
+  if (!Number.isFinite(nextScale) || nextScale === oldScale) return;
+  event.preventDefault();
+
+  const size = pointerView.size;
+  const pixelX = (event.clientX - rect.left) * size / rect.width;
+  const pixelY = (event.clientY - rect.top) * size / rect.height;
+  const centerX = pointerView.centerX + (pixelX - size / 2) * (oldScale - nextScale);
+  const centerY = pointerView.centerY + (pixelY - size / 2) * (oldScale - nextScale);
+  const view = previewViewForCurrentProfile();
+  view.centerX = centerX;
+  view.centerY = centerY;
+  previewPointerView = {
+    profile: pointerView.profile,
+    displayedLoadID: pointerView.displayedLoadID,
+    size,
+    tilesPerPixel: nextScale,
+    centerX,
+    centerY,
+  };
+  els.previewZoom.value = String(nextScale);
+  updatePreviewViewControls();
+
+  invalidatePreviewResponse();
+  clearPreviewWheelTimer();
+  previewWheelTimer = window.setTimeout(() => {
+    previewWheelTimer = null;
+    requestAutoPreview();
+  }, previewWheelDebounceMs);
+}
+
 function renderPreviewScaleControl(enabled) {
   const canUseScale = canUsePreviewZoom();
   els.previewScaleField.hidden = !canUseScale;
@@ -1831,6 +2130,7 @@ function setControlsEnabled(enabled) {
 
   els.previewSize.disabled = !enabled || !state.config.previewEnabled;
   els.previewPlanet.disabled = !enabled || !state.config.previewEnabled;
+  updatePreviewViewControls();
 }
 
 function renderPreviewEngineControls() {
@@ -2106,6 +2406,7 @@ function rerollPreviewSeed() {
   if (els.autoRefreshPreview.checked) {
     scheduleAutoPreview();
   } else {
+    invalidatePreviewResponse();
     els.previewStatus.classList.remove("error");
     els.previewStatus.textContent = "Preview seed changed; generate a preview to update the image.";
   }
@@ -2160,10 +2461,13 @@ function validAutoplaceFrequency(value) {
 
 function canUseDefaultCachedPreview() {
   const preview = state.config.defaultPreview;
+  const view = previewViewForCurrentProfile();
   return Boolean(
     preview?.url
     && currentPreviewEngine() === "factorio"
     && currentPreviewScale() === "1"
+    && view.centerX === 0
+    && view.centerY === 0
     && state.selected === "default:Default"
     && !state.dirty
     && knownPlanetName(els.previewPlanet.value) === "nauvis"
@@ -2173,13 +2477,22 @@ function canUseDefaultCachedPreview() {
 function showDefaultCachedPreview() {
   if (!canUseDefaultCachedPreview()) return false;
   const preview = state.config.defaultPreview;
-  updatePreviewFrameSize(preview.size || guestMaxPreviewSize);
-  clearPreviewUpdating();
-  showPreviewImage(preview.url);
+  const size = positivePreviewNumber(preview.size, guestMaxPreviewSize);
+  updatePreviewFrameSize(size);
+  showPreviewImage(preview.url, {
+    profile: state.selected,
+    size,
+    tilesPerPixel: 1,
+    centerX: 0,
+    centerY: 0,
+  });
   return true;
 }
 
 function renderPreview() {
+  invalidatePreviewResponse();
+  cancelPreviewPan();
+  updatePreviewViewControls();
   if (showDefaultCachedPreview()) return;
   if (!state.selected) {
     hidePreview("No preview image");
@@ -2255,6 +2568,20 @@ function updatePreviewFrameSize(size = currentPreviewSize()) {
   return true;
 }
 
+function positivePreviewNumber(value, fallback) {
+  const number = Number(value);
+  if (Number.isFinite(number) && number > 0) return number;
+  const fallbackNumber = Number(fallback);
+  return Number.isFinite(fallbackNumber) && fallbackNumber > 0 ? fallbackNumber : 1;
+}
+
+function finitePreviewNumber(value, fallback) {
+  const number = Number(value);
+  if (Number.isFinite(number)) return number;
+  const fallbackNumber = Number(fallback);
+  return Number.isFinite(fallbackNumber) ? fallbackNumber : 0;
+}
+
 function setPreviewUpdating(message) {
   els.previewStatus.classList.remove("error");
   els.previewStatus.textContent = message;
@@ -2262,6 +2589,7 @@ function setPreviewUpdating(message) {
   els.previewEmpty.textContent = message;
   els.previewEmpty.classList.add("updating");
   els.previewImage.classList.add("updating");
+  updatePreviewViewControls();
 }
 
 function clearPreviewUpdating() {
@@ -2271,19 +2599,87 @@ function clearPreviewUpdating() {
   els.previewStatus.textContent = "";
 }
 
-function showPreviewImage(url) {
+function previewReplacementPending(requestRevision) {
+  if (requestRevision === previewRequestRevision) return false;
+  return Boolean(
+    previewInFlight
+    || autoPreviewPending
+    || (previewWheelTimer !== null && canAutoRefreshPreview())
+  );
+}
+
+function settlePreviewUpdating(message = state.config.previewEnabled ? "No preview image" : previewUnavailableMessage()) {
+  const preview = displayedPreviewForCurrentProfile();
+  if (!preview) {
+    hidePreview(message);
+    return false;
+  }
+  if (els.previewImage.getAttribute("src") !== preview.url) {
+    showPreviewImage(
+      preview.url,
+      preview,
+      { revision: previewRequestRevision, syncView: false },
+    );
+    return false;
+  }
+  clearPreviewUpdating();
+  els.previewEmpty.style.display = "none";
+  els.previewImage.style.display = "block";
+  updatePreviewViewControls();
+  return true;
+}
+
+function showPreviewImage(url, metadata = {}, options = {}) {
+  const requestRevision = Number.isInteger(options.revision)
+    ? options.revision
+    : previewRequestRevision;
+  const fallbackView = previewViewForCurrentProfile();
+  const nextPreview = {
+    profile: metadata.profile || state.selected,
+    url,
+    size: positivePreviewNumber(metadata.size, currentPreviewSize()),
+    tilesPerPixel: positivePreviewNumber(metadata.tilesPerPixel, Number(currentPreviewScale())),
+    centerX: finitePreviewNumber(metadata.centerX, fallbackView.centerX),
+    centerY: finitePreviewNumber(metadata.centerY, fallbackView.centerY),
+  };
   const loadID = ++previewImageLoadID;
   els.previewImage.onload = () => {
     if (loadID !== previewImageLoadID) return;
-    clearPreviewUpdating();
-    els.previewEmpty.style.display = "none";
+    if (nextPreview.profile !== state.selected) {
+      hidePreview("No preview image");
+      return;
+    }
+    displayedPreview = { ...nextPreview, loadID };
+    previewPointerView = null;
     els.previewImage.style.display = "block";
+    if (options.syncView !== false && previewRequestIsCurrent(nextPreview.profile, requestRevision)) {
+      const view = previewViewForCurrentProfile();
+      view.centerX = nextPreview.centerX;
+      view.centerY = nextPreview.centerY;
+      els.previewZoom.value = String(nextPreview.tilesPerPixel);
+    }
+    if (previewReplacementPending(requestRevision)) {
+      updatePreviewViewControls();
+      return;
+    }
+    settlePreviewUpdating();
   };
   els.previewImage.onerror = () => {
     if (loadID !== previewImageLoadID) return;
+    if (nextPreview.profile !== state.selected) {
+      hidePreview("No preview image");
+      return;
+    }
+    const fallback = displayedPreviewForCurrentProfile();
+    if (fallback && fallback.url !== url) {
+      settlePreviewUpdating();
+      return;
+    }
+    displayedPreview = null;
+    previewPointerView = null;
     hidePreview(state.config.previewEnabled ? "No preview image" : previewUnavailableMessage());
   };
-  const hadImage = Boolean(els.previewImage.getAttribute("src"));
+  const hadImage = Boolean(displayedPreviewForCurrentProfile());
   if (!hadImage) els.previewImage.style.display = "none";
   els.previewStatus.classList.remove("error");
   els.previewStatus.textContent = "Loading preview...";
@@ -2292,9 +2688,13 @@ function showPreviewImage(url) {
   els.previewEmpty.classList.add("updating");
   els.previewImage.classList.toggle("updating", hadImage);
   els.previewImage.src = url;
+  updatePreviewViewControls();
 }
 
 function hidePreview(message) {
+  cancelPreviewPan();
+  displayedPreview = null;
+  previewPointerView = null;
   previewImageLoadID++;
   els.previewImage.removeAttribute("src");
   els.previewImage.classList.remove("updating");
@@ -2302,6 +2702,7 @@ function hidePreview(message) {
   els.previewEmpty.classList.remove("updating");
   els.previewEmpty.style.display = "grid";
   els.previewEmpty.textContent = message;
+  updatePreviewViewControls();
 }
 
 function renderAutoplace() {
@@ -3322,7 +3723,11 @@ function afterVisualEdit(options = {}) {
   state.dirty = !selectedProfileIsLocal();
   if (selectedProfileIsLocal()) saveSelectedLocalProfile();
   renderHeader();
-  if (options.preview !== false) scheduleAutoPreview();
+  if (options.preview !== false) {
+    scheduleAutoPreview();
+  } else {
+    invalidatePreviewResponse();
+  }
 }
 
 function numericValue(value) {

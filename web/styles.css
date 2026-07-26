@@ -334,6 +334,12 @@ input[type="range"] {
   color: #17100a;
 }
 
+.preview-reset-button {
+  min-height: 30px;
+  padding: 0 9px;
+  white-space: nowrap;
+}
+
 .mapgen-body {
   display: grid;
   grid-template-columns:
@@ -803,6 +809,15 @@ input[type="range"] {
   box-shadow: 0 0 0 3px var(--line);
 }
 
+.preview-frame.preview-interactive {
+  cursor: grab;
+  touch-action: none;
+}
+
+.preview-frame.preview-panning {
+  cursor: grabbing;
+}
+
 .preview-frame img {
   display: none;
   width: 100%;
@@ -810,6 +825,12 @@ input[type="range"] {
   max-width: none;
   max-height: none;
   object-fit: fill;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.preview-frame.preview-panning img {
+  will-change: transform;
 }
 
 .preview-frame img.updating {

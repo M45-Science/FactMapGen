@@ -4,6 +4,7 @@ import (
 	"context"
 	"image/color"
 	"math"
+	"math/bits"
 )
 
 const (
@@ -127,9 +128,8 @@ type factorioResourceField struct {
 }
 
 type factorioResourceEvaluator struct {
-	seed             uint32
-	fields           []factorioResourceField
-	oilPenaltyChunks map[[2]int64][]float64
+	seed   uint32
+	fields []factorioResourceField
 }
 
 type factorioResourceSharedPoint struct {
@@ -137,6 +137,8 @@ type factorioResourceSharedPoint struct {
 	startingBlobs float64
 	distance      float64
 }
+
+var factorioOilPenaltyRandomColumns = factorioTaus88RandomAccessColumns()
 
 func newFactorioResourceEvaluator(settings fastPreviewSettings, nauvis *factorioNauvisEvaluator) *factorioResourceEvaluator {
 	fields := make([]factorioResourceField, 0, len(factorioResourceCatalog))
@@ -159,9 +161,8 @@ func newFactorioResourceEvaluator(settings fastPreviewSettings, nauvis *factorio
 		fields = append(fields, field)
 	}
 	return &factorioResourceEvaluator{
-		seed:             settings.seed,
-		fields:           fields,
-		oilPenaltyChunks: make(map[[2]int64][]float64),
+		seed:   settings.seed,
+		fields: fields,
 	}
 }
 
@@ -377,28 +378,45 @@ func (e *factorioResourceEvaluator) oilPreviewMask(
 func (e *factorioResourceEvaluator) oilRandomPenaltyAt(tileX, tileY int64) float64 {
 	chunkX := factorioFloorDiv(tileX, factorioChunkSize)
 	chunkY := factorioFloorDiv(tileY, factorioChunkSize)
-	key := [2]int64{chunkX, chunkY}
-	penalties, ok := e.oilPenaltyChunks[key]
-	if !ok {
-		originX := chunkX * factorioChunkSize
-		originY := chunkY * factorioChunkSize
-		x := uint32(int32(originX))
-		y := uint32(int32(originY + 1))
-		word := uint32(factorioSpotSeedBase) + x*factorioSpotRegionXPrime + y*factorioSpotRegionYPrime
-		if word < factorioMinSeedWord {
-			word = factorioMinSeedWord
-		}
-		state := newFactorioTaus88State(word)
-		penalties = make([]float64, factorioChunkSize*factorioChunkSize)
-		amplitude := 1 / factorioResourceCatalog[4].randomProbability
-		for index := len(penalties) - 1; index >= 0; index-- {
-			penalties[index] = 1 - amplitude*float64(state.next())/4294967296.0
-		}
-		e.oilPenaltyChunks[key] = penalties
+	originX := chunkX * factorioChunkSize
+	originY := chunkY * factorioChunkSize
+	x := uint32(int32(originX))
+	y := uint32(int32(originY + 1))
+	word := uint32(factorioSpotSeedBase) + x*factorioSpotRegionXPrime + y*factorioSpotRegionYPrime
+	if word < factorioMinSeedWord {
+		word = factorioMinSeedWord
 	}
-	localX := tileX - chunkX*factorioChunkSize
-	localY := tileY - chunkY*factorioChunkSize
-	return penalties[localY*factorioChunkSize+localX]
+	localX := tileX - originX
+	localY := tileY - originY
+	index := localY*factorioChunkSize + localX
+	reverseDraw := int(factorioChunkSize*factorioChunkSize - 1 - index)
+	random := factorioTaus88RandomAt(word, reverseDraw)
+	amplitude := 1 / factorioResourceCatalog[4].randomProbability
+	return 1 - amplitude*float64(random)/4294967296.0
+}
+
+func factorioTaus88RandomAccessColumns() [factorioChunkSize * factorioChunkSize][32]uint32 {
+	var columns [factorioChunkSize * factorioChunkSize][32]uint32
+	// Taus88 transitions are linear over GF(2). Each column records the
+	// output sequence for one set bit in the shared initial state word.
+	for bit := 0; bit < 32; bit++ {
+		state := newFactorioTaus88State(uint32(1) << bit)
+		for draw := range columns {
+			columns[draw][bit] = state.next()
+		}
+	}
+	return columns
+}
+
+func factorioTaus88RandomAt(word uint32, draw int) uint32 {
+	columns := &factorioOilPenaltyRandomColumns[draw]
+	random := uint32(0)
+	for word != 0 {
+		bit := bits.TrailingZeros32(word)
+		random ^= columns[bit]
+		word &= word - 1
+	}
+	return random
 }
 
 func factorioFloorDiv(value, divisor int64) int64 {
@@ -434,6 +452,33 @@ func (e *factorioResourceEvaluator) prepareForBounds(x0, y0, x1, y1 float64) {
 			}
 		}
 	}
+}
+
+func (e *factorioResourceEvaluator) trimRegionCaches(maxPerField int) {
+	if maxPerField < 1 {
+		maxPerField = 1
+	}
+	for index := range e.fields {
+		field := &e.fields[index]
+		if len(field.regular.regionCache) > maxPerField {
+			field.regular.regionCache = make(map[[2]int64][]factorioSelectedSpot)
+		}
+		if field.starting != nil && len(field.starting.regionCache) > maxPerField {
+			field.starting.regionCache = make(map[[2]int64][]factorioSelectedSpot)
+		}
+	}
+}
+
+func (e *factorioResourceEvaluator) cachedRegionCount() int {
+	total := 0
+	for index := range e.fields {
+		field := &e.fields[index]
+		total += len(field.regular.regionCache)
+		if field.starting != nil {
+			total += len(field.starting.regionCache)
+		}
+	}
+	return total
 }
 
 func (f *factorioResourceField) fieldAt(x, y float64) float64 {

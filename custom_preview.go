@@ -51,6 +51,15 @@ type fastControl struct {
 	enabled   bool
 }
 
+type fastPreviewWorld struct {
+	settings  fastPreviewSettings
+	nauvis    *factorioNauvisEvaluator
+	trees     *factorioTreeEvaluator
+	resources *factorioResourceEvaluator
+	rocks     *factorioRockEvaluator
+	cliffs    *factorioCliffEvaluator
+}
+
 type fastResourceDef struct {
 	name        string
 	salt        uint32
@@ -108,11 +117,20 @@ func (p *previewer) renderFast(ctx context.Context, ref profileRef, mapGen json.
 	if err != nil {
 		return previewResponse{}, err
 	}
+	centerX, centerY, err := normalizedPreviewCenter(req.CenterX, req.CenterY, zoom.tilesPerPixel)
+	if err != nil {
+		return previewResponse{}, err
+	}
 	settings, err := parseFastPreviewSettings(mapGen, req.Seed)
 	if err != nil {
 		return previewResponse{}, err
 	}
-	img, tpp, err := renderFastMapPreview(ctx, settings, size, zoom)
+	cacheKey, err := fastPreviewCacheKey(mapGen, settings.seed)
+	if err != nil {
+		return previewResponse{}, err
+	}
+	tpp := fastTilesPerPixel(zoom)
+	img, err := p.fastCache().render(ctx, cacheKey, settings, size, tpp, centerX, centerY)
 	if err != nil {
 		return previewResponse{}, err
 	}
@@ -127,13 +145,32 @@ func (p *previewer) renderFast(ctx context.Context, ref profileRef, mapGen json.
 
 	generatedAt := time.Now().UTC().Format(time.RFC3339)
 	return previewResponse{
-		URL:         "/api/previews/" + url.PathEscape(previewName) + "?ts=" + url.QueryEscape(generatedAt),
-		GeneratedAt: generatedAt,
-		Size:        size,
-		Planet:      planet,
-		Engine:      previewEngineFast,
-		Output:      fmt.Sprintf("Fast Go preview rendered %s at %.6g tiles/pixel for %s.", settings.mapType, tpp, ref.id()),
+		URL:           "/api/previews/" + url.PathEscape(previewName) + "?ts=" + url.QueryEscape(generatedAt),
+		GeneratedAt:   generatedAt,
+		Size:          size,
+		Planet:        planet,
+		Engine:        previewEngineFast,
+		CenterX:       centerX,
+		CenterY:       centerY,
+		TilesPerPixel: tpp,
+		Output: fmt.Sprintf(
+			"Fast Go preview rendered %s at %.6g tiles/pixel centered on %.6g, %.6g for %s.",
+			settings.mapType, tpp, centerX, centerY, ref.id(),
+		),
 	}, nil
+}
+
+func (p *previewer) fastCache() *fastPreviewCache {
+	p.fastCacheOnce.Do(func() {
+		if p.fastPreviewCache == nil {
+			cacheBytes := p.fastPreviewCacheBytes
+			if cacheBytes <= 0 {
+				cacheBytes = defaultFastPreviewCacheBytes
+			}
+			p.fastPreviewCache = newFastPreviewCache(cacheBytes, defaultFastPreviewCacheWorlds)
+		}
+	})
+	return p.fastPreviewCache
 }
 
 func parseFastPreviewSettings(raw json.RawMessage, seedOverride string) (fastPreviewSettings, error) {
@@ -244,52 +281,87 @@ func fastAutoplaceControl(root map[string]any, name string) fastControl {
 
 func renderFastMapPreview(ctx context.Context, settings fastPreviewSettings, size int, zoom previewZoom) (*image.RGBA, float64, error) {
 	tpp := fastTilesPerPixel(zoom)
+	img, err := newFastPreviewWorld(settings).render(ctx, size, tpp, 0, 0)
+	return img, tpp, err
+}
+
+func renderFastMapPreviewAt(
+	ctx context.Context,
+	settings fastPreviewSettings,
+	size int,
+	zoom previewZoom,
+	centerX, centerY float64,
+) (*image.RGBA, float64, error) {
+	tpp := fastTilesPerPixel(zoom)
+	img, err := newFastPreviewWorld(settings).render(ctx, size, tpp, centerX, centerY)
+	return img, tpp, err
+}
+
+func newFastPreviewWorld(settings fastPreviewSettings) *fastPreviewWorld {
+	world := &fastPreviewWorld{settings: settings}
+	if settings.mapType != "nauvis" {
+		return world
+	}
+	world.nauvis = newFactorioNauvisEvaluator(settings)
+	if settings.trees.enabled {
+		world.trees = newFactorioTreeEvaluator(settings, world.nauvis)
+	}
+	world.resources = newFactorioResourceEvaluator(settings, world.nauvis)
+	if settings.rocks.enabled {
+		world.rocks = newFactorioRockEvaluator(settings, world.nauvis)
+	}
+	if settings.cliffs.enabled {
+		world.cliffs = newFactorioCliffEvaluator(settings, world.nauvis)
+	}
+	return world
+}
+
+func (w *fastPreviewWorld) trimSpatialCaches() {
+	if w.resources != nil {
+		w.resources.trimRegionCaches(fastPreviewMaxRegionsPerField)
+	}
+}
+
+func (w *fastPreviewWorld) render(
+	ctx context.Context,
+	size int,
+	tpp float64,
+	centerX, centerY float64,
+) (*image.RGBA, error) {
 	img := image.NewRGBA(image.Rect(0, 0, size, size))
-	originX := -float64(size) * tpp / 2
-	originY := -float64(size) * tpp / 2
-	var nauvis *factorioNauvisEvaluator
-	if settings.mapType == "nauvis" {
-		nauvis = newFactorioNauvisEvaluator(settings)
+	originX := fastPreviewViewportOrigin(centerX, size, tpp)
+	originY := fastPreviewViewportOrigin(centerY, size, tpp)
+	if err := w.renderBase(ctx, img, originX, originY, tpp); err != nil {
+		return nil, err
 	}
-	var trees *factorioTreeEvaluator
-	var resources *factorioResourceEvaluator
-	var rocks *factorioRockEvaluator
-	if nauvis != nil {
-		if settings.trees.enabled {
-			trees = newFactorioTreeEvaluator(settings, nauvis)
-		}
-		resources = newFactorioResourceEvaluator(settings, nauvis)
-		if settings.rocks.enabled {
-			rocks = newFactorioRockEvaluator(settings, nauvis)
-		}
+	if err := w.renderOverlays(ctx, img, originX, originY, tpp); err != nil {
+		return nil, err
 	}
-	var oilMask []bool
-	if resources != nil && resources.hasOil() {
-		var err error
-		oilMask, err = resources.oilPreviewMask(ctx, settings, originX, originY, tpp, size, size)
-		if err != nil {
-			return nil, 0, err
-		}
-	}
-	if nauvis != nil && tpp == 1 {
-		resources.prepareForBounds(
+	return img, nil
+}
+
+func (w *fastPreviewWorld) renderBase(
+	ctx context.Context,
+	img *image.RGBA,
+	originX, originY, tpp float64,
+) error {
+	settings := w.settings
+	size := img.Bounds().Dx()
+	xAxis := newFastPreviewAxis(originX, tpp)
+	yAxis := newFastPreviewAxis(originY, tpp)
+	if w.nauvis != nil && tpp == 1 {
+		w.resources.prepareForBounds(
 			math.Floor(originX),
 			math.Floor(originY),
 			math.Floor(originX+float64(size-1)),
 			math.Floor(originY+float64(size-1)),
 		)
 		if err := renderFastNauvisOneTileRows(
-			ctx, img, settings, nauvis, trees, rocks, resources, oilMask, originX, originY,
+			ctx, img, settings, w.nauvis, w.trees, w.rocks, w.resources, nil, originX, originY,
 		); err != nil {
-			return nil, 0, err
+			return err
 		}
-		if settings.cliffs.enabled {
-			cliffs := newFactorioCliffEvaluator(settings, nauvis)
-			if err := renderFactorioCliffs(ctx, img, settings, cliffs, originX, originY, tpp); err != nil {
-				return nil, 0, err
-			}
-		}
-		return img, tpp, nil
+		return nil
 	}
 
 	lastWorldY := math.Inf(-1)
@@ -297,11 +369,11 @@ func renderFastMapPreview(ctx context.Context, settings fastPreviewSettings, siz
 		if y&31 == 0 {
 			select {
 			case <-ctx.Done():
-				return nil, 0, ctx.Err()
+				return ctx.Err()
 			default:
 			}
 		}
-		wy := math.Floor(originY + float64(y)*tpp)
+		wy := math.Floor(yAxis.coordinate(y))
 		row := y * img.Stride
 		if y > 0 && wy == lastWorldY {
 			copy(img.Pix[row:row+img.Stride], img.Pix[row-img.Stride:row])
@@ -310,7 +382,7 @@ func renderFastMapPreview(ctx context.Context, settings fastPreviewSettings, siz
 		lastWorldY = wy
 		lastWorldX := math.Inf(-1)
 		for x := 0; x < size; x++ {
-			wx := math.Floor(originX + float64(x)*tpp)
+			wx := math.Floor(xAxis.coordinate(x))
 			o := row + x*4
 			if x > 0 && wx == lastWorldX {
 				copy(img.Pix[o:o+4], img.Pix[o-4:o])
@@ -318,9 +390,9 @@ func renderFastMapPreview(ctx context.Context, settings fastPreviewSettings, siz
 			}
 			lastWorldX = wx
 			var c color.RGBA
-			if nauvis != nil {
-				nauvisPoint := nauvis.sample(wx, wy)
-				tile := nauvis.terrainTile(nauvisPoint, wx, wy)
+			if w.nauvis != nil {
+				nauvisPoint := w.nauvis.sample(wx, wy)
+				tile := w.nauvis.terrainTile(nauvisPoint, wx, wy)
 				c = tile.color
 			} else {
 				c, _ = fastTerrainPixel(settings, wx, wy)
@@ -336,9 +408,9 @@ func renderFastMapPreview(ctx context.Context, settings fastPreviewSettings, siz
 		}
 	}
 
-	if trees != nil {
-		if err := renderFactorioTrees(ctx, img, settings, trees, originX, originY, tpp); err != nil {
-			return nil, 0, err
+	if w.trees != nil {
+		if err := renderFactorioTrees(ctx, img, settings, w.trees, originX, originY, tpp); err != nil {
+			return err
 		}
 	}
 
@@ -347,11 +419,11 @@ func renderFastMapPreview(ctx context.Context, settings fastPreviewSettings, siz
 		if y&31 == 0 {
 			select {
 			case <-ctx.Done():
-				return nil, 0, ctx.Err()
+				return ctx.Err()
 			default:
 			}
 		}
-		wy := math.Floor(originY + float64(y)*tpp)
+		wy := math.Floor(yAxis.coordinate(y))
 		row := y * img.Stride
 		if y > 0 && wy == lastWorldY {
 			copy(img.Pix[row:row+img.Stride], img.Pix[row-img.Stride:row])
@@ -360,7 +432,7 @@ func renderFastMapPreview(ctx context.Context, settings fastPreviewSettings, siz
 		lastWorldY = wy
 		lastWorldX := math.Inf(-1)
 		for x := 0; x < size; x++ {
-			wx := math.Floor(originX + float64(x)*tpp)
+			wx := math.Floor(xAxis.coordinate(x))
 			offset := row + x*4
 			if x > 0 && wx == lastWorldX {
 				copy(img.Pix[offset:offset+4], img.Pix[offset-4:offset])
@@ -375,7 +447,7 @@ func renderFastMapPreview(ctx context.Context, settings fastPreviewSettings, siz
 				continue
 			}
 			base = blendFastPreviewEntities(
-				settings, nauvis, trees, rocks, resources, oilMask,
+				settings, w.nauvis, w.trees, w.rocks, w.resources, nil,
 				base, nil, wx, wy, y*size+x, tpp,
 			)
 			img.Pix[offset] = base.R
@@ -384,13 +456,84 @@ func renderFastMapPreview(ctx context.Context, settings fastPreviewSettings, siz
 		}
 	}
 
-	if nauvis != nil && settings.cliffs.enabled {
-		cliffs := newFactorioCliffEvaluator(settings, nauvis)
-		if err := renderFactorioCliffs(ctx, img, settings, cliffs, originX, originY, tpp); err != nil {
-			return nil, 0, err
+	return nil
+}
+
+func (w *fastPreviewWorld) renderOverlays(
+	ctx context.Context,
+	img *image.RGBA,
+	originX, originY, tpp float64,
+) error {
+	if w.resources != nil && w.resources.hasOil() {
+		bounds := img.Bounds()
+		oilMask, err := w.resources.oilPreviewMask(
+			ctx, w.settings, originX, originY, tpp, bounds.Dx(), bounds.Dy(),
+		)
+		if err != nil {
+			return err
+		}
+		applyFastPreviewOilMask(img, w.settings, oilMask, originX, originY, tpp)
+	}
+	if w.cliffs != nil {
+		if err := renderFactorioCliffs(ctx, img, w.settings, w.cliffs, originX, originY, tpp); err != nil {
+			return err
 		}
 	}
-	return img, tpp, nil
+	return nil
+}
+
+func applyFastPreviewOilMask(
+	img *image.RGBA,
+	settings fastPreviewSettings,
+	oilMask []bool,
+	originX, originY, tilesPerPixel float64,
+) {
+	width := img.Bounds().Dx()
+	for index, marked := range oilMask {
+		if !marked {
+			continue
+		}
+		x := index % width
+		y := index / width
+		wx := math.Floor(originX + float64(x)*tilesPerPixel)
+		wy := math.Floor(originY + float64(y)*tilesPerPixel)
+		if _, enemy := fastEnemyPixel(settings, wx, wy); enemy {
+			continue
+		}
+		offset := y*img.Stride + x*4
+		img.Pix[offset] = factorioResourceCatalog[4].mapColor.R
+		img.Pix[offset+1] = factorioResourceCatalog[4].mapColor.G
+		img.Pix[offset+2] = factorioResourceCatalog[4].mapColor.B
+	}
+}
+
+type fastPreviewAxis struct {
+	origin       float64
+	step         float64
+	rasterOrigin int64
+	aligned      bool
+}
+
+func newFastPreviewAxis(origin, step float64) fastPreviewAxis {
+	rasterOrigin, aligned := fastPreviewRasterCoordinate(origin, step)
+	return fastPreviewAxis{
+		origin: origin, step: step, rasterOrigin: rasterOrigin, aligned: aligned,
+	}
+}
+
+func (a fastPreviewAxis) coordinate(pixel int) float64 {
+	if a.aligned {
+		return float64(a.rasterOrigin+int64(pixel)) * a.step
+	}
+	return a.origin + float64(pixel)*a.step
+}
+
+func fastPreviewViewportOrigin(center float64, size int, tilesPerPixel float64) float64 {
+	centerRaster, aligned := fastPreviewRasterCoordinate(center, tilesPerPixel)
+	if size%2 == 0 && aligned {
+		return float64(centerRaster-int64(size/2)) * tilesPerPixel
+	}
+	return center - float64(size)*tilesPerPixel/2
 }
 
 func renderFastNauvisOneTileRows(

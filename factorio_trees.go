@@ -241,9 +241,11 @@ func renderFactorioTrees(
 	bounds := img.Bounds()
 	width := bounds.Dx()
 	height := bounds.Dy()
+	xAxis := newFastPreviewAxis(originX, tilesPerPixel)
+	yAxis := newFastPreviewAxis(originY, tilesPerPixel)
 	lastWorldY := math.Inf(-1)
 	for py := 0; py < height; py++ {
-		worldY := math.Floor(originY + float64(py)*tilesPerPixel)
+		worldY := math.Floor(yAxis.coordinate(py))
 		row := py * img.Stride
 		if py > 0 && worldY == lastWorldY {
 			copy(img.Pix[row:row+img.Stride], img.Pix[row-img.Stride:row])
@@ -252,7 +254,7 @@ func renderFactorioTrees(
 		lastWorldY = worldY
 		lastWorldX := math.Inf(-1)
 		for px := 0; px < width; px++ {
-			worldX := math.Floor(originX + float64(px)*tilesPerPixel)
+			worldX := math.Floor(xAxis.coordinate(px))
 			offset := row + px*4
 			if px > 0 && worldX == lastWorldX {
 				copy(img.Pix[offset:offset+4], img.Pix[offset-4:offset])
@@ -267,10 +269,10 @@ func renderFactorioTrees(
 				continue
 			}
 
-			minTileX := int64(math.Floor(originX + float64(px)*tilesPerPixel))
-			maxTileX := int64(math.Ceil(originX+float64(px+1)*tilesPerPixel)) - 1
-			minTileY := int64(math.Floor(originY + float64(py)*tilesPerPixel))
-			maxTileY := int64(math.Ceil(originY+float64(py+1)*tilesPerPixel)) - 1
+			minTileX := int64(math.Floor(xAxis.coordinate(px)))
+			maxTileX := int64(math.Ceil(xAxis.coordinate(px+1))) - 1
+			minTileY := int64(math.Floor(yAxis.coordinate(py)))
+			maxTileY := int64(math.Ceil(yAxis.coordinate(py+1))) - 1
 			spanX := max(int64(1), maxTileX-minTileX+1)
 			spanY := max(int64(1), maxTileY-minTileY+1)
 			samplesX := min(spanX, int64(4))

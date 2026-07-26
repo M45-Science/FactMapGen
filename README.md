@@ -10,6 +10,12 @@ FactMapGen is a small Go web tool for creating and editing Factorio `map-gen-set
 go run . -addr :8080 -presets presets
 ```
 
+The Fast renderer keeps up to 2 GiB of reusable tile pixels by default. Change the startup budget in MiB with, for example:
+
+```sh
+go run . -addr :8080 -presets presets -fast-preview-cache-mib 4096
+```
+
 Open `http://localhost:8080`.
 
 On the first run, FactMapGen creates an `admin` account and prints a generated password to the server log. User accounts, sessions, and audit entries are stored in `factmapgen-auth.db` by default. Use `-auth-db path/to/auth.db` to choose a different SQLite file.
@@ -66,11 +72,15 @@ go run . -factorio-bin /opt/factorio/bin/x64/factorio
 
 The main web page shows the detected Factorio binary version and flags when the latest stable headless release is newer. Version and latest-release checks are cached by the server. Admin users can refresh Factorio status from the Admin panel and, when the active binary comes from `-factorio-dir`, delete that managed install and install a fresh stable headless copy. The fast renderer supports Nauvis-style maps, including the Lakes and Island elevation options. The Exact engine's preview surface selector offers the known Factorio planets: Nauvis plus the Space Age planets Vulcanus, Gleba, Fulgora, and Aquilo.
 
-Preview scale is an arbitrary numeric value in meters per output pixel from `0.015625` through `64`, subject to the Exact engine's 16,384-pixel source-render limit. Values above `1` show more map area and values below `1` zoom into whole map tiles. Legacy API values such as `out-4` and `in-3` remain accepted.
+Preview scale is an arbitrary numeric value in meters per output pixel from `0.015625` through `64`, subject to the Exact engine's 16,384-pixel source-render limit. Values above `1` show more map area and values below `1` zoom into whole map tiles. Legacy API values such as `out-4` and `in-3` remain accepted. In the browser, drag a rendered preview to pan, use the mouse wheel to zoom around the pointer, and use Reset to return to `(0, 0)` at 1 meter per pixel. Both engines accept world-space `centerX` and `centerY` coordinates; the server snaps each coordinate to the selected scale's pixel lattice so adjacent views align exactly.
 
 Exact Factorio preview generation is queued server-side so only one Factorio process runs at a time. The queue defaults to 8 waiting jobs and can be changed with `-preview-queue`. Each exact render is capped at 60 seconds by default and can be changed with `-preview-timeout`. Admin preview jobs are served before regular signed-in users, and signed-in users are served before guests; jobs with the same priority run in request order. If the queue is full, the exact preview request returns HTTP 429.
 
-Generated preview images are transient. The server converts preview images to AVIF with JPEG fallback unless `lossless` is requested, and the browser receives a short-lived `/api/previews/...` URL. Exact Factorio previews start from Factorio's temporary PNG output and then apply the requested zoom transform. Preview images are kept in memory for up to 30 minutes with a 100-image cap, and are not cached per preset. On startup, when exact previews are configured, the server warms a pinned 512px Nauvis preview for the built-in Default preset so first page load can show an immediate exact image without waiting for autosize rendering.
+Generated response images are transient. The server converts preview images to AVIF with JPEG fallback unless `lossless` is requested, and the browser receives a short-lived `/api/previews/...` URL. These encoded images are kept in memory for up to 30 minutes with a 100-image cap and a default 128 MiB total payload cap. The oldest unpinned response is evicted to satisfy either cap. The pinned startup Default response survives expiration and eviction but still counts toward both caps; if its payload leaves too little capacity for a new response, that request fails instead of exceeding the byte limit. The byte cap counts encoded payload bytes only, excluding store metadata and images or buffers still being rendered or encoded.
+
+Fast previews also use a process-local LRU of 128x128 base-render tiles, keyed by canonical map-generation settings, effective seed, scale, and world position. This lets repeated views, adjacent pans, and a return to a recent zoom reuse work without changing pixels. The default cache retains up to four settings/seed worlds and 2 GiB of RGBA tile pixels globally; set another budget with `-fast-preview-cache-mib`. Resource-region state is trimmed to 64 regions per field. One fully cached 1024x1024 view occupies exactly 4 MiB of tile pixels, a one-pixel horizontal pan can extend that scale to 4.5 MiB, and another fully retained scale adds 4 MiB. With no overlap, the default pixel budget is enough for 512 complete 1024x1024 views. The 2 GiB value is a limit, not an upfront allocation: startup warms only the built-in Default preset at 1024x1024, 1 meter per pixel, and preview seed `123456`, retaining about 4 MiB of tile pixels. The browser uses that seed for the initial random-seed Default preview so its first request can reuse the warm tiles. The limit covers cached tile pixels, not active output images, evaluator state, temporary buffers, or the separately capped encoded-image payloads, so it is not a total process-memory limit. The cache is cleared when the server restarts.
+
+Exact previews do not use the Fast tile cache: each request runs the queued Factorio process, passes the normalized map offset, and then applies the requested zoom transform to Factorio's temporary PNG. On startup, when Exact previews are configured, the server warms a pinned 512px Nauvis preview for the built-in Default preset so first page load can show an immediate exact image without waiting for autosize rendering.
 
 Preview parity tests compare rendered PNG pixels and write visual artifacts. The fast terrain integration cases disable resources, trees, rocks, enemies, cliffs, and decorations so terrain correctness is measured independently. Natural-layer cases isolate trees and cliffs, while resource-layer cases isolate ores, oil, and rocks. These tests measure regional correlation and coverage instead of requiring exact randomized entity pixels:
 
@@ -82,11 +92,14 @@ FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_RESOURCE_PREVI
 FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_PREVIEW_GALLERY=1 go test -run TestPreviewGalleryDefaultSeeds -v
 FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_NATURAL_PREVIEW_GALLERY=1 go test -run TestPreviewGalleryNaturalLayersDefaultSeeds -v
 FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_RESOURCE_PREVIEW_GALLERY=1 go test -run TestPreviewGalleryResourceLayersDefaultSeeds -v
+go test -run '^$' -bench '^BenchmarkFastPreviewCache1024$' -benchmem -benchtime=1x -count=3
 FACTMAPGEN_RENDER_SPEED_COMPARISON=fast-only go test -run TestRenderSpeedComparison1024 -count=1 -v
 FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_RENDER_SPEED_COMPARISON=1 go test -run TestRenderSpeedComparison1024 -count=1 -v
 ```
 
 The speed comparison is opt-in and runs one fixed-seed 1024x1024 render per engine. It reports render and PNG wall time, total process CPU time and utilization, and peak resident memory. Use `fast-only` while tuning the Go renderer so Factorio is not launched on every run.
+
+As a representative local result on a Ryzen 9 7950X, the standard fixed-seed 1024x1024 Fast preview at 1 meter per pixel had medians of 205 ms to render, 247 ms including lossless PNG encoding, 1.70 CPU-seconds, and about 28 MiB peak RSS. At the same output size and scale, the tile-cache benchmark measured 217 ms cold, 62 ms for a warm repeat, and 93-99 ms for an adjacent pan; cache timings exclude response-image encoding and are performance snapshots rather than service guarantees.
 
 Diff artifacts are written to `test-output/preview-diffs/` as Factorio, fast-renderer, amplified-diff, and JSON-statistics files. The exact-engine parity test runs automatically when a Factorio binary is discoverable. The fast tests are opt-in and enforce overall terrain and natural-feature correctness budgets rather than requiring exact pixels.
 
@@ -157,7 +170,7 @@ The bundled default templates are based on Wube's public `factorio-data` example
 - `POST /api/profiles/{name}/rename` with `{ "name": "new name" }`; login required
 - `POST /api/profiles/{name}/duplicate` with `{ "name": "copy name" }`; login required
 - `GET /api/profiles/{name}/download.zip`; public
-- `POST /api/profiles/{name}/preview` with `{ "engine": "fast", "size": 768, "planet": "nauvis", "zoom": "2.75", "lossless": false, "mapGen": {...} }`; public; `engine` may be `fast` for the built-in Go renderer or `factorio` for the exact Factorio renderer; omitted `engine` preserves the old exact renderer when Factorio is configured and otherwise falls back to fast; exact Factorio jobs are queued; guests are capped at 512 pixels and normal scale for Exact renders, while Fast renders accept arbitrary scale; `lossless` is signed-in only; `zoom` is a numeric meters-per-pixel string from `0.015625` through `64`, with legacy `out-N` and `in-N` values accepted; `mapGen` is optional and lets the server preview unsaved edits from a temporary file
+- `POST /api/profiles/{name}/preview` with `{ "engine": "fast", "size": 1024, "planet": "nauvis", "zoom": "2.75", "centerX": 256, "centerY": -128, "lossless": false, "mapGen": {...} }`; public; `engine` may be `fast` for the built-in Go renderer or `factorio` for the exact Factorio renderer; omitting `engine` selects Exact when Factorio is configured and otherwise selects Fast; Exact Factorio jobs are queued; guests are capped at 512 pixels for either engine, guest Exact renders are fixed at normal scale, and guest Fast renders accept arbitrary scale; `lossless` is signed-in only; `zoom` is a numeric meters-per-pixel string from `0.015625` through `64`, with legacy `out-N` and `in-N` values accepted; optional numeric `centerX` and `centerY` select the center in world meters, default to `0`, must be between `-1000000000` and `1000000000`, and are normalized to the `zoom` lattice; the response echoes normalized `centerX`, `centerY`, and `tilesPerPixel`; `mapGen` is optional and lets the server preview unsaved edits from a temporary file
 - `GET /api/previews/{token}.avif`, `.jpg`, or `.png`; public, short-lived preview image returned by a preview request
 
 Profile names may contain letters, numbers, spaces, dots, underscores, and hyphens.
