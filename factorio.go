@@ -19,10 +19,11 @@ import (
 )
 
 const (
-	factorioStableDownloadURL = "https://factorio.com/get-download/stable/headless/linux64"
-	factorioLatestReleasesURL = "https://factorio.com/api/latest-releases"
-	factorioSHA256URL         = "https://www.factorio.com/download/sha256sums/"
-	factorioUserAgent         = "FactMapGen"
+	factorioStableDownloadURL       = "https://factorio.com/get-download/stable/headless/linux64"
+	factorioExperimentalDownloadURL = "https://factorio.com/get-download/experimental/headless/linux64"
+	factorioLatestReleasesURL       = "https://factorio.com/api/latest-releases"
+	factorioSHA256URL               = "https://www.factorio.com/download/sha256sums/"
+	factorioUserAgent               = "FactMapGen"
 
 	factorioVersionCacheTTL  = 15 * time.Minute
 	factorioLatestCacheTTL   = 6 * time.Hour
@@ -30,6 +31,24 @@ const (
 	factorioQuickHTTPTimeout = 5 * time.Second
 	factorioInstallTimeout   = 15 * time.Minute
 )
+
+type factorioReleaseChannel string
+
+const (
+	factorioReleaseStable         factorioReleaseChannel = "stable"
+	factorioReleaseExperimental   factorioReleaseChannel = "experimental"
+	factorioDefaultReleaseChannel                        = factorioReleaseExperimental
+)
+
+func parseFactorioReleaseChannel(value string) (factorioReleaseChannel, error) {
+	channel := factorioReleaseChannel(strings.ToLower(strings.TrimSpace(value)))
+	switch channel {
+	case factorioReleaseStable, factorioReleaseExperimental:
+		return channel, nil
+	default:
+		return "", fmt.Errorf("must be %q or %q", factorioReleaseStable, factorioReleaseExperimental)
+	}
+}
 
 var (
 	errFactorioInstallUnmanaged = errors.New("Factorio install management is only available for the configured -factorio-dir install")
@@ -41,6 +60,7 @@ type factorioManager struct {
 
 	installDir     string
 	installManaged bool
+	releaseChannel factorioReleaseChannel
 	previewer      *previewer
 
 	downloadURL string
@@ -71,6 +91,7 @@ type factorioStatus struct {
 	Bin             string `json:"bin,omitempty"`
 	InstallDir      string `json:"installDir,omitempty"`
 	InstallManaged  bool   `json:"installManaged"`
+	ReleaseChannel  string `json:"releaseChannel"`
 	Version         string `json:"version,omitempty"`
 	VersionCachedAt string `json:"versionCachedAt,omitempty"`
 	LatestVersion   string `json:"latestVersion,omitempty"`
@@ -80,18 +101,34 @@ type factorioStatus struct {
 	Installing      bool   `json:"installing"`
 }
 
-type factorioLatestResponse struct {
-	Stable struct {
-		Headless string `json:"headless"`
-	} `json:"stable"`
+type factorioLatestBuilds struct {
+	Headless string `json:"headless"`
 }
 
-func newFactorioManager(installDir string, previewer *previewer, managed bool) *factorioManager {
+type factorioLatestResponse struct {
+	Stable       factorioLatestBuilds `json:"stable"`
+	Experimental factorioLatestBuilds `json:"experimental"`
+}
+
+func newFactorioManager(
+	installDir string,
+	previewer *previewer,
+	managed bool,
+	releaseChannel factorioReleaseChannel,
+) *factorioManager {
+	if releaseChannel != factorioReleaseStable && releaseChannel != factorioReleaseExperimental {
+		releaseChannel = factorioDefaultReleaseChannel
+	}
+	downloadURL := factorioExperimentalDownloadURL
+	if releaseChannel == factorioReleaseStable {
+		downloadURL = factorioStableDownloadURL
+	}
 	return &factorioManager{
 		installDir:     filepath.Clean(strings.TrimSpace(installDir)),
 		installManaged: managed,
+		releaseChannel: releaseChannel,
 		previewer:      previewer,
-		downloadURL:    factorioStableDownloadURL,
+		downloadURL:    downloadURL,
 		latestURL:      factorioLatestReleasesURL,
 		sha256URL:      factorioSHA256URL,
 	}
@@ -151,6 +188,7 @@ func (m *factorioManager) statusLocked(ctx context.Context, includeLatest bool) 
 		Bin:            bin,
 		InstallDir:     m.installDir,
 		InstallManaged: m.installManaged,
+		ReleaseChannel: string(m.releaseChannel),
 		Installing:     m.installing,
 	}
 
@@ -303,7 +341,10 @@ func (m *factorioManager) fetchLatestVersion(ctx context.Context) (string, error
 	if err := json.Unmarshal(body, &latest); err != nil {
 		return "", err
 	}
-	version := strings.TrimSpace(latest.Stable.Headless)
+	version := strings.TrimSpace(latest.Experimental.Headless)
+	if m.releaseChannel == factorioReleaseStable {
+		version = strings.TrimSpace(latest.Stable.Headless)
+	}
 	if _, err := parseFactorioVersionNumber(version); err != nil {
 		return "", err
 	}

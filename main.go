@@ -217,11 +217,16 @@ func main() {
 	flag.StringVar(&defaultPresetDir, "default-presets", defaultPresetDir, "read-only default map preset directory")
 	factorioBin := flag.String("factorio-bin", "", "optional path to a Factorio/headless binary for map previews")
 	factorioDir := flag.String("factorio-dir", "tools/factorio", "directory used to discover Factorio headless")
+	factorioChannelFlag := flag.String("factorio-channel", string(factorioDefaultReleaseChannel), "Factorio release channel for managed installs: stable or experimental")
 	previewTimeout := flag.Duration("preview-timeout", 60*time.Second, "maximum time allowed for one map preview render")
 	previewQueueSize := flag.Int("preview-queue", 8, "maximum number of queued map preview jobs")
 	fastPreviewCacheMiB := flag.Int64("fast-preview-cache-mib", defaultFastPreviewCacheBytes>>20, "Fast preview tile-cache budget in MiB")
 	authDB := flag.String("auth-db", "factmapgen-auth.db", "SQLite database path for users, sessions, and audit logs")
 	flag.Parse()
+	factorioChannel, err := parseFactorioReleaseChannel(*factorioChannelFlag)
+	if err != nil {
+		log.Fatalf("invalid -factorio-channel: %v", err)
+	}
 	fastPreviewCacheBytes, err := fastPreviewCacheBytesForMiB(*fastPreviewCacheMiB)
 	if err != nil {
 		log.Fatalf("invalid -fast-preview-cache-mib: %v", err)
@@ -262,7 +267,7 @@ func main() {
 		timeout:               *previewTimeout,
 		fastPreviewCacheBytes: fastPreviewCacheBytes,
 	}
-	factorio := newFactorioManager(*factorioDir, p, factorioInstallIsManaged(*factorioDir, *factorioBin))
+	factorio := newFactorioManager(*factorioDir, p, factorioInstallIsManaged(*factorioDir, *factorioBin), factorioChannel)
 
 	srv := &server{
 		store:        st,
@@ -310,6 +315,7 @@ func main() {
 	log.Printf("Default preset directory: %s", st.defaultRoot)
 	log.Printf("Custom preset directory: %s", st.customRoot)
 	log.Printf("Fast preview tile-cache budget: %d MiB", fastPreviewCacheBytes>>20)
+	log.Printf("Factorio managed-install release channel: %s", factorioChannel)
 	log.Printf("Auth database: %s", *authDB)
 	if initialAdminPassword != "" {
 		log.Printf("Created initial admin login: username=admin password=%s", initialAdminPassword)
@@ -474,7 +480,7 @@ func (s *server) handleFactorioInstall(w http.ResponseWriter, r *http.Request) {
 		writeFactorioError(w, err)
 		return
 	}
-	s.auth.logAudit(actor, "install", "factorio", status.Version, auditDetail(map[string]any{"latest": status.LatestVersion, "installDir": status.InstallDir}))
+	s.auth.logAudit(actor, "install", "factorio", status.Version, auditDetail(map[string]any{"latest": status.LatestVersion, "channel": status.ReleaseChannel, "installDir": status.InstallDir}))
 	writeJSON(w, http.StatusOK, status)
 }
 

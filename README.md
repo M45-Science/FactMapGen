@@ -52,10 +52,16 @@ In `map-gen-settings.json`, `seed: null` follows Factorio's public example file 
 
 ## Map Previews
 
-FactMapGen includes a fast built-in Go preview renderer for Nauvis-style maps. Its default Nauvis path ports Factorio-compatible seeded noise, elevation, climate fields, and all 21 terrain-tile probability expressions. Forest regions use the 15 Nauvis tree-species probability expressions with seed-stable discrete placement and Factorio's quantized chart blending; they reproduce the forest texture without claiming exact per-tree entity rolls. Cliffs use the deterministic Nauvis cliff fields, four-tile placement lattice, and crossing rules. Iron, copper, coal, stone, and uranium use Factorio's resource candidate stream, patch selection, starting-area placement, blob noise, and control levers. Crude oil uses the same validated patch field, Factorio's chunk-ordered random-penalty stream, and the oil well's chart footprint; only the final entity-autoplace roll remains approximated because it shares state with other entity autoplacers. Rocks use the Nauvis rock-density and climate expressions. Enemy bases use Factorio's distance-scaled spot quantities, 512-tile candidate regions, three seeded blob-noise scales, starting-area exclusion, spawner and worm distance tiers, and chunk-ordered random penalties. Their final entity collision order is represented with global deterministic spacing cells, preserving nest regions and chart texture without claiming exact individual entities. Ore and rock chart pixels use a stable world-position dither because Factorio's exact per-entity placement roll shares a chunk RNG stream with every other entity autoplacer. The preview toolbar also offers an Exact engine that generates real Factorio map preview PNGs when a Factorio/headless binary is available. Install the Linux headless package into the default discovery path with:
+FactMapGen includes a fast built-in Go preview renderer for Nauvis-style maps. Its default Nauvis path ports Factorio-compatible seeded noise, elevation, climate fields, and all 21 terrain-tile probability expressions. Forest regions use the 15 Nauvis tree-species probability expressions with seed-stable discrete placement and Factorio's quantized chart blending; they reproduce the forest texture without claiming exact per-tree entity rolls. Cliffs use the deterministic Nauvis cliff fields, four-tile placement lattice, and crossing rules. Iron, copper, coal, stone, and uranium use Factorio's resource candidate stream, patch selection, starting-area placement, blob noise, and control levers. Crude oil uses the same validated patch field, Factorio's chunk-ordered random-penalty stream, and the oil well's chart footprint; only the final entity-autoplace roll remains approximated because it shares state with other entity autoplacers. Rocks use the Nauvis rock-density and climate expressions. Enemy bases use Factorio's distance-scaled spot quantities, 512-tile candidate regions, three seeded blob-noise scales, starting-area exclusion, spawner and worm distance tiers, and chunk-ordered random penalties. Their final entity collision order is represented with global deterministic spacing cells, preserving nest regions and chart texture without claiming exact individual entities. Ore and rock chart pixels use a stable world-position dither because Factorio's exact per-entity placement roll shares a chunk RNG stream with every other entity autoplacer. The preview toolbar also offers an Exact engine that generates real Factorio map preview PNGs when a Factorio/headless binary is available. Install the latest experimental Linux headless package into the default discovery path with:
 
 ```sh
 ./scripts/install-factorio-headless.sh
+```
+
+The standalone installer accepts the release channel as its second argument; use stable explicitly when needed:
+
+```sh
+./scripts/install-factorio-headless.sh tools/factorio stable
 ```
 
 Then restart FactMapGen:
@@ -64,13 +70,19 @@ Then restart FactMapGen:
 go run . -addr :8080 -presets presets
 ```
 
-The server auto-discovers `tools/factorio/bin/x64/factorio`. You can also point at another install:
+The server auto-discovers `tools/factorio/bin/x64/factorio`. Managed installs and update checks use the experimental channel by default. Select stable at boot with:
+
+```sh
+go run . -factorio-channel stable
+```
+
+You can also point at another install:
 
 ```sh
 go run . -factorio-bin /opt/factorio/bin/x64/factorio
 ```
 
-The main web page shows the detected Factorio binary version and flags when the latest stable headless release is newer. Version and latest-release checks are cached by the server. Admin users can refresh Factorio status from the Admin panel and, when the active binary comes from `-factorio-dir`, delete that managed install and install a fresh stable headless copy. The fast renderer supports Nauvis-style maps, including the Lakes and Island elevation options. The Exact engine's preview surface selector offers the known Factorio planets: Nauvis plus the Space Age planets Vulcanus, Gleba, Fulgora, and Aquilo.
+The main web page shows the detected Factorio binary version and flags when the latest headless release on the configured channel is newer. Version and latest-release checks are cached by the server. The Admin panel shows the active release channel. When the active binary comes from `-factorio-dir`, administrators can delete that managed install and install a fresh headless copy from that channel. The fast renderer supports Nauvis-style maps, including the Lakes and Island elevation options. The Exact engine's preview surface selector offers the known Factorio planets: Nauvis plus the Space Age planets Vulcanus, Gleba, Fulgora, and Aquilo.
 
 Preview scale is an arbitrary numeric value in meters per output pixel from `0.015625` through `64`, subject to the Exact engine's 16,384-pixel source-render limit. Values above `1` show more map area and values below `1` zoom into whole map tiles. Legacy API values such as `out-4` and `in-3` remain accepted. In the browser, drag a rendered preview to pan, use the mouse wheel to zoom around the pointer, and use Reset to return to `(0, 0)` at 1 meter per pixel. Both engines accept world-space `centerX` and `centerY` coordinates; the server snaps each coordinate to the selected scale's pixel lattice so adjacent views align exactly.
 
@@ -163,7 +175,7 @@ The bundled default templates are based on Wube's public `factorio-data` example
 - `PUT /api/users/{id}` admin only
 - `DELETE /api/users/{id}` admin only
 - `GET /api/audit?limit=200` admin only
-- `GET /api/factorio` admin only; returns cached Factorio binary, version, latest stable release, and install status
+- `GET /api/factorio` admin only; returns the configured release channel, cached Factorio binary and version, latest channel release, and install status
 - `POST /api/factorio/install` admin only; deletes and reinstalls the managed `-factorio-dir` headless install
 - `GET /api/profiles`; public
 - `POST /api/profiles` with `{ "name": "...", "preset": "default" }`; login required

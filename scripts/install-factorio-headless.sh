@@ -3,7 +3,15 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_DIR="${1:-"$ROOT_DIR/tools/factorio"}"
-DOWNLOAD_URL="${FACTORIO_DOWNLOAD_URL:-https://factorio.com/get-download/stable/headless/linux64}"
+RELEASE_CHANNEL="${2:-${FACTORIO_RELEASE_CHANNEL:-experimental}}"
+case "$RELEASE_CHANNEL" in
+  stable|experimental) ;;
+  *)
+    echo "release channel must be stable or experimental" >&2
+    exit 2
+    ;;
+esac
+DOWNLOAD_URL="${FACTORIO_DOWNLOAD_URL:-https://factorio.com/get-download/$RELEASE_CHANNEL/headless/linux64}"
 ARCHIVE_PATH="$INSTALL_DIR/factorio_headless.tar.xz"
 
 command -v curl >/dev/null 2>&1 || {

@@ -1508,6 +1508,54 @@ func TestFactorioVersionNewer(t *testing.T) {
 	}
 }
 
+func TestFactorioReleaseChannels(t *testing.T) {
+	for _, test := range []struct {
+		input string
+		want  factorioReleaseChannel
+	}{
+		{input: "stable", want: factorioReleaseStable},
+		{input: " EXPERIMENTAL ", want: factorioReleaseExperimental},
+	} {
+		got, err := parseFactorioReleaseChannel(test.input)
+		if err != nil || got != test.want {
+			t.Errorf("parseFactorioReleaseChannel(%q) = %q, %v; want %q", test.input, got, err, test.want)
+		}
+	}
+	if _, err := parseFactorioReleaseChannel("latest"); err == nil {
+		t.Fatal("parseFactorioReleaseChannel accepted an unknown channel")
+	}
+	if factorioDefaultReleaseChannel != factorioReleaseExperimental {
+		t.Fatalf("default release channel = %q, want experimental", factorioDefaultReleaseChannel)
+	}
+}
+
+func TestFactorioManagerSelectsReleaseChannel(t *testing.T) {
+	latest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"stable":{"headless":"2.0.77"},"experimental":{"headless":"2.1.12"}}`))
+	}))
+	defer latest.Close()
+
+	for _, test := range []struct {
+		channel     factorioReleaseChannel
+		wantVersion string
+		wantURL     string
+	}{
+		{channel: factorioReleaseStable, wantVersion: "2.0.77", wantURL: factorioStableDownloadURL},
+		{channel: factorioReleaseExperimental, wantVersion: "2.1.12", wantURL: factorioExperimentalDownloadURL},
+	} {
+		manager := newFactorioManager("tools/factorio", nil, true, test.channel)
+		manager.latestURL = latest.URL
+		got, err := manager.fetchLatestVersion(context.Background())
+		if err != nil {
+			t.Fatalf("fetch latest %s: %v", test.channel, err)
+		}
+		if got != test.wantVersion || manager.downloadURL != test.wantURL {
+			t.Errorf("channel %s = version %q URL %q, want %q and %q", test.channel, got, manager.downloadURL, test.wantVersion, test.wantURL)
+		}
+	}
+}
+
 func TestFactorioStatusCachesVersionAndChecksLatest(t *testing.T) {
 	root := t.TempDir()
 	installDir := filepath.Join(root, "factorio")
@@ -1523,17 +1571,18 @@ func TestFactorioStatusCachesVersionAndChecksLatest(t *testing.T) {
 
 	latest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"stable":{"headless":"2.0.72"}}`))
+		_, _ = w.Write([]byte(`{"stable":{"headless":"2.0.72"},"experimental":{"headless":"2.1.12"}}`))
 	}))
 	defer latest.Close()
 
 	preview := &previewer{factorioBin: bin}
-	manager := newFactorioManager(installDir, preview, true)
+	manager := newFactorioManager(installDir, preview, true, factorioReleaseExperimental)
 	manager.latestURL = latest.URL
 
 	first := manager.status(context.Background(), true)
-	if first.Version != "2.0.70" || first.LatestVersion != "2.0.72" || !first.UpdateAvailable {
-		t.Fatalf("first status = %#v, want current 2.0.70 with 2.0.72 update", first)
+	if first.Version != "2.0.70" || first.LatestVersion != "2.1.12" || !first.UpdateAvailable ||
+		first.ReleaseChannel != "experimental" {
+		t.Fatalf("first status = %#v, want current 2.0.70 with 2.1.12 experimental update", first)
 	}
 	second := manager.status(context.Background(), true)
 	if second.Version != "2.0.70" || !second.UpdateAvailable {

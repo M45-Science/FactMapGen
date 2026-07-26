@@ -1031,8 +1031,18 @@ function currentFactorioStatus() {
     previewEnabled: Boolean(state.config.factorioBin),
     bin: state.config.factorioBin || "",
     installManaged: false,
+    releaseChannel: "experimental",
     updateAvailable: false,
   };
+}
+
+function factorioReleaseChannel(status = currentFactorioStatus()) {
+  return status.releaseChannel === "stable" ? "stable" : "experimental";
+}
+
+function factorioReleaseChannelLabel(status = currentFactorioStatus()) {
+  const channel = factorioReleaseChannel(status);
+  return channel.charAt(0).toUpperCase() + channel.slice(1);
 }
 
 function applyFactorioStatus(status) {
@@ -1051,6 +1061,7 @@ function renderFactorioStatus(status = currentFactorioStatus()) {
   const version = status.version || "";
   const latest = status.latestVersion || "";
   const updateAvailable = Boolean(status.updateAvailable && latest);
+  const channel = factorioReleaseChannel(status);
   const unavailable = !version && !status.previewEnabled && !fastPreviewAvailable();
 
   els.factorioVersion.classList.toggle("update", updateAvailable);
@@ -1060,7 +1071,7 @@ function renderFactorioStatus(status = currentFactorioStatus()) {
   if (status.installing) {
     els.factorioVersion.textContent = "Factorio: installing...";
   } else if (version) {
-    els.factorioVersion.textContent = updateAvailable ? `Factorio ${version} - ${latest} available` : `Factorio ${version}`;
+    els.factorioVersion.textContent = updateAvailable ? `Factorio ${version} - ${channel} ${latest} available` : `Factorio ${version}`;
   } else if (status.previewEnabled) {
     els.factorioVersion.textContent = "Factorio: version unavailable";
   } else if (fastPreviewAvailable()) {
@@ -1074,7 +1085,10 @@ function renderFactorioAdmin(status = currentFactorioStatus()) {
   if (!els.factorioAdminStatus) return;
   els.factorioAdminStatus.innerHTML = "";
   appendFactorioAdminLine("Current", status.version || (status.previewEnabled ? "version unavailable" : "not installed"));
-  appendFactorioAdminLine("Latest stable", status.latestVersion || "not checked");
+  const channel = factorioReleaseChannel(status);
+  const channelLabel = factorioReleaseChannelLabel(status);
+  appendFactorioAdminLine("Release channel", channelLabel);
+  appendFactorioAdminLine(`Latest ${channel}`, status.latestVersion || "not checked");
   appendFactorioAdminLine("Binary", status.bin || "not configured");
   appendFactorioAdminLine("Install dir", status.installDir || "not configured");
   appendFactorioAdminLine("Managed install", status.installManaged ? "yes" : "no");
@@ -1087,9 +1101,9 @@ function renderFactorioAdmin(status = currentFactorioStatus()) {
 
   els.refreshFactorioBtn.disabled = Boolean(status.installing);
   els.installFactorioBtn.disabled = !status.installManaged || Boolean(status.installing);
-  els.installFactorioBtn.textContent = status.installing ? "Installing..." : "Delete and reinstall stable";
+  els.installFactorioBtn.textContent = status.installing ? "Installing..." : `Delete and reinstall ${channel}`;
   els.installFactorioBtn.title = status.installManaged
-    ? "Delete the managed Factorio install and install the latest stable headless build."
+    ? `Delete the managed Factorio install and install the latest ${channel} headless build.`
     : "Install management is available only when the active binary is from -factorio-dir.";
 }
 
@@ -1117,7 +1131,8 @@ async function refreshFactorioStatus(options = {}) {
 async function installFactorio() {
   const status = currentFactorioStatus();
   if (!status.installManaged || status.installing) return;
-  if (!window.confirm("Delete the current managed Factorio install and install a fresh stable headless copy?")) return;
+  const channel = factorioReleaseChannel(status);
+  if (!window.confirm(`Delete the current managed Factorio install and install a fresh ${channel} headless copy?`)) return;
 
   renderFactorioAdmin({ ...status, installing: true });
   renderFactorioStatus({ ...status, installing: true });
@@ -1141,7 +1156,7 @@ function notifyFactorioUpdate() {
     return;
   }
   if (!state.session?.isAdmin || factorioUpdateNoticeShown || !status.latestVersion) return;
-  showToast(`Factorio ${status.latestVersion} is available.`);
+  showToast(`Factorio ${status.latestVersion} is available on the ${factorioReleaseChannel(status)} channel.`);
   factorioUpdateNoticeShown = true;
 }
 
