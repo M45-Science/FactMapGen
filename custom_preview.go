@@ -472,9 +472,8 @@ func (w *fastPreviewWorld) renderOverlays(
 	originX, originY, tpp float64,
 ) error {
 	if w.resources != nil && w.resources.hasOil() {
-		bounds := img.Bounds()
 		oilMask, err := w.resources.oilPreviewMask(
-			ctx, w.settings, originX, originY, tpp, bounds.Dx(), bounds.Dy(),
+			ctx, w.settings, img, originX, originY, tpp,
 		)
 		if err != nil {
 			return err

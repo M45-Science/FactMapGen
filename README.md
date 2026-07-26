@@ -89,6 +89,7 @@ FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio go test -run TestExactPre
 FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_FAST_PREVIEW_PARITY=1 go test -run TestFastPreviewMatchesFactorioPreview
 FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_NATURAL_PREVIEW_PARITY=1 go test -run TestFastNaturalLayersMatchFactorioPreviewRegions -v
 FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_RESOURCE_PREVIEW_PARITY=1 go test -run TestFastResourceLayersMatchFactorioPreviewRegions -v
+FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_OIL_PREVIEW_PARITY=1 go test -run TestFastOilLayerMatchesFactorioPreview -v
 FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_ENEMY_PREVIEW_PARITY=1 go test -run TestFastEnemyLayersMatchFactorioPreviewRegions -v
 FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_PREVIEW_GALLERY=1 go test -run TestPreviewGalleryDefaultSeeds -v
 FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_NATURAL_PREVIEW_GALLERY=1 go test -run TestPreviewGalleryNaturalLayersDefaultSeeds -v
@@ -100,7 +101,7 @@ FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_RENDER_SPEED_C
 
 The speed comparison is opt-in and runs one fixed-seed 1024x1024 render per engine. It reports render and PNG wall time, total process CPU time and utilization, and peak resident memory. Use `fast-only` while tuning the Go renderer so Factorio is not launched on every run.
 
-As a representative local result on a Ryzen 9 7950X, the standard fixed-seed 1024x1024 Fast preview at 1 meter per pixel had medians of 205 ms to render, 247 ms including lossless PNG encoding, 1.70 CPU-seconds, and about 28 MiB peak RSS. At the same output size and scale, the tile-cache benchmark measured 233 ms cold, 67 ms for a warm repeat, and 96-98 ms for an adjacent pan; cache timings exclude response-image encoding and are performance snapshots rather than service guarantees.
+As a representative local result on a Ryzen 9 7950X, the standard fixed-seed 1024x1024 Fast preview at 1 meter per pixel had medians of 197 ms to render, 239 ms including lossless PNG encoding, 1.61 CPU-seconds, and about 25.2 MiB peak RSS. At the same output size and scale, the tile-cache benchmark measured 233 ms cold, 67 ms for a warm repeat, and 96-98 ms for an adjacent pan; cache timings exclude response-image encoding and are performance snapshots rather than service guarantees.
 
 Diff artifacts are written to `test-output/preview-diffs/` as Factorio, fast-renderer, amplified-diff, and JSON-statistics files. The exact-engine parity test runs automatically when a Factorio binary is discoverable. The fast tests are opt-in and enforce overall terrain and natural-feature correctness budgets rather than requiring exact pixels.
 
@@ -114,7 +115,7 @@ The current ten-seed results and interpretation are documented in
 [`docs/render-comparison.md`](docs/render-comparison.md). Generated gallery
 artifacts remain local under the ignored `test-output/` directory.
 
-The enemy-layer comparison writes its two fixed-seed 1024x1024 Factorio, Fast, amplified-diff, and JSON-statistics artifacts beneath `test-output/preview-diffs/enemies-seed-*/`.
+The isolated oil and enemy comparisons each use fixed seed `123456` at 1024x1024 and 1 meter per pixel. They write Factorio, Fast, amplified-diff, and JSON-statistics artifacts beneath `test-output/preview-diffs/oil-seed-123456/` and `test-output/preview-diffs/enemies-seed-123456/`. Factorio references are content-addressed and reused; these artifact directories remain ignored by Git.
 
 ## Presets
 

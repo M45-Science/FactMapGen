@@ -19,8 +19,8 @@ func defaultFactorioEnemySettings(seed uint32) fastPreviewSettings {
 func TestFactorioEnemyExpressionParameters(t *testing.T) {
 	settings := defaultFactorioEnemySettings(123456)
 	evaluator := newFactorioEnemyEvaluator(settings)
-	if evaluator.startingAreaRadius != 192 {
-		t.Fatalf("starting area radius = %g, want 192", evaluator.startingAreaRadius)
+	if evaluator.startingAreaRadius != 150 {
+		t.Fatalf("starting area radius = %g, want 150", evaluator.startingAreaRadius)
 	}
 	for _, test := range []struct {
 		distance      float64
@@ -41,6 +41,21 @@ func TestFactorioEnemyExpressionParameters(t *testing.T) {
 		}
 		if got := evaluator.frequencyAtDistance(test.distance); math.Abs(got-test.wantFrequency) > 1e-15 {
 			t.Errorf("frequency at %g = %.12g, want %.12g", test.distance, got, test.wantFrequency)
+		}
+	}
+	for _, test := range []struct {
+		distance float64
+		want     int
+	}{
+		{distance: 0, want: 1},
+		{distance: 974, want: 1},
+		{distance: 975, want: 2},
+		{distance: 1949, want: 2},
+		{distance: 1950, want: 3},
+		{distance: 4800, want: 3},
+	} {
+		if got := evaluator.populationSelectionsAtDistance(test.distance); got != test.want {
+			t.Errorf("population selections at %g = %d, want %d", test.distance, got, test.want)
 		}
 	}
 }

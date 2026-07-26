@@ -10,7 +10,7 @@ import (
 const (
 	factorioEnemyRegionSize       = int64(512)
 	factorioEnemyCandidateCount   = 100
-	factorioEnemyCandidateSpacing = 25.6
+	factorioEnemyCandidateSpacing = 45.254833995939045
 	factorioEnemyNoiseSeed        = uint32(123)
 	factorioEnemyCullRadius       = 128.0
 	factorioEnemySpawnerCell      = int64(20)
@@ -51,7 +51,7 @@ func newFactorioEnemyEvaluator(settings fastPreviewSettings) *factorioEnemyEvalu
 }
 
 func factorioEnemyStartingAreaRadius(startingArea float64) float64 {
-	return 192 * math.Sqrt(clampFloat(positiveOr(startingArea, 1), 1.0/6.0, 6))
+	return 150 * math.Sqrt(clampFloat(positiveOr(startingArea, 1), 1.0/6.0, 6))
 }
 
 func (e *factorioEnemyEvaluator) intensityAtDistance(distance float64) float64 {
@@ -64,6 +64,10 @@ func (e *factorioEnemyEvaluator) radiusAtDistance(distance float64) float64 {
 
 func (e *factorioEnemyEvaluator) frequencyAtDistance(distance float64) float64 {
 	return (0.00001 + 0.000003*e.intensityAtDistance(distance)) * max(0, e.control.frequency)
+}
+
+func (e *factorioEnemyEvaluator) populationSelectionsAtDistance(distance float64) int {
+	return min(3, 1+int(e.intensityAtDistance(distance)/3))
 }
 
 func (e *factorioEnemyEvaluator) spotQuantityAtDistance(distance float64) float64 {
@@ -203,6 +207,12 @@ var factorioEnemyOverviewPrototypes = [...]factorioEnemyPrototype{
 	{distanceFactor: 8, seed: 5},
 }
 
+type factorioEnemyPlacementCandidate struct {
+	value float64
+	x     int64
+	y     int64
+}
+
 func (e *factorioEnemyEvaluator) prototypeValueAt(tileX, tileY int64, prototype factorioEnemyPrototype) float64 {
 	probability, distance := e.baseProbabilityAndDistanceAt(float64(tileX), float64(tileY))
 	return e.prototypeValueAtPoint(tileX, tileY, probability, distance, prototype)
@@ -292,9 +302,8 @@ func renderFactorioEnemyGrid(
 			return ctx.Err()
 		}
 		for cellX := minCellX; cellX <= maxCellX; cellX++ {
-			bestValue := 0.0
-			bestX := int64(0)
-			bestY := int64(0)
+			var candidates [4]factorioEnemyPlacementCandidate
+			candidateCount := 0
 			for sample := 0; sample < samples; sample++ {
 				tileX := cellX*cellSize + int64(fastHashUnit(evaluator.seed, uint32(0x454e5800+sample), cellX, cellY)*float64(cellSize))
 				tileY := cellY*cellSize + int64(fastHashUnit(evaluator.seed, uint32(0x454e5900+sample), cellX, cellY)*float64(cellSize))
@@ -302,22 +311,37 @@ func renderFactorioEnemyGrid(
 					continue
 				}
 				probability, distance := evaluator.baseProbabilityAndDistanceAt(float64(tileX), float64(tileY))
+				bestValue := 0.0
 				for _, prototype := range prototypes {
 					value := evaluator.prototypeValueAtPoint(tileX, tileY, probability, distance, prototype)
 					if value > bestValue {
 						bestValue = value
-						bestX = tileX
-						bestY = tileY
 					}
 				}
+				if bestValue > 0 {
+					candidates[candidateCount] = factorioEnemyPlacementCandidate{value: bestValue, x: tileX, y: tileY}
+					candidateCount++
+				}
 			}
-			if bestValue <= 0 {
+			if candidateCount == 0 {
 				continue
 			}
-			if skipOccupied && factorioEnemyCenterOccupied(img, originX, originY, tilesPerPixel, bestX, bestY) {
-				continue
+			for index := 1; index < candidateCount; index++ {
+				for current := index; current > 0 && candidates[current].value > candidates[current-1].value; current-- {
+					candidates[current], candidates[current-1] = candidates[current-1], candidates[current]
+				}
 			}
-			paintFactorioEnemyFootprint(img, originX, originY, tilesPerPixel, bestX, bestY, footprintRadius)
+			centerX := float64(cellX*cellSize) + float64(cellSize)/2
+			centerY := float64(cellY*cellSize) + float64(cellSize)/2
+			distance := factorioDistanceFromNearestPoint(centerX, centerY, evaluator.starts, math.Inf(1))
+			selections := min(candidateCount, evaluator.populationSelectionsAtDistance(distance))
+			for selection := 0; selection < selections; selection++ {
+				candidate := candidates[selection]
+				if (skipOccupied || selection > 0) && factorioEnemyCenterOccupied(img, originX, originY, tilesPerPixel, candidate.x, candidate.y) {
+					continue
+				}
+				paintFactorioEnemyFootprint(img, originX, originY, tilesPerPixel, candidate.x, candidate.y, footprintRadius)
+			}
 		}
 	}
 	return nil
@@ -349,23 +373,30 @@ func renderFactorioEnemyOverview(
 			return ctx.Err()
 		}
 		for cellX := minCellX; cellX <= maxCellX; cellX++ {
-			rasterX := cellX*step + int64(fastHashUnit(evaluator.seed, 0x454f5800, cellX, cellY)*float64(step))
-			rasterY := cellY*step + int64(fastHashUnit(evaluator.seed, 0x454f5900, cellX, cellY)*float64(step))
-			px := int(rasterX - rasterOriginX)
-			py := int(rasterY - rasterOriginY)
-			if px < 0 || px >= width || py < 0 || py >= height {
-				continue
-			}
-			tileX := int64(math.Floor(originX + (float64(px)+0.5)*tilesPerPixel))
-			tileY := int64(math.Floor(originY + (float64(py)+0.5)*tilesPerPixel))
-			if fastOutOfMapBounds(settings, float64(tileX), float64(tileY)) {
-				continue
-			}
-			probability, distance := evaluator.baseProbabilityAndDistanceAt(float64(tileX), float64(tileY))
-			for _, prototype := range factorioEnemyOverviewPrototypes {
-				if evaluator.prototypeValueAtPoint(tileX, tileY, probability, distance, prototype) > 0 {
-					paintFactorioEnemyPixel(img, px, py)
-					break
+			centerPX := float64(cellX*step-rasterOriginX) + float64(step)/2
+			centerPY := float64(cellY*step-rasterOriginY) + float64(step)/2
+			centerX := originX + centerPX*tilesPerPixel
+			centerY := originY + centerPY*tilesPerPixel
+			distance := factorioDistanceFromNearestPoint(centerX, centerY, evaluator.starts, math.Inf(1))
+			for sample := 0; sample < evaluator.populationSelectionsAtDistance(distance); sample++ {
+				rasterX := cellX*step + int64(fastHashUnit(evaluator.seed, uint32(0x454f5800+sample), cellX, cellY)*float64(step))
+				rasterY := cellY*step + int64(fastHashUnit(evaluator.seed, uint32(0x454f5900+sample), cellX, cellY)*float64(step))
+				px := int(rasterX - rasterOriginX)
+				py := int(rasterY - rasterOriginY)
+				if px < 0 || px >= width || py < 0 || py >= height {
+					continue
+				}
+				tileX := int64(math.Floor(originX + (float64(px)+0.5)*tilesPerPixel))
+				tileY := int64(math.Floor(originY + (float64(py)+0.5)*tilesPerPixel))
+				if fastOutOfMapBounds(settings, float64(tileX), float64(tileY)) {
+					continue
+				}
+				probability, sampleDistance := evaluator.baseProbabilityAndDistanceAt(float64(tileX), float64(tileY))
+				for _, prototype := range factorioEnemyOverviewPrototypes {
+					if evaluator.prototypeValueAtPoint(tileX, tileY, probability, sampleDistance, prototype) > 0 {
+						paintFactorioEnemyPixel(img, px, py)
+						break
+					}
 				}
 			}
 		}

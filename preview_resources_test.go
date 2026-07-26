@@ -17,6 +17,7 @@ import (
 const (
 	resourcePreviewParityEnv  = "FACTMAPGEN_RESOURCE_PREVIEW_PARITY"
 	resourcePreviewGalleryEnv = "FACTMAPGEN_RESOURCE_PREVIEW_GALLERY"
+	oilPreviewParityEnv       = "FACTMAPGEN_OIL_PREVIEW_PARITY"
 )
 
 type resourcePreviewStats struct {
@@ -97,6 +98,51 @@ func TestFastResourceLayersMatchFactorioPreviewRegions(t *testing.T) {
 				stats.OilFastToGameInk,
 				stats.RockRegionCorrelation,
 				stats.RockFastToGameInk,
+			)
+		})
+	}
+}
+
+func TestFastOilLayerMatchesFactorioPreview(t *testing.T) {
+	if os.Getenv(oilPreviewParityEnv) != "1" {
+		t.Skipf("set %s=1 to compare isolated oil placement against Factorio", oilPreviewParityEnv)
+	}
+	if testing.Short() {
+		t.Skip("skipping oil Factorio integration test in short mode")
+	}
+	const (
+		outputSize    = 1024
+		tilesPerPixel = 1.0
+	)
+	factorioBin := ""
+	store := newTestStore(t)
+	_, sourcePath := previewParityProfile(t, store, "default:Default")
+	mapGenPath := oilLayerMapGenPath(t, sourcePath)
+
+	for _, seed := range []string{"123456"} {
+		t.Run("seed-"+seed, func(t *testing.T) {
+			factorioImg, _ := cachedFactorioResourcePreview(
+				t, &factorioBin, mapGenPath, "oil-only", seed, outputSize, tilesPerPixel,
+			)
+			fastImg := renderFastResourceLayer(t, mapGenPath, seed, outputSize, tilesPerPixel)
+			stats := measureResourcePreview(seed, tilesPerPixel, factorioImg, fastImg)
+			writeOilPreviewArtifacts(t, seed, factorioImg, fastImg, stats)
+
+			if stats.FactorioOilPixels == 0 || stats.FastOilPixels == 0 {
+				t.Fatalf("oil mask is empty: Factorio=%d fast=%d", stats.FactorioOilPixels, stats.FastOilPixels)
+			}
+			if stats.OilRegionCorrelation < 0.75 || stats.OilRecall < 0.35 ||
+				stats.OilPrecision < 0.40 || stats.OilFastToGameInk < 0.50 ||
+				stats.OilFastToGameInk > 1.50 {
+				t.Errorf(
+					"oil placement diverged: correlation=%.3f recall=%.3f precision=%.3f fast/game ink=%.3f",
+					stats.OilRegionCorrelation, stats.OilRecall, stats.OilPrecision, stats.OilFastToGameInk,
+				)
+			}
+			t.Logf(
+				"oil correlation=%.3f recall=%.3f precision=%.3f fast/game ink=%.3f pixels=%d/%d",
+				stats.OilRegionCorrelation, stats.OilRecall, stats.OilPrecision,
+				stats.OilFastToGameInk, stats.FastOilPixels, stats.FactorioOilPixels,
 			)
 		})
 	}
@@ -232,6 +278,44 @@ func resourceLayerMapGenPath(t *testing.T, sourcePath string, rocks bool) string
 		t.Fatalf("write resource-layer map settings: %v", err)
 	}
 	return path
+}
+
+func oilLayerMapGenPath(t *testing.T, sourcePath string) string {
+	t.Helper()
+	body, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read oil-layer map settings: %v", err)
+	}
+	body, err = oilLayerMapGenJSON(body)
+	if err != nil {
+		t.Fatalf("build oil-layer map settings: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "oil-only-map-gen-settings.json")
+	if err := os.WriteFile(path, append(body, '\n'), 0o644); err != nil {
+		t.Fatalf("write oil-layer map settings: %v", err)
+	}
+	return path
+}
+
+func oilLayerMapGenJSON(body []byte) ([]byte, error) {
+	body, err := resourceLayersMapGenJSON(body, false)
+	if err != nil {
+		return nil, err
+	}
+	var root map[string]any
+	if err := json.Unmarshal(body, &root); err != nil {
+		return nil, err
+	}
+	controls := fastMap(root["autoplace_controls"])
+	for _, params := range factorioResourceCatalog {
+		value := 0.0
+		if params.name == "crude-oil" {
+			value = 1
+		}
+		controls[params.name] = map[string]any{"frequency": value, "size": value, "richness": value}
+	}
+	root["autoplace_controls"] = controls
+	return json.MarshalIndent(root, "", "  ")
 }
 
 func resourceLayersMapGenJSON(body []byte, rocks bool) ([]byte, error) {
@@ -419,6 +503,30 @@ func writeResourcePreviewArtifacts(
 	}
 	if err := os.WriteFile(filepath.Join(dir, "stats.json"), append(body, '\n'), 0o644); err != nil {
 		t.Fatalf("write resource preview stats: %v", err)
+	}
+}
+
+func writeOilPreviewArtifacts(
+	t *testing.T,
+	seed string,
+	factorioImg, fastImg image.Image,
+	stats resourcePreviewStats,
+) {
+	t.Helper()
+	_, diffImg, _ := previewImageDiff(factorioImg, fastImg)
+	dir := filepath.Join("test-output", "preview-diffs", "oil-seed-"+seed)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("create oil preview artifacts: %v", err)
+	}
+	writePNGArtifact(t, filepath.Join(dir, "factorio.png"), factorioImg)
+	writePNGArtifact(t, filepath.Join(dir, "fast.png"), fastImg)
+	writePNGArtifact(t, filepath.Join(dir, "diff.png"), diffImg)
+	body, err := json.MarshalIndent(stats, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal oil preview stats: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "stats.json"), append(body, '\n'), 0o644); err != nil {
+		t.Fatalf("write oil preview stats: %v", err)
 	}
 }
 

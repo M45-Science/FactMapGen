@@ -9,12 +9,12 @@ amplified RGB difference image on the right.
 
 ## Results
 
-| Layer set | Comparison | Ten-seed result |
+| Layer set | Comparison | Result |
 | --- | --- | --- |
 | Terrain only | 256 px at 1 meter per pixel | Mean changed pixels: **0.00061%**; worst seed: **0.00153%**; water-mask differences: **0%** |
 | Terrain, trees, and cliffs | 512 px at 2 meters per pixel | Mean changed pixels: **14.63%**; mean absolute channel delta: **2.27 / 255**; mean water-mask difference: **0.000038%** |
-| Terrain, resources, oil, and rocks | 512 px at 2 meters per pixel | Mean ore-region correlation: **0.837**; mean ore coverage ratio: **0.978x**; mean rock-region correlation: **0.895**; mean rock coverage ratio: **1.105x**; meaningful-seed oil-region correlation: **0.914**; aggregate oil coverage ratio: **1.032x** |
-| Terrain and enemy bases | 1024 px at 1 meter per pixel, two isolated validation seeds | Enemy-region correlation: **0.927**, **0.887**; coverage ratio: **1.064x**, **1.082x**; starting-area edge delta: **6.1**, **2.7 tiles** |
+| Terrain, resources, oil, and rocks | 512 px at 2 meters per pixel | Mean ore-region correlation: **0.837**; mean ore coverage ratio: **0.978x**; mean rock-region correlation: **0.895**; mean rock coverage ratio: **1.105x**; isolated fixed-seed oil correlation: **0.781**; recall: **0.531**; precision: **0.427**; coverage: **1.219x** |
+| Terrain and enemy bases | 1024 px at 1 meter per pixel, isolated seed 123456 | Enemy-region correlation: **0.925**; coverage ratio: **1.093x**; starting-area edge delta: **0.9 tiles** |
 
 ## Interpretation
 
@@ -33,15 +33,16 @@ amplified RGB difference image on the right.
   entity counts make per-seed coverage ratios noisier; the largest rock ratio is
   1.792x.
 - Oil placement follows the validated patch field and Factorio's 32x32,
-  row-major random-penalty stream, then uses a map-seeded approximation only for
-  the final shared entity-autoplace roll. Across the nine seeds with at least
-  eight reference pixels, regional correlation averages 0.914, one-pixel recall
-  is 0.642, and one-pixel precision is 0.727. Aggregate coverage is 292 pixels
-  versus Factorio's 283.
-- Enemy nests use the same distance-scaled spot field, blob noise, starting-area
-  exclusion, and random-penalty structure as Factorio. The exact cross-prototype
-  entity collision stream remains approximated, but isolated nest regions,
-  coverage, and the biter-free starting-area edge closely match both seeds.
+  row-major random-penalty stream. Wells now use the prototype's 3x3 chart
+  footprint and reject water or existing ore; only the final shared
+  entity-autoplace roll remains approximated. On isolated seed 123456, regional
+  correlation is 0.781, one-pixel recall is 0.531, precision is 0.427, and
+  coverage is 117 pixels versus Factorio's 96.
+- Enemy nests now use Factorio's oracle-validated 45.2548-tile spot spacing and
+  150-tile default starting-area radius. Spawner/worm selections also grow in
+  distance bands instead of staying capped at one per grid cell, preserving the
+  game's outward population ramp. The exact cross-prototype collision stream
+  remains approximated.
 
 ## Reproduce the galleries
 
@@ -59,4 +60,4 @@ The generated HTML galleries, source PNGs, amplified difference PNGs, and
 per-seed JSON statistics are written beneath `test-output/preview-gallery/`.
 That directory is intentionally ignored by Git.
 
-Run the two-seed enemy comparison separately with `FACTMAPGEN_ENEMY_PREVIEW_PARITY=1 go test -run TestFastEnemyLayersMatchFactorioPreviewRegions -v`.
+Run the fixed-seed isolated comparisons with `FACTMAPGEN_OIL_PREVIEW_PARITY=1 go test -run TestFastOilLayerMatchesFactorioPreview -v` and `FACTMAPGEN_ENEMY_PREVIEW_PARITY=1 go test -run TestFastEnemyLayersMatchFactorioPreviewRegions -v`.

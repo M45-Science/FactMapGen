@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"image"
+	"image/color"
 	"math"
 	"os"
 	"path/filepath"
@@ -386,6 +389,80 @@ func TestFactorioOilPlacementVariesWithMapSeed(t *testing.T) {
 	}
 	if different == 0 {
 		t.Fatal("oil dither placement did not vary with map seed")
+	}
+}
+
+func TestFactorioOilFootprintAndCollisions(t *testing.T) {
+	land := color.RGBA{R: 66, G: 57, B: 15, A: 255}
+	base := image.NewRGBA(image.Rect(0, 0, 9, 9))
+	for y := 0; y < 9; y++ {
+		for x := 0; x < 9; x++ {
+			base.SetRGBA(x, y, land)
+		}
+	}
+	bounds := factorioOilPixelBounds(base, 0, 0, 1, 4, 4)
+	if want := image.Rect(3, 3, 6, 6); bounds != want {
+		t.Fatalf("oil footprint bounds = %v, want %v", bounds, want)
+	}
+	mask := make([]bool, 9*9)
+	if factorioOilFootprintBlocked(base, mask, bounds) {
+		t.Fatal("land-only oil footprint was blocked")
+	}
+	markFactorioOilMask(mask, 9, bounds)
+	if got := previewMaskCount(mask); got != 9 {
+		t.Fatalf("oil footprint pixels = %d, want 9", got)
+	}
+
+	mask = make([]bool, 9*9)
+	base.SetRGBA(4, 4, factorioTerrainTiles[1].color)
+	if !factorioOilFootprintBlocked(base, mask, bounds) {
+		t.Fatal("water did not block oil footprint")
+	}
+	base.SetRGBA(4, 4, factorioResourceCatalog[0].mapColor)
+	if !factorioOilFootprintBlocked(base, mask, bounds) {
+		t.Fatal("solid ore did not block oil footprint")
+	}
+}
+
+func TestFactorioOilPreviewPanIsStable(t *testing.T) {
+	settings := defaultFactorioTerrainSettings(123456)
+	settings.resourceControls = map[string]fastControl{
+		"crude-oil": {frequency: 1, size: 1, richness: 1, enabled: true},
+	}
+	evaluator := newFactorioResourceEvaluator(settings, newFactorioNauvisEvaluator(settings))
+	landImage := func() *image.RGBA {
+		img := image.NewRGBA(image.Rect(0, 0, 512, 512))
+		land := color.RGBA{R: 66, G: 57, B: 15, A: 255}
+		for y := 0; y < 512; y++ {
+			for x := 0; x < 512; x++ {
+				img.SetRGBA(x, y, land)
+			}
+		}
+		return img
+	}
+	leftBase := landImage()
+	left, err := evaluator.oilPreviewMask(context.Background(), settings, leftBase, -512, -512, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightBase := landImage()
+	right, err := evaluator.oilPreviewMask(context.Background(), settings, rightBase, -448, -512, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for y := 0; y < 512; y++ {
+		for x := 0; x < 448; x++ {
+			got := right[y*512+x]
+			want := left[y*512+x+64]
+			if got != want {
+				t.Fatalf("panned oil pixel %d,%d = %v, want %v", x, y, got, want)
+			}
+			found = found || got
+		}
+	}
+	if !found {
+		t.Fatal("overlapping oil previews contain no wells")
 	}
 }
 

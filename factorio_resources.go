@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"image"
 	"image/color"
 	"math"
 	"math/bits"
@@ -23,7 +24,10 @@ const (
 	factorioResourceBlobAmplitude         = 1.0 / 8.0
 	factorioStartingResourceSplit         = 0.5
 	factorioChunkSize                     = int64(32)
-	factorioOilChartRadius                = 0.5
+	factorioOilChartRadius                = 1.4
+	// Compensates for the engine's shared entity-autoplace RNG while retaining
+	// the exact patch field and chunk-ordered random-penalty candidates.
+	factorioOilPlacementAcceptance = 0.8
 )
 
 type factorioResourceParams struct {
@@ -295,6 +299,13 @@ func (e *factorioResourceEvaluator) resourceAt(x, y float64) (factorioResourcePa
 }
 
 func (e *factorioResourceEvaluator) oilAtTile(tileX, tileY int64) (factorioResourceParams, bool) {
+	params, score := e.oilPlacementAtTile(tileX, tileY)
+	return params, score > 0
+}
+
+func (e *factorioResourceEvaluator) oilPlacementAtTile(
+	tileX, tileY int64,
+) (factorioResourceParams, float64) {
 	for index := range e.fields {
 		field := &e.fields[index]
 		if field.params.randomProbability >= 1 {
@@ -302,18 +313,16 @@ func (e *factorioResourceEvaluator) oilAtTile(tileX, tileY int64) (factorioResou
 		}
 		penalty := e.oilRandomPenaltyAt(tileX, tileY)
 		if penalty <= 0 {
-			return factorioResourceParams{}, false
+			return factorioResourceParams{}, 0
 		}
 		probability := clampFloat(field.fieldAt(float64(tileX), float64(tileY)), 0, 1)
 		probability *= max(0, penalty)
-		// Factorio performs a second entity-autoplace roll after evaluating the
-		// chunk-ordered random-penalty expression. That roll shares state with
-		// the other entity autoplacers, so use a map-seeded positional roll here.
-		if probability > 0 && fastHashUnit(e.seed, 0x4f494c, tileX, tileY) < probability {
-			return field.params, true
+		score := factorioOilPlacementAcceptance*probability - fastHashUnit(e.seed, 0x4f494c, tileX, tileY)
+		if score > 0 {
+			return field.params, score
 		}
 	}
-	return factorioResourceParams{}, false
+	return factorioResourceParams{}, 0
 }
 
 func (e *factorioResourceEvaluator) hasOil() bool {
@@ -328,17 +337,54 @@ func (e *factorioResourceEvaluator) hasOil() bool {
 func (e *factorioResourceEvaluator) oilPreviewMask(
 	ctx context.Context,
 	settings fastPreviewSettings,
+	base *image.RGBA,
 	originX, originY, tilesPerPixel float64,
-	width, height int,
 ) ([]bool, error) {
+	width := base.Bounds().Dx()
+	height := base.Bounds().Dy()
+	if tilesPerPixel > 2 {
+		return e.oilPreviewMaskOverview(ctx, settings, base, originX, originY, tilesPerPixel)
+	}
+	mask := make([]bool, width*height)
+	halo := factorioOilChartRadius + 1
+	minTileX := int64(math.Floor(originX - halo))
+	maxTileX := int64(math.Ceil(originX+float64(width)*tilesPerPixel+halo)) - 1
+	minTileY := int64(math.Floor(originY - halo))
+	maxTileY := int64(math.Ceil(originY+float64(height)*tilesPerPixel+halo)) - 1
+	for tileY := minTileY; tileY <= maxTileY; tileY++ {
+		if tileY&31 == 0 && ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		for tileX := minTileX; tileX <= maxTileX; tileX++ {
+			if fastOutOfMapBounds(settings, float64(tileX), float64(tileY)) {
+				continue
+			}
+			_, score := e.oilPlacementAtTile(tileX, tileY)
+			if score <= 0 {
+				continue
+			}
+			bounds := factorioOilPixelBounds(base, originX, originY, tilesPerPixel, tileX, tileY)
+			if factorioOilFootprintBlocked(base, mask, bounds) {
+				continue
+			}
+			markFactorioOilMask(mask, width, bounds)
+		}
+	}
+	return mask, nil
+}
+
+func (e *factorioResourceEvaluator) oilPreviewMaskOverview(
+	ctx context.Context,
+	settings fastPreviewSettings,
+	base *image.RGBA,
+	originX, originY, tilesPerPixel float64,
+) ([]bool, error) {
+	width := base.Bounds().Dx()
+	height := base.Bounds().Dy()
 	mask := make([]bool, width*height)
 	for py := 0; py < height; py++ {
-		if py&31 == 0 {
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			default:
-			}
+		if py&31 == 0 && ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
 		minTileY := int64(math.Floor(originY + float64(py)*tilesPerPixel))
 		maxTileY := int64(math.Ceil(originY+float64(py+1)*tilesPerPixel)) - 1
@@ -359,20 +405,57 @@ func (e *factorioResourceEvaluator) oilPreviewMask(
 					if _, ok := e.oilAtTile(tileX, tileY); !ok {
 						continue
 					}
-					minX := int(math.Floor((float64(tileX) - factorioOilChartRadius - originX) / tilesPerPixel))
-					maxX := int(math.Floor((float64(tileX) + factorioOilChartRadius - originX) / tilesPerPixel))
-					minY := int(math.Floor((float64(tileY) - factorioOilChartRadius - originY) / tilesPerPixel))
-					maxY := int(math.Floor((float64(tileY) + factorioOilChartRadius - originY) / tilesPerPixel))
-					for markY := max(0, minY); markY <= min(height-1, maxY); markY++ {
-						for markX := max(0, minX); markX <= min(width-1, maxX); markX++ {
-							mask[markY*width+markX] = true
-						}
+					bounds := factorioOilPixelBounds(base, originX, originY, tilesPerPixel, tileX, tileY)
+					if factorioOilFootprintBlocked(base, mask, bounds) {
+						continue
 					}
+					markFactorioOilMask(mask, width, bounds)
 				}
 			}
 		}
 	}
 	return mask, nil
+}
+
+func factorioOilPixelBounds(
+	base *image.RGBA,
+	originX, originY, tilesPerPixel float64,
+	tileX, tileY int64,
+) image.Rectangle {
+	minX := int(math.Ceil((float64(tileX) - factorioOilChartRadius - originX) / tilesPerPixel))
+	maxX := int(math.Ceil((float64(tileX) + factorioOilChartRadius - originX) / tilesPerPixel))
+	minY := int(math.Ceil((float64(tileY) - factorioOilChartRadius - originY) / tilesPerPixel))
+	maxY := int(math.Ceil((float64(tileY) + factorioOilChartRadius - originY) / tilesPerPixel))
+	return image.Rect(minX, minY, maxX, maxY).Intersect(base.Bounds())
+}
+
+func factorioOilFootprintBlocked(base *image.RGBA, mask []bool, bounds image.Rectangle) bool {
+	width := base.Bounds().Dx()
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			if mask[y*width+x] {
+				return true
+			}
+			pixel := base.RGBAAt(x, y)
+			if factorioPreviewWaterColor(pixel) {
+				return true
+			}
+			for _, params := range factorioResourceCatalog {
+				if params.randomProbability >= 1 && pixel == params.mapColor {
+					return true
+				}
+			}
+		}
+	}
+	return bounds.Empty()
+}
+
+func markFactorioOilMask(mask []bool, width int, bounds image.Rectangle) {
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			mask[y*width+x] = true
+		}
+	}
 }
 
 func (e *factorioResourceEvaluator) oilRandomPenaltyAt(tileX, tileY int64) float64 {

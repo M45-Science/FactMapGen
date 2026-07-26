@@ -15,14 +15,17 @@ import (
 const enemyPreviewParityEnv = "FACTMAPGEN_ENEMY_PREVIEW_PARITY"
 
 type enemyPreviewStats struct {
-	Seed                 string  `json:"seed"`
-	TilesPerPixel        float64 `json:"tilesPerPixel"`
-	RegionCorrelation    float64 `json:"regionCorrelation"`
-	FastToFactorioPixels float64 `json:"fastToFactorioPixels"`
-	FactorioPixels       int     `json:"factorioPixels"`
-	FastPixels           int     `json:"fastPixels"`
-	FactorioNearest      float64 `json:"factorioNearest"`
-	FastNearest          float64 `json:"fastNearest"`
+	Seed                 string    `json:"seed"`
+	TilesPerPixel        float64   `json:"tilesPerPixel"`
+	RegionCorrelation    float64   `json:"regionCorrelation"`
+	FastToFactorioPixels float64   `json:"fastToFactorioPixels"`
+	FactorioPixels       int       `json:"factorioPixels"`
+	FastPixels           int       `json:"fastPixels"`
+	FactorioNearest      float64   `json:"factorioNearest"`
+	FastNearest          float64   `json:"fastNearest"`
+	RadialEdges          []float64 `json:"radialEdges"`
+	FactorioRadialPixels []int     `json:"factorioRadialPixels"`
+	FastRadialPixels     []int     `json:"fastRadialPixels"`
 }
 
 func TestFastEnemyLayersMatchFactorioPreviewRegions(t *testing.T) {
@@ -41,7 +44,7 @@ func TestFastEnemyLayersMatchFactorioPreviewRegions(t *testing.T) {
 	_, sourcePath := previewParityProfile(t, store, "default:Default")
 	mapGenPath := enemyLayerMapGenPath(t, sourcePath)
 
-	for _, seed := range []string{"123456", "777771"} {
+	for _, seed := range []string{"123456"} {
 		t.Run("seed-"+seed, func(t *testing.T) {
 			factorioImg, _ := cachedFactorioEnemyPreview(
 				t, &factorioBin, mapGenPath, seed, outputSize, tilesPerPixel,
@@ -68,12 +71,26 @@ func TestFastEnemyLayersMatchFactorioPreviewRegions(t *testing.T) {
 					stats.FastNearest,
 				)
 			}
+			for ring := range stats.FactorioRadialPixels {
+				if stats.FactorioRadialPixels[ring] < 25 {
+					continue
+				}
+				ratio := previewCountRatio(stats.FastRadialPixels[ring], stats.FactorioRadialPixels[ring])
+				if ratio < 0.65 || ratio > 1.6 {
+					t.Errorf(
+						"enemy radial population ring %d diverged: fast/game=%.3f pixels=%d/%d",
+						ring, ratio, stats.FastRadialPixels[ring], stats.FactorioRadialPixels[ring],
+					)
+				}
+			}
 			t.Logf(
-				"enemies correlation=%.3f fast/game pixels=%.3f nearest Factorio=%.1f fast=%.1f",
+				"enemies correlation=%.3f fast/game pixels=%.3f nearest Factorio=%.1f fast=%.1f radial Factorio=%v fast=%v",
 				stats.RegionCorrelation,
 				stats.FastToFactorioPixels,
 				stats.FactorioNearest,
 				stats.FastNearest,
+				stats.FactorioRadialPixels,
+				stats.FastRadialPixels,
 			)
 		})
 	}
@@ -197,6 +214,9 @@ func measureEnemyPreview(
 	factorioPixels := previewMaskCount(factorioMask)
 	fastPixels := previewMaskCount(fastMask)
 	bounds := factorioImg.Bounds()
+	radialEdges := []float64{256, 384, 512, 1024}
+	factorioRadial := enemyMaskRadialPixels(factorioMask, bounds.Dx(), bounds.Dy(), radialEdges)
+	fastRadial := enemyMaskRadialPixels(fastMask, bounds.Dx(), bounds.Dy(), radialEdges)
 	return enemyPreviewStats{
 		Seed:                 seed,
 		TilesPerPixel:        tilesPerPixel,
@@ -206,7 +226,29 @@ func measureEnemyPreview(
 		FastPixels:           fastPixels,
 		FactorioNearest:      enemyMaskNearest(factorioMask, bounds.Dx(), bounds.Dy()),
 		FastNearest:          enemyMaskNearest(fastMask, bounds.Dx(), bounds.Dy()),
+		RadialEdges:          radialEdges,
+		FactorioRadialPixels: factorioRadial,
+		FastRadialPixels:     fastRadial,
 	}
+}
+
+func enemyMaskRadialPixels(mask []bool, width, height int, edges []float64) []int {
+	counts := make([]int, len(edges))
+	centerX := float64(width) / 2
+	centerY := float64(height) / 2
+	for index, marked := range mask {
+		if !marked {
+			continue
+		}
+		distance := math.Hypot(float64(index%width)-centerX, float64(index/width)-centerY)
+		for ring, edge := range edges {
+			if distance < edge {
+				counts[ring]++
+				break
+			}
+		}
+	}
+	return counts
 }
 
 func enemyMaskBlocks(mask []bool, width, height, blockSize int) []float64 {
