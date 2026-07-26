@@ -376,23 +376,8 @@ func (e *factorioResourceEvaluator) oilPreviewMask(
 }
 
 func (e *factorioResourceEvaluator) oilRandomPenaltyAt(tileX, tileY int64) float64 {
-	chunkX := factorioFloorDiv(tileX, factorioChunkSize)
-	chunkY := factorioFloorDiv(tileY, factorioChunkSize)
-	originX := chunkX * factorioChunkSize
-	originY := chunkY * factorioChunkSize
-	x := uint32(int32(originX))
-	y := uint32(int32(originY + 1))
-	word := uint32(factorioSpotSeedBase) + x*factorioSpotRegionXPrime + y*factorioSpotRegionYPrime
-	if word < factorioMinSeedWord {
-		word = factorioMinSeedWord
-	}
-	localX := tileX - originX
-	localY := tileY - originY
-	index := localY*factorioChunkSize + localX
-	reverseDraw := int(factorioChunkSize*factorioChunkSize - 1 - index)
-	random := factorioTaus88RandomAt(word, reverseDraw)
 	amplitude := 1 / factorioResourceCatalog[4].randomProbability
-	return 1 - amplitude*float64(random)/4294967296.0
+	return factorioRandomPenaltyAt(tileX, tileY, 1, amplitude)
 }
 
 func factorioTaus88RandomAccessColumns() [factorioChunkSize * factorioChunkSize][32]uint32 {

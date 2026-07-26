@@ -120,7 +120,7 @@ func TestFastPreviewPixelGolden(t *testing.T) {
 		want          string
 	}{
 		{name: "one-tile-per-pixel", tilesPerPixel: 1, want: "c38cafeedbebe60daa2cdbb898568dfc72122390931e278d86cae277a1d5da89"},
-		{name: "two-tiles-per-pixel", tilesPerPixel: 2, want: "bd009a2b3762ce833bc29387eee9ab97d3ef3ae66b8a793fbbdbe813987004fc"},
+		{name: "two-tiles-per-pixel", tilesPerPixel: 2, want: "50d04e9d7df6033a4cc2140aa64f289c58c2ab91fb70c477e98f1615e184876b"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			img, _, err := renderFastMapPreview(
@@ -154,6 +154,8 @@ func benchmarkPreviewSettings() (
 	full.cliffElevation0 = 10
 	full.cliffElevationInterval = 40
 	full.cliffRichness = 1
+	full.startingArea = 1
+	full.enemyBases = fastControl{frequency: 1, size: 1, richness: 1, enabled: true}
 	return base, trees, resources, full
 }
 

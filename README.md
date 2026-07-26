@@ -52,7 +52,7 @@ In `map-gen-settings.json`, `seed: null` follows Factorio's public example file 
 
 ## Map Previews
 
-FactMapGen includes a fast built-in Go preview renderer for Nauvis-style maps. Its default Nauvis path ports Factorio-compatible seeded noise, elevation, climate fields, and all 21 terrain-tile probability expressions. Forest regions use the 15 Nauvis tree-species probability expressions with seed-stable discrete placement and Factorio's quantized chart blending; they reproduce the forest texture without claiming exact per-tree entity rolls. Cliffs use the deterministic Nauvis cliff fields, four-tile placement lattice, and crossing rules. Iron, copper, coal, stone, and uranium use Factorio's resource candidate stream, patch selection, starting-area placement, blob noise, and control levers. Crude oil uses the same validated patch field, Factorio's chunk-ordered random-penalty stream, and the oil well's chart footprint; only the final entity-autoplace roll remains approximated because it shares state with other entity autoplacers. Rocks use the Nauvis rock-density and climate expressions. Ore and rock chart pixels use a stable world-position dither because Factorio's exact per-entity placement roll shares a chunk RNG stream with every other entity autoplacer; enemy bases remain approximate. The preview toolbar also offers an Exact engine that generates real Factorio map preview PNGs when a Factorio/headless binary is available. Install the Linux headless package into the default discovery path with:
+FactMapGen includes a fast built-in Go preview renderer for Nauvis-style maps. Its default Nauvis path ports Factorio-compatible seeded noise, elevation, climate fields, and all 21 terrain-tile probability expressions. Forest regions use the 15 Nauvis tree-species probability expressions with seed-stable discrete placement and Factorio's quantized chart blending; they reproduce the forest texture without claiming exact per-tree entity rolls. Cliffs use the deterministic Nauvis cliff fields, four-tile placement lattice, and crossing rules. Iron, copper, coal, stone, and uranium use Factorio's resource candidate stream, patch selection, starting-area placement, blob noise, and control levers. Crude oil uses the same validated patch field, Factorio's chunk-ordered random-penalty stream, and the oil well's chart footprint; only the final entity-autoplace roll remains approximated because it shares state with other entity autoplacers. Rocks use the Nauvis rock-density and climate expressions. Enemy bases use Factorio's distance-scaled spot quantities, 512-tile candidate regions, three seeded blob-noise scales, starting-area exclusion, spawner and worm distance tiers, and chunk-ordered random penalties. Their final entity collision order is represented with global deterministic spacing cells, preserving nest regions and chart texture without claiming exact individual entities. Ore and rock chart pixels use a stable world-position dither because Factorio's exact per-entity placement roll shares a chunk RNG stream with every other entity autoplacer. The preview toolbar also offers an Exact engine that generates real Factorio map preview PNGs when a Factorio/headless binary is available. Install the Linux headless package into the default discovery path with:
 
 ```sh
 ./scripts/install-factorio-headless.sh
@@ -82,13 +82,14 @@ Fast previews also use a process-local LRU of 128x128 base-render tiles, keyed b
 
 Exact previews do not use the Fast tile cache: each request runs the queued Factorio process, passes the normalized map offset, and then applies the requested zoom transform to Factorio's temporary PNG. On startup, when Exact previews are configured, the server warms a pinned 512px Nauvis preview for the built-in Default preset so first page load can show an immediate exact image without waiting for autosize rendering.
 
-Preview parity tests compare rendered PNG pixels and write visual artifacts. The fast terrain integration cases disable resources, trees, rocks, enemies, cliffs, and decorations so terrain correctness is measured independently. Natural-layer cases isolate trees and cliffs, while resource-layer cases isolate ores, oil, and rocks. These tests measure regional correlation and coverage instead of requiring exact randomized entity pixels:
+Preview parity tests compare rendered PNG pixels and write visual artifacts. The fast terrain integration cases disable resources, trees, rocks, enemies, cliffs, and decorations so terrain correctness is measured independently. Natural-layer cases isolate trees and cliffs, resource-layer cases isolate ores, oil, and rocks, and enemy-layer cases isolate spawners and worms. These tests measure regional correlation and coverage instead of requiring exact randomized entity pixels:
 
 ```sh
 FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio go test -run TestExactPreviewMatchesDirectFactorioPreview
 FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_FAST_PREVIEW_PARITY=1 go test -run TestFastPreviewMatchesFactorioPreview
 FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_NATURAL_PREVIEW_PARITY=1 go test -run TestFastNaturalLayersMatchFactorioPreviewRegions -v
 FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_RESOURCE_PREVIEW_PARITY=1 go test -run TestFastResourceLayersMatchFactorioPreviewRegions -v
+FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_ENEMY_PREVIEW_PARITY=1 go test -run TestFastEnemyLayersMatchFactorioPreviewRegions -v
 FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_PREVIEW_GALLERY=1 go test -run TestPreviewGalleryDefaultSeeds -v
 FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_NATURAL_PREVIEW_GALLERY=1 go test -run TestPreviewGalleryNaturalLayersDefaultSeeds -v
 FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_RESOURCE_PREVIEW_GALLERY=1 go test -run TestPreviewGalleryResourceLayersDefaultSeeds -v
@@ -99,7 +100,7 @@ FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_RENDER_SPEED_C
 
 The speed comparison is opt-in and runs one fixed-seed 1024x1024 render per engine. It reports render and PNG wall time, total process CPU time and utilization, and peak resident memory. Use `fast-only` while tuning the Go renderer so Factorio is not launched on every run.
 
-As a representative local result on a Ryzen 9 7950X, the standard fixed-seed 1024x1024 Fast preview at 1 meter per pixel had medians of 205 ms to render, 247 ms including lossless PNG encoding, 1.70 CPU-seconds, and about 28 MiB peak RSS. At the same output size and scale, the tile-cache benchmark measured 217 ms cold, 62 ms for a warm repeat, and 93-99 ms for an adjacent pan; cache timings exclude response-image encoding and are performance snapshots rather than service guarantees.
+As a representative local result on a Ryzen 9 7950X, the standard fixed-seed 1024x1024 Fast preview at 1 meter per pixel had medians of 205 ms to render, 247 ms including lossless PNG encoding, 1.70 CPU-seconds, and about 28 MiB peak RSS. At the same output size and scale, the tile-cache benchmark measured 233 ms cold, 67 ms for a warm repeat, and 96-98 ms for an adjacent pan; cache timings exclude response-image encoding and are performance snapshots rather than service guarantees.
 
 Diff artifacts are written to `test-output/preview-diffs/` as Factorio, fast-renderer, amplified-diff, and JSON-statistics files. The exact-engine parity test runs automatically when a Factorio binary is discoverable. The fast tests are opt-in and enforce overall terrain and natural-feature correctness budgets rather than requiring exact pixels.
 
@@ -112,6 +113,8 @@ The resource-layer gallery writes `test-output/preview-gallery/default-10-seeds-
 The current ten-seed results and interpretation are documented in
 [`docs/render-comparison.md`](docs/render-comparison.md). Generated gallery
 artifacts remain local under the ignored `test-output/` directory.
+
+The enemy-layer comparison writes its two fixed-seed 1024x1024 Factorio, Fast, amplified-diff, and JSON-statistics artifacts beneath `test-output/preview-diffs/enemies-seed-*/`.
 
 ## Presets
 

@@ -58,6 +58,7 @@ type fastPreviewWorld struct {
 	resources *factorioResourceEvaluator
 	rocks     *factorioRockEvaluator
 	cliffs    *factorioCliffEvaluator
+	enemies   *factorioEnemyEvaluator
 }
 
 type fastResourceDef struct {
@@ -313,12 +314,18 @@ func newFastPreviewWorld(settings fastPreviewSettings) *fastPreviewWorld {
 	if settings.cliffs.enabled {
 		world.cliffs = newFactorioCliffEvaluator(settings, world.nauvis)
 	}
+	if !settings.noEnemies && settings.enemyBases.enabled {
+		world.enemies = newFactorioEnemyEvaluator(settings)
+	}
 	return world
 }
 
 func (w *fastPreviewWorld) trimSpatialCaches() {
 	if w.resources != nil {
 		w.resources.trimRegionCaches(fastPreviewMaxRegionsPerField)
+	}
+	if w.enemies != nil {
+		w.enemies.trimRegionCache(fastPreviewMaxRegionsPerField)
 	}
 }
 
@@ -472,7 +479,12 @@ func (w *fastPreviewWorld) renderOverlays(
 		if err != nil {
 			return err
 		}
-		applyFastPreviewOilMask(img, w.settings, oilMask, originX, originY, tpp)
+		applyFastPreviewOilMask(img, oilMask)
+	}
+	if w.enemies != nil {
+		if err := renderFactorioEnemies(ctx, img, w.settings, w.enemies, originX, originY, tpp); err != nil {
+			return err
+		}
 	}
 	if w.cliffs != nil {
 		if err := renderFactorioCliffs(ctx, img, w.settings, w.cliffs, originX, originY, tpp); err != nil {
@@ -482,12 +494,7 @@ func (w *fastPreviewWorld) renderOverlays(
 	return nil
 }
 
-func applyFastPreviewOilMask(
-	img *image.RGBA,
-	settings fastPreviewSettings,
-	oilMask []bool,
-	originX, originY, tilesPerPixel float64,
-) {
+func applyFastPreviewOilMask(img *image.RGBA, oilMask []bool) {
 	width := img.Bounds().Dx()
 	for index, marked := range oilMask {
 		if !marked {
@@ -495,11 +502,6 @@ func applyFastPreviewOilMask(
 		}
 		x := index % width
 		y := index / width
-		wx := math.Floor(originX + float64(x)*tilesPerPixel)
-		wy := math.Floor(originY + float64(y)*tilesPerPixel)
-		if _, enemy := fastEnemyPixel(settings, wx, wy); enemy {
-			continue
-		}
 		offset := y*img.Stride + x*4
 		img.Pix[offset] = factorioResourceCatalog[4].mapColor.R
 		img.Pix[offset+1] = factorioResourceCatalog[4].mapColor.G
@@ -654,8 +656,10 @@ func blendFastPreviewEntities(
 	if len(oilMask) > 0 && oilMask[pixelIndex] {
 		base = factorioResourceCatalog[4].mapColor
 	}
-	if enemy, ok := fastEnemyPixel(settings, wx, wy); ok {
-		base = enemy
+	if nauvis == nil {
+		if enemy, ok := fastEnemyPixel(settings, wx, wy); ok {
+			base = enemy
+		}
 	}
 	if nauvis == nil {
 		if cliff, ok := fastCliffPixel(settings, wx, wy); ok {
