@@ -25,9 +25,11 @@ func (s *factorioTaus88State) next() uint32 {
 }
 
 type factorioBasisTables struct {
-	sigma [factorioNoiseTableSize]uint8
-	a     [factorioNoiseTableSize]uint8
-	b     [factorioNoiseTableSize]uint8
+	sigma     [factorioNoiseTableSize]uint8
+	gradientX [factorioNoiseTableSize]float64
+	gradientY [factorioNoiseTableSize]float64
+	a         [factorioNoiseTableSize]uint8
+	b         [factorioNoiseTableSize]uint8
 }
 
 var (
@@ -64,7 +66,10 @@ func factorioBasisTablesFromSeed(seed0, seed1 uint32) factorioBasisTables {
 	tables.a = xTable
 	tables.b = yTable
 	for i := range tables.sigma {
-		tables.sigma[i] = gradient[uint8(i)^salt]
+		gradientIndex := gradient[uint8(i)^salt]
+		tables.sigma[i] = gradientIndex
+		tables.gradientX[i] = factorioGradientX[gradientIndex]
+		tables.gradientY[i] = factorioGradientY[gradientIndex]
 	}
 	return tables
 }
@@ -99,34 +104,34 @@ func factorioBasisNoise(x, y float64, tables *factorioBasisTables) float64 {
 
 	distanceSquared := dx0*dx0 + dy0*dy0
 	if !(distanceSquared >= 1) {
-		gradient := tables.sigma[ax0^by0]
+		gradient := ax0 ^ by0
 		falloff := 1 - distanceSquared
 		falloff *= falloff * falloff
-		value += falloff * 4.2 * (dx0*factorioGradientX[gradient] + dy0*factorioGradientY[gradient])
+		value += falloff * 4.2 * (dx0*tables.gradientX[gradient] + dy0*tables.gradientY[gradient])
 	}
 
 	distanceSquared = dx1*dx1 + dy0*dy0
 	if !(distanceSquared >= 1) {
-		gradient := tables.sigma[ax1^by0]
+		gradient := ax1 ^ by0
 		falloff := 1 - distanceSquared
 		falloff *= falloff * falloff
-		value += falloff * 4.2 * (dx1*factorioGradientX[gradient] + dy0*factorioGradientY[gradient])
+		value += falloff * 4.2 * (dx1*tables.gradientX[gradient] + dy0*tables.gradientY[gradient])
 	}
 
 	distanceSquared = dx0*dx0 + dy1*dy1
 	if !(distanceSquared >= 1) {
-		gradient := tables.sigma[ax0^by1]
+		gradient := ax0 ^ by1
 		falloff := 1 - distanceSquared
 		falloff *= falloff * falloff
-		value += falloff * 4.2 * (dx0*factorioGradientX[gradient] + dy1*factorioGradientY[gradient])
+		value += falloff * 4.2 * (dx0*tables.gradientX[gradient] + dy1*tables.gradientY[gradient])
 	}
 
 	distanceSquared = dx1*dx1 + dy1*dy1
 	if !(distanceSquared >= 1) {
-		gradient := tables.sigma[ax1^by1]
+		gradient := ax1 ^ by1
 		falloff := 1 - distanceSquared
 		falloff *= falloff * falloff
-		value += falloff * 4.2 * (dx1*factorioGradientX[gradient] + dy1*factorioGradientY[gradient])
+		value += falloff * 4.2 * (dx1*tables.gradientX[gradient] + dy1*tables.gradientY[gradient])
 	}
 	return value
 }
