@@ -9,6 +9,7 @@ import (
 	"image"
 	"image/color"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -625,6 +626,15 @@ func TestPreviewRequestForUserLimitsGuestPreviewOptions(t *testing.T) {
 		t.Fatalf("guest preview zoom = %q, want normal", guest.Zoom)
 	}
 
+	fastGuest := previewRequestForUser(previewRequest{Engine: previewEngineFast, Size: 512, Zoom: "2.75"}, nil)
+	if fastGuest.Zoom != "2.75" {
+		t.Fatalf("fast guest preview zoom = %q, want arbitrary scale retained", fastGuest.Zoom)
+	}
+	exactGuest := previewRequestForUser(previewRequest{Engine: previewEngineFactorio, Size: 512, Zoom: "2.75"}, nil)
+	if exactGuest.Zoom != "1" {
+		t.Fatalf("exact guest preview zoom = %q, want normal", exactGuest.Zoom)
+	}
+
 	defaultSizedGuest := previewRequestForUser(previewRequest{}, nil)
 	if defaultSizedGuest.Size != guestMaxPreviewSize {
 		t.Fatalf("default guest preview size = %d, want %d", defaultSizedGuest.Size, guestMaxPreviewSize)
@@ -645,15 +655,18 @@ func TestPreviewZoomSpec(t *testing.T) {
 		zoom       string
 		outputSize int
 		wantMode   string
-		wantFactor int
+		wantScale  float64
 		wantRender int
 		wantErr    bool
 	}{
-		{name: "normal", zoom: "", outputSize: 1024, wantMode: "normal", wantFactor: 1, wantRender: 1024},
-		{name: "zoom out max", zoom: "out-4", outputSize: 4096, wantMode: "out", wantFactor: 4, wantRender: 16384},
-		{name: "zoom out too large", zoom: "out-4", outputSize: 4097, wantErr: true},
-		{name: "zoom in divisible", zoom: "in-3", outputSize: 768, wantMode: "in", wantFactor: 3, wantRender: 768},
-		{name: "zoom in not divisible", zoom: "in-3", outputSize: 1024, wantErr: true},
+		{name: "normal", zoom: "", outputSize: 1024, wantMode: "normal", wantScale: 1, wantRender: 1024},
+		{name: "legacy zoom out", zoom: "out-4", outputSize: 4096, wantMode: "scale", wantScale: 4, wantRender: 16384},
+		{name: "decimal zoom out", zoom: "2.75", outputSize: 1024, wantMode: "scale", wantScale: 2.75, wantRender: 2816},
+		{name: "decimal zoom in", zoom: "0.37", outputSize: 1024, wantMode: "scale", wantScale: 0.37, wantRender: 1024},
+		{name: "legacy zoom in", zoom: "in-3", outputSize: 1024, wantMode: "scale", wantScale: 1.0 / 3, wantRender: 1024},
+		{name: "source render too large", zoom: "4.0001", outputSize: 4096, wantErr: true},
+		{name: "below minimum", zoom: "0.001", outputSize: 1024, wantErr: true},
+		{name: "above maximum", zoom: "65", outputSize: 256, wantErr: true},
 		{name: "bad", zoom: "sideways-2", outputSize: 1024, wantErr: true},
 	}
 	for _, test := range tests {
@@ -668,8 +681,10 @@ func TestPreviewZoomSpec(t *testing.T) {
 			if err != nil {
 				t.Fatalf("previewZoomSpec(%q, %d): %v", test.zoom, test.outputSize, err)
 			}
-			if got.mode != test.wantMode || got.factor != test.wantFactor || got.renderSize != test.wantRender {
-				t.Fatalf("previewZoomSpec(%q, %d) = %#v, want mode=%s factor=%d render=%d", test.zoom, test.outputSize, got, test.wantMode, test.wantFactor, test.wantRender)
+			if got.mode != test.wantMode ||
+				math.Abs(got.tilesPerPixel-test.wantScale) > 1e-12 ||
+				got.renderSize != test.wantRender {
+				t.Fatalf("previewZoomSpec(%q, %d) = %#v, want mode=%s scale=%g render=%d", test.zoom, test.outputSize, got, test.wantMode, test.wantScale, test.wantRender)
 			}
 		})
 	}

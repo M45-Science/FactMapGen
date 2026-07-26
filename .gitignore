@@ -1,6 +1,7 @@
 /data/
 /presets/
 /previews/
+/test-output/
 /factmapgen
 /factmapgen-auth.db
 /factmapgen-auth.db-*

@@ -2,6 +2,7 @@ const state = {
   config: {
     presetDir: "presets",
     previewEnabled: false,
+    fastPreviewEnabled: true,
     factorio: {
       previewEnabled: false,
       installManaged: false,
@@ -22,6 +23,8 @@ const defaultPreviewSize = 768;
 const minPreviewSize = 256;
 const maxPreviewSizePx = 4096;
 const guestMaxPreviewSize = 512;
+const minPreviewScale = 1 / 64;
+const maxPreviewScale = 64;
 const safePreviewSizes = [256, 512, 768, 1024, 1536, 2048, 3072, 4096];
 const maxPreviewSeed = 4294967295;
 const minAutoplaceFrequency = 0.1;
@@ -356,10 +359,12 @@ const els = {
   cancelRenameBtn: $("#cancelRenameBtn"),
   renameProfileName: $("#renameProfileName"),
   previewBtn: $("#previewBtn"),
+  previewEngine: $("#previewEngine"),
   previewSize: $("#previewSize"),
   mapgenBody: $(".mapgen-body"),
   previewPlanet: $("#previewPlanet"),
   previewZoom: $("#previewZoom"),
+  previewScaleField: $("#previewScaleField"),
   previewLossless: $("#previewLossless"),
   previewLosslessField: $("#previewLosslessField"),
   autoRefreshPreview: $("#autoRefreshPreview"),
@@ -474,6 +479,12 @@ async function init() {
   els.saveBtn.addEventListener("click", saveProfile);
   els.downloadZipBtn.addEventListener("click", downloadPresetZip);
   els.previewBtn.addEventListener("click", () => generatePreview());
+  els.previewEngine.addEventListener("change", () => {
+    renderPreviewEngineControls();
+    renderPreviewScaleControl(Boolean(state.selected));
+    renderPreview();
+    scheduleAutoPreview();
+  });
   els.previewSize.addEventListener("change", () => {
     updatePreviewFrameSize();
     scheduleAutoPreview();
@@ -483,7 +494,7 @@ async function init() {
     if (changed && previewSizeIsAuto()) scheduleAutoPreview();
   });
   els.previewPlanet.addEventListener("change", () => scheduleAutoPreview());
-  els.previewZoom.addEventListener("change", () => scheduleAutoPreview());
+  els.previewZoom.addEventListener("input", () => scheduleAutoPreview());
   els.previewLossless.addEventListener("change", () => scheduleAutoPreview());
   els.autoRefreshPreview.addEventListener("change", () => {
     renderPreviewButtonState();
@@ -995,7 +1006,7 @@ function renderAudit(entries) {
 
 function currentFactorioStatus() {
   return state.config.factorio || {
-    previewEnabled: Boolean(state.config.previewEnabled),
+    previewEnabled: Boolean(state.config.factorioBin),
     bin: state.config.factorioBin || "",
     installManaged: false,
     updateAvailable: false,
@@ -1005,7 +1016,7 @@ function currentFactorioStatus() {
 function applyFactorioStatus(status) {
   if (!status) return;
   state.config.factorio = status;
-  state.config.previewEnabled = Boolean(status.previewEnabled);
+  state.config.previewEnabled = Boolean(state.config.fastPreviewEnabled || status.previewEnabled);
   state.config.factorioBin = status.bin || "";
   renderFactorioStatus(status);
   renderFactorioAdmin(status);
@@ -1018,10 +1029,10 @@ function renderFactorioStatus(status = currentFactorioStatus()) {
   const version = status.version || "";
   const latest = status.latestVersion || "";
   const updateAvailable = Boolean(status.updateAvailable && latest);
-  const unavailable = !version && !status.previewEnabled;
+  const unavailable = !version && !status.previewEnabled && !fastPreviewAvailable();
 
   els.factorioVersion.classList.toggle("update", updateAvailable);
-  els.factorioVersion.classList.toggle("error", unavailable || Boolean(status.statusError && !version));
+  els.factorioVersion.classList.toggle("error", unavailable || Boolean(status.statusError && !version && !fastPreviewAvailable()));
   els.factorioVersion.title = status.statusError || "";
 
   if (status.installing) {
@@ -1030,6 +1041,8 @@ function renderFactorioStatus(status = currentFactorioStatus()) {
     els.factorioVersion.textContent = updateAvailable ? `Factorio ${version} - ${latest} available` : `Factorio ${version}`;
   } else if (status.previewEnabled) {
     els.factorioVersion.textContent = "Factorio: version unavailable";
+  } else if (fastPreviewAvailable()) {
+    els.factorioVersion.textContent = "Fast preview ready";
   } else {
     els.factorioVersion.textContent = "Factorio: not installed";
   }
@@ -1113,6 +1126,8 @@ function notifyFactorioUpdate() {
 async function loadConfig() {
   try {
     state.config = await api("/api/config");
+    state.config.fastPreviewEnabled = state.config.fastPreviewEnabled !== false;
+    state.config.previewEnabled = Boolean(state.config.fastPreviewEnabled || state.config.factorio?.previewEnabled);
     renderFactorioStatus();
     notifyFactorioUpdate();
   } catch (error) {
@@ -1552,7 +1567,7 @@ async function generatePreview(options = {}) {
   if (!state.selected || !state.mapGen) return false;
   if (automatic && !canAutoRefreshPreview()) return false;
   if (!state.config.previewEnabled) {
-    if (!automatic) showToast("Factorio preview is not configured.", true);
+    if (!automatic) showToast(previewUnavailableMessage(), true);
     return false;
   }
   if (previewInFlight) {
@@ -1573,7 +1588,7 @@ async function generatePreview(options = {}) {
     setPreviewUpdating("Generating preview...");
 
     const seed = previewSeedOverride();
-    const payload = { size, planet, zoom: canUsePreviewZoom() ? els.previewZoom.value : "1", lossless: canUseLosslessPreview() && els.previewLossless.checked, mapGen: previewMapGenPayload() };
+    const payload = { engine: currentPreviewEngine(), size, planet, zoom: canUsePreviewZoom() ? currentPreviewScale() : "1", lossless: canUseLosslessPreview() && els.previewLossless.checked, mapGen: previewMapGenPayload() };
     if (seed) payload.seed = seed;
     const body = await api(`/api/profiles/${encodeURIComponent(previewProfile)}/preview`, {
       method: "POST",
@@ -1743,8 +1758,35 @@ function maxPreviewSizeForSession() {
   return state.session ? maxPreviewSizePx : guestMaxPreviewSize;
 }
 
+function factorioPreviewAvailable() {
+  return Boolean(currentFactorioStatus().previewEnabled);
+}
+
+function fastPreviewAvailable() {
+  return state.config.fastPreviewEnabled !== false;
+}
+
+function currentPreviewEngine() {
+  return els.previewEngine?.value === "factorio" ? "factorio" : "fast";
+}
+
 function canUsePreviewZoom() {
-  return Boolean(state.session);
+  return Boolean(state.session || currentPreviewEngine() === "fast");
+}
+
+function currentPreviewScale() {
+  const scale = Number.parseFloat(els.previewZoom.value);
+  if (!Number.isFinite(scale)) return "1";
+  const bounded = Math.min(maxPreviewScale, Math.max(minPreviewScale, scale));
+  if (bounded !== scale) els.previewZoom.value = String(bounded);
+  return String(bounded);
+}
+
+function renderPreviewScaleControl(enabled) {
+  const canUseScale = canUsePreviewZoom();
+  els.previewScaleField.hidden = !canUseScale;
+  if (!canUseScale) els.previewZoom.value = "1";
+  els.previewZoom.disabled = !enabled || !state.config.previewEnabled || !canUseScale;
 }
 
 function canUseLosslessPreview() {
@@ -1771,6 +1813,7 @@ function setControlsEnabled(enabled) {
   els.seedRerollBtn.disabled = !enabled || !state.mapGen || !isRandomSeed(state.mapGen.seed);
   els.autoRefreshPreview.disabled = !enabled || !state.config.previewEnabled;
   renderPreviewButtonState();
+  renderPreviewEngineControls();
   const maxPreviewSize = maxPreviewSizeForSession();
   for (const option of els.previewSize.options) {
     const optionSize = Number(option.value);
@@ -1779,10 +1822,7 @@ function setControlsEnabled(enabled) {
   const selectedPreviewSize = Number(els.previewSize.value);
   if (Number.isFinite(selectedPreviewSize) && selectedPreviewSize > maxPreviewSize) els.previewSize.value = String(maxPreviewSize);
 
-  const canUseZoom = canUsePreviewZoom();
-  els.previewZoom.hidden = !canUseZoom;
-  if (!canUseZoom) els.previewZoom.value = "1";
-  els.previewZoom.disabled = !enabled || !state.config.previewEnabled || !canUseZoom;
+  renderPreviewScaleControl(enabled);
 
   const canUseLossless = canUseLosslessPreview();
   els.previewLosslessField.hidden = !canUseLossless;
@@ -1791,6 +1831,27 @@ function setControlsEnabled(enabled) {
 
   els.previewSize.disabled = !enabled || !state.config.previewEnabled;
   els.previewPlanet.disabled = !enabled || !state.config.previewEnabled;
+}
+
+function renderPreviewEngineControls() {
+  if (!els.previewEngine) return;
+  const exactOption = Array.from(els.previewEngine.options).find((option) => option.value === "factorio");
+  const fastOption = Array.from(els.previewEngine.options).find((option) => option.value === "fast");
+  const exactAvailable = factorioPreviewAvailable();
+  if (fastOption) fastOption.disabled = !fastPreviewAvailable();
+  if (exactOption) exactOption.disabled = !exactAvailable;
+  if (currentPreviewEngine() === "factorio" && !exactAvailable) els.previewEngine.value = "fast";
+  if (currentPreviewEngine() === "fast" && !fastPreviewAvailable() && exactAvailable) els.previewEngine.value = "factorio";
+  els.previewEngine.disabled = !state.selected || !state.config.previewEnabled;
+
+  const fast = currentPreviewEngine() === "fast";
+  for (const option of els.previewPlanet.options) {
+    option.disabled = fast && option.value !== "nauvis";
+  }
+  if (fast && knownPlanetName(els.previewPlanet.value) !== "nauvis") els.previewPlanet.value = "nauvis";
+  els.previewPlanet.title = fast
+    ? "Fast custom preview supports Nauvis-style maps. Use Exact for Space Age planets."
+    : "Preview surface. Space Age planets require a Space Age-capable Factorio install.";
 }
 
 function clearVisualControls() {
@@ -2101,6 +2162,8 @@ function canUseDefaultCachedPreview() {
   const preview = state.config.defaultPreview;
   return Boolean(
     preview?.url
+    && currentPreviewEngine() === "factorio"
+    && currentPreviewScale() === "1"
     && state.selected === "default:Default"
     && !state.dirty
     && knownPlanetName(els.previewPlanet.value) === "nauvis"
@@ -2123,9 +2186,13 @@ function renderPreview() {
     return;
   }
   els.previewStatus.classList.remove("error");
-  els.previewStatus.textContent = state.config.previewEnabled ? "" : "Preview binary unavailable.";
+  els.previewStatus.textContent = state.config.previewEnabled ? "" : previewUnavailableMessage();
   updatePreviewFrameSize();
   hidePreview("No preview image");
+}
+
+function previewUnavailableMessage() {
+  return currentPreviewEngine() === "factorio" ? "Exact preview binary unavailable." : "Preview renderer unavailable.";
 }
 
 function previewSizeIsAuto() {
@@ -2214,7 +2281,7 @@ function showPreviewImage(url) {
   };
   els.previewImage.onerror = () => {
     if (loadID !== previewImageLoadID) return;
-    hidePreview(state.config.previewEnabled ? "No preview image" : "Preview binary unavailable");
+    hidePreview(state.config.previewEnabled ? "No preview image" : previewUnavailableMessage());
   };
   const hadImage = Boolean(els.previewImage.getAttribute("src"));
   if (!hadImage) els.previewImage.style.display = "none";

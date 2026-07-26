@@ -1,0 +1,263 @@
+{
+  "_comment": "Ground truth from Factorio 2.1.11 via the test/oracle harness. DEFAULT preset (no property_expression_names routing) - surface.get_tile(x, y).name at each position after real chunk generation. positions are the mod's ECHOED floored get_tile input (not the pre-floor request), so a fractional capture can't silently mismatch. Regenerate: node --experimental-strip-types test/oracle/capture.ts tile-names",
+  "seed0": 654321,
+  "positions": [
+    {
+      "x": 0,
+      "y": 0
+    },
+    {
+      "x": 37,
+      "y": 134
+    },
+    {
+      "x": -184,
+      "y": -115
+    },
+    {
+      "x": 290,
+      "y": -54
+    },
+    {
+      "x": -225,
+      "y": 298
+    },
+    {
+      "x": -43,
+      "y": -449
+    },
+    {
+      "x": 393,
+      "y": 354
+    },
+    {
+      "x": -607,
+      "y": 5
+    },
+    {
+      "x": 501,
+      "y": -467
+    },
+    {
+      "x": -60,
+      "y": 760
+    },
+    {
+      "x": -517,
+      "y": -663
+    },
+    {
+      "x": 906,
+      "y": 152
+    },
+    {
+      "x": -837,
+      "y": 542
+    },
+    {
+      "x": 271,
+      "y": -1041
+    },
+    {
+      "x": 540,
+      "y": 1019
+    },
+    {
+      "x": -1160,
+      "y": -413
+    },
+    {
+      "x": 1206,
+      "y": -510
+    },
+    {
+      "x": -578,
+      "y": 1261
+    },
+    {
+      "x": -450,
+      "y": -1394
+    },
+    {
+      "x": 1341,
+      "y": 762
+    },
+    {
+      "x": -1580,
+      "y": 361
+    },
+    {
+      "x": 966,
+      "y": -1398
+    },
+    {
+      "x": 243,
+      "y": 1760
+    },
+    {
+      "x": -1428,
+      "y": -1184
+    },
+    {
+      "x": 1931,
+      "y": -96
+    },
+    {
+      "x": -1414,
+      "y": 1430
+    },
+    {
+      "x": 79,
+      "y": -2088
+    },
+    {
+      "x": 1402,
+      "y": 1652
+    },
+    {
+      "x": -2227,
+      "y": -281
+    },
+    {
+      "x": 1896,
+      "y": -1343
+    },
+    {
+      "x": -508,
+      "y": 2346
+    },
+    {
+      "x": -1250,
+      "y": -2141
+    },
+    {
+      "x": 2442,
+      "y": 757
+    },
+    {
+      "x": -2383,
+      "y": 1124
+    },
+    {
+      "x": 1027,
+      "y": -2511
+    },
+    {
+      "x": 966,
+      "y": 2618
+    },
+    {
+      "x": -2550,
+      "y": -1314
+    },
+    {
+      "x": 2843,
+      "y": -775
+    },
+    {
+      "x": -1615,
+      "y": 2557
+    },
+    {
+      "x": -551,
+      "y": -3054
+    },
+    {
+      "x": 2531,
+      "y": 1927
+    },
+    {
+      "x": -3246,
+      "y": 295
+    },
+    {
+      "x": 2246,
+      "y": -2468
+    },
+    {
+      "x": 11,
+      "y": 3415
+    },
+    {
+      "x": -2368,
+      "y": -2568
+    },
+    {
+      "x": 3558,
+      "y": 300
+    },
+    {
+      "x": -2888,
+      "y": 2230
+    },
+    {
+      "x": 637,
+      "y": -3672
+    },
+    {
+      "x": 2053,
+      "y": 3203
+    },
+    {
+      "x": -3753,
+      "y": -996
+    },
+    {
+      "x": 3509,
+      "y": -1838
+    }
+  ],
+  "tileNames": [
+    "dirt-1",
+    "dirt-1",
+    "sand-3",
+    "sand-2",
+    "red-desert-1",
+    "dirt-1",
+    "deepwater",
+    "sand-3",
+    "red-desert-3",
+    "dirt-2",
+    "deepwater",
+    "deepwater",
+    "deepwater",
+    "deepwater",
+    "sand-1",
+    "deepwater",
+    "red-desert-0",
+    "dirt-2",
+    "deepwater",
+    "dry-dirt",
+    "red-desert-2",
+    "red-desert-2",
+    "deepwater",
+    "deepwater",
+    "red-desert-1",
+    "dirt-3",
+    "red-desert-3",
+    "red-desert-1",
+    "dirt-6",
+    "red-desert-3",
+    "dirt-1",
+    "dirt-1",
+    "deepwater",
+    "dirt-1",
+    "sand-3",
+    "dirt-4",
+    "deepwater",
+    "red-desert-3",
+    "deepwater",
+    "dirt-3",
+    "deepwater",
+    "grass-2",
+    "deepwater",
+    "grass-2",
+    "dirt-1",
+    "sand-2",
+    "grass-2",
+    "red-desert-2",
+    "red-desert-1",
+    "grass-1",
+    "grass-1"
+  ]
+}

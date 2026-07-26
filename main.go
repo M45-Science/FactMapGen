@@ -10,12 +10,12 @@ import (
 	"flag"
 	"fmt"
 	"image"
-	"image/color"
 	"image/jpeg"
 	"image/png"
 	"io"
 	"io/fs"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -39,9 +39,16 @@ const (
 	previewAVIFCPUUsed       = 6
 	maxPreviewOutputSize     = 4096
 	maxFactorioPreviewSize   = 16384
+	minPreviewTilesPerPixel  = 1.0 / 64
+	maxPreviewTilesPerPixel  = 64.0
 	maxProfileNameLength     = 64
 	previewImageRetention    = 30 * time.Minute
 	maxPreviewImages         = 100
+)
+
+const (
+	previewEngineFast     = "fast"
+	previewEngineFactorio = "factorio"
 )
 
 //go:embed web/* templates/*.json
@@ -78,13 +85,14 @@ type previewImage struct {
 }
 
 type appConfig struct {
-	PresetDir        string           `json:"presetDir"`
-	DefaultPresetDir string           `json:"defaultPresetDir"`
-	CustomPresetDir  string           `json:"customPresetDir"`
-	PreviewEnabled   bool             `json:"previewEnabled"`
-	DefaultPreview   *previewResponse `json:"defaultPreview,omitempty"`
-	FactorioBin      string           `json:"factorioBin,omitempty"`
-	Factorio         factorioStatus   `json:"factorio"`
+	PresetDir          string           `json:"presetDir"`
+	DefaultPresetDir   string           `json:"defaultPresetDir"`
+	CustomPresetDir    string           `json:"customPresetDir"`
+	PreviewEnabled     bool             `json:"previewEnabled"`
+	FastPreviewEnabled bool             `json:"fastPreviewEnabled"`
+	DefaultPreview     *previewResponse `json:"defaultPreview,omitempty"`
+	FactorioBin        string           `json:"factorioBin,omitempty"`
+	Factorio           factorioStatus   `json:"factorio"`
 }
 
 type createProfileRequest struct {
@@ -121,6 +129,7 @@ type renameProfileRequest struct {
 }
 
 type previewRequest struct {
+	Engine   string          `json:"engine"`
 	Size     int             `json:"size"`
 	Planet   string          `json:"planet"`
 	Seed     string          `json:"seed"`
@@ -134,6 +143,7 @@ type previewResponse struct {
 	GeneratedAt string `json:"generatedAt"`
 	Size        int    `json:"size"`
 	Planet      string `json:"planet"`
+	Engine      string `json:"engine,omitempty"`
 	Output      string `json:"output"`
 }
 
@@ -240,11 +250,12 @@ func main() {
 		auth:         auth,
 		factorio:     factorio,
 		config: appConfig{
-			PresetDir:        customPresetDir,
-			DefaultPresetDir: defaultPresetDir,
-			CustomPresetDir:  customPresetDir,
-			PreviewEnabled:   p.factorioBin != "",
-			FactorioBin:      *factorioBin,
+			PresetDir:          customPresetDir,
+			DefaultPresetDir:   defaultPresetDir,
+			CustomPresetDir:    customPresetDir,
+			PreviewEnabled:     true,
+			FastPreviewEnabled: true,
+			FactorioBin:        *factorioBin,
 		},
 	}
 	if p.factorioBin != "" {
@@ -378,13 +389,14 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg := s.config
+	cfg.FastPreviewEnabled = true
 	if s.factorio != nil {
 		cfg.Factorio = s.factorio.status(r.Context(), true)
-		cfg.PreviewEnabled = cfg.Factorio.PreviewEnabled
+		cfg.PreviewEnabled = cfg.FastPreviewEnabled || cfg.Factorio.PreviewEnabled
 		cfg.FactorioBin = cfg.Factorio.Bin
 	} else if s.previewer != nil {
 		cfg.FactorioBin = s.previewer.factorioBinary()
-		cfg.PreviewEnabled = cfg.FactorioBin != ""
+		cfg.PreviewEnabled = cfg.FastPreviewEnabled || cfg.FactorioBin != ""
 	}
 	if s.previewer != nil {
 		if preview, ok := s.previewer.defaultCachedPreview(); ok {
@@ -1237,7 +1249,9 @@ func (s *server) warmDefaultPreview(ctx context.Context) {
 func previewRequestForUser(req previewRequest, user *authUser) previewRequest {
 	if user == nil {
 		req.Lossless = false
-		req.Zoom = "1"
+		if strings.ToLower(strings.TrimSpace(req.Engine)) != previewEngineFast {
+			req.Zoom = "1"
+		}
 		if req.Size == 0 || req.Size > guestMaxPreviewSize {
 			req.Size = guestMaxPreviewSize
 		}
@@ -1256,6 +1270,13 @@ func previewPriorityForUser(user *authUser) int {
 }
 
 func (s *server) renderPreview(ctx context.Context, name string, req previewRequest, priority int) (previewResponse, error) {
+	engine := s.previewEngine(req.Engine)
+	if engine == previewEngineFast {
+		return s.renderFastPreview(ctx, name, req)
+	}
+	if engine != previewEngineFactorio {
+		return previewResponse{}, errors.New("preview engine must be fast or factorio")
+	}
 	if s.previewer == nil || s.previewer.factorioBinary() == "" {
 		return previewResponse{}, errPreviewUnavailable
 	}
@@ -1268,16 +1289,42 @@ func (s *server) renderPreview(ctx context.Context, name string, req previewRequ
 	return s.previewQueue.submit(ctx, priority, run)
 }
 
-func (s *server) renderPreviewNow(ctx context.Context, name string, req previewRequest) (previewResponse, error) {
-	ref, err := s.store.resolveProfile(name)
+func (s *server) previewEngine(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "exact", previewEngineFactorio:
+		if s.previewer != nil && s.previewer.factorioBinary() != "" {
+			return previewEngineFactorio
+		}
+		if strings.TrimSpace(value) != "" {
+			return previewEngineFactorio
+		}
+		return previewEngineFast
+	case previewEngineFast, "custom", "go":
+		return previewEngineFast
+	default:
+		return value
+	}
+}
+
+func (s *server) renderFastPreview(ctx context.Context, name string, req previewRequest) (previewResponse, error) {
+	if s.previewer == nil {
+		return previewResponse{}, errPreviewUnavailable
+	}
+	ref, err := s.previewRenderRef(name, req)
 	if err != nil {
-		if len(bytes.TrimSpace(req.MapGen)) == 0 {
-			return previewResponse{}, err
-		}
-		ref, err = transientProfileRef(name)
-		if err != nil {
-			return previewResponse{}, err
-		}
+		return previewResponse{}, err
+	}
+	mapGen, err := s.previewMapGenBytes(ref, req)
+	if err != nil {
+		return previewResponse{}, err
+	}
+	return s.previewer.renderFast(ctx, ref, mapGen, req)
+}
+
+func (s *server) renderPreviewNow(ctx context.Context, name string, req previewRequest) (previewResponse, error) {
+	ref, err := s.previewRenderRef(name, req)
+	if err != nil {
+		return previewResponse{}, err
 	}
 	mapGenPath, cleanup, err := s.previewMapGenPath(ref, req)
 	if err != nil {
@@ -1285,6 +1332,17 @@ func (s *server) renderPreviewNow(ctx context.Context, name string, req previewR
 	}
 	defer cleanup()
 	return s.previewer.render(ctx, ref, mapGenPath, req, false)
+}
+
+func (s *server) previewRenderRef(name string, req previewRequest) (profileRef, error) {
+	ref, err := s.store.resolveProfile(name)
+	if err == nil {
+		return ref, nil
+	}
+	if len(bytes.TrimSpace(req.MapGen)) == 0 {
+		return profileRef{}, err
+	}
+	return transientProfileRef(name)
 }
 
 func transientProfileRef(identifier string) (profileRef, error) {
@@ -1297,6 +1355,17 @@ func transientProfileRef(identifier string) (profileRef, error) {
 		name = "Preview"
 	}
 	return profileRef{Source: profileSourceLocal, Name: name}, nil
+}
+
+func (s *server) previewMapGenBytes(ref profileRef, req previewRequest) ([]byte, error) {
+	if len(bytes.TrimSpace(req.MapGen)) == 0 {
+		return readNormalizedMapGenJSON(filepath.Join(s.store.profileDir(ref), mapGenFile))
+	}
+	normalized, err := normalizePreviewMapGen(req.MapGen)
+	if err != nil {
+		return nil, fmt.Errorf("%s is invalid JSON: %w", mapGenFile, err)
+	}
+	return normalized, nil
 }
 
 func (s *server) previewMapGenPath(ref profileRef, req previewRequest) (string, func(), error) {
@@ -1445,43 +1514,66 @@ func (p *previewer) render(ctx context.Context, ref profileRef, mapGenPath strin
 		GeneratedAt: generatedAt,
 		Size:        size,
 		Planet:      planet,
+		Engine:      previewEngineFactorio,
 		Output:      clippedOutput(output.String(), 6000),
 	}, nil
 }
 
 type previewZoom struct {
-	mode       string
-	factor     int
-	renderSize int
+	mode          string
+	tilesPerPixel float64
+	renderSize    int
 }
 
 func previewZoomSpec(value string, outputSize int) (previewZoom, error) {
-	if value == "" || value == "1" || value == "1x" {
-		return previewZoom{mode: "normal", factor: 1, renderSize: outputSize}, nil
+	raw := strings.ToLower(strings.TrimSpace(value))
+	if raw == "" || raw == "1" || raw == "1x" {
+		return previewZoom{mode: "normal", tilesPerPixel: 1, renderSize: outputSize}, nil
 	}
-	parts := strings.Split(value, "-")
-	if len(parts) != 2 || parts[0] != "out" && parts[0] != "in" {
-		return previewZoom{}, errors.New("preview zoom must be 1x, out-2, out-3, out-4, in-2, in-3, or in-4")
-	}
-	factor, err := strconv.Atoi(parts[1])
-	if err != nil || factor < 2 || factor > 4 {
-		return previewZoom{}, errors.New("preview zoom factor must be 2, 3, or 4")
-	}
-	if parts[0] == "out" {
-		renderSize := outputSize * factor
-		if renderSize > maxFactorioPreviewSize {
-			return previewZoom{}, fmt.Errorf("preview zoom out %dx requires a %d pixel render; choose a smaller preview size", factor, renderSize)
+
+	tilesPerPixel := 0.0
+	parts := strings.SplitN(raw, "-", 2)
+	if len(parts) == 2 && (parts[0] == "out" || parts[0] == "in") {
+		factor, err := strconv.ParseFloat(parts[1], 64)
+		if err != nil || factor <= 0 || math.IsInf(factor, 0) || math.IsNaN(factor) {
+			return previewZoom{}, errors.New("preview zoom factor must be a positive number")
 		}
-		return previewZoom{mode: "out", factor: factor, renderSize: renderSize}, nil
+		if parts[0] == "out" {
+			tilesPerPixel = factor
+		} else {
+			tilesPerPixel = 1 / factor
+		}
+	} else {
+		parsed, err := strconv.ParseFloat(raw, 64)
+		if err != nil || math.IsInf(parsed, 0) || math.IsNaN(parsed) {
+			return previewZoom{}, errors.New("preview scale must be a number in meters per pixel")
+		}
+		tilesPerPixel = parsed
 	}
-	if outputSize%factor != 0 {
-		return previewZoom{}, fmt.Errorf("preview zoom in %dx requires an output size divisible by %d for integer scaling", factor, factor)
+	if tilesPerPixel < minPreviewTilesPerPixel || tilesPerPixel > maxPreviewTilesPerPixel {
+		return previewZoom{}, fmt.Errorf(
+			"preview scale must be between %.6g and %.6g meters per pixel",
+			minPreviewTilesPerPixel,
+			maxPreviewTilesPerPixel,
+		)
 	}
-	return previewZoom{mode: "in", factor: factor, renderSize: outputSize}, nil
+
+	renderSize := outputSize
+	if tilesPerPixel > 1 {
+		renderSize = int(math.Ceil(float64(outputSize) * tilesPerPixel))
+		if renderSize > maxFactorioPreviewSize {
+			return previewZoom{}, fmt.Errorf(
+				"preview scale %.6g m/px requires a %d pixel source render; reduce the scale or output size",
+				tilesPerPixel,
+				renderSize,
+			)
+		}
+	}
+	return previewZoom{mode: "scale", tilesPerPixel: tilesPerPixel, renderSize: renderSize}, nil
 }
 
 func previewImageBytes(ctx context.Context, srcPath string, lossless bool, zoom previewZoom, outputSize int) ([]byte, string, string, error) {
-	if lossless && zoom.mode == "normal" {
+	if lossless && zoom.tilesPerPixel == 1 {
 		data, err := os.ReadFile(srcPath)
 		if err != nil {
 			return nil, "", "", err
@@ -1492,6 +1584,13 @@ func previewImageBytes(ctx context.Context, srcPath string, lossless bool, zoom 
 	if err != nil {
 		return nil, "", "", err
 	}
+	if lossless {
+		return encodePreviewImage(ctx, img, true)
+	}
+	return encodePreviewImage(ctx, img, false)
+}
+
+func encodePreviewImage(ctx context.Context, img image.Image, lossless bool) ([]byte, string, string, error) {
 	if lossless {
 		var buf bytes.Buffer
 		if err := png.Encode(&buf, img); err != nil {
@@ -1522,16 +1621,10 @@ func transformedPreviewImage(srcPath string, zoom previewZoom, outputSize int) (
 	if err != nil {
 		return nil, err
 	}
-	switch zoom.mode {
-	case "normal":
+	if zoom.tilesPerPixel == 1 {
 		return img, nil
-	case "out":
-		return downscalePreviewImage(img, outputSize, zoom.factor), nil
-	case "in":
-		return integerZoomPreviewImage(img, outputSize, zoom.factor), nil
-	default:
-		return nil, errors.New("invalid preview zoom mode")
 	}
+	return scalePreviewImage(img, outputSize, zoom.tilesPerPixel), nil
 }
 
 func encodeAVIFImage(ctx context.Context, img image.Image) ([]byte, error) {
@@ -1590,37 +1683,19 @@ func encodeJPEGImage(img image.Image, quality int) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func downscalePreviewImage(src image.Image, outputSize int, factor int) image.Image {
+func scalePreviewImage(src image.Image, outputSize int, tilesPerPixel float64) image.Image {
 	bounds := src.Bounds()
 	out := image.NewRGBA(image.Rect(0, 0, outputSize, outputSize))
-	count := uint32(factor * factor)
+	span := float64(outputSize) * tilesPerPixel
+	startX := float64(bounds.Min.X) + (float64(bounds.Dx())-span)/2
+	startY := float64(bounds.Min.Y) + (float64(bounds.Dy())-span)/2
+	maxX := bounds.Max.X - 1
+	maxY := bounds.Max.Y - 1
 	for y := 0; y < outputSize; y++ {
+		sourceY := min(maxY, max(bounds.Min.Y, int(math.Floor(startY+float64(y)*tilesPerPixel))))
 		for x := 0; x < outputSize; x++ {
-			var rr, gg, bb, aa uint32
-			for yy := 0; yy < factor; yy++ {
-				for xx := 0; xx < factor; xx++ {
-					r, g, b, a := src.At(bounds.Min.X+x*factor+xx, bounds.Min.Y+y*factor+yy).RGBA()
-					rr += r
-					gg += g
-					bb += b
-					aa += a
-				}
-			}
-			out.Set(x, y, color.RGBA{R: uint8((rr / count) >> 8), G: uint8((gg / count) >> 8), B: uint8((bb / count) >> 8), A: uint8((aa / count) >> 8)})
-		}
-	}
-	return out
-}
-
-func integerZoomPreviewImage(src image.Image, outputSize int, factor int) image.Image {
-	bounds := src.Bounds()
-	cropSize := outputSize / factor
-	cropMinX := bounds.Min.X + (bounds.Dx()-cropSize)/2
-	cropMinY := bounds.Min.Y + (bounds.Dy()-cropSize)/2
-	out := image.NewRGBA(image.Rect(0, 0, outputSize, outputSize))
-	for y := 0; y < outputSize; y++ {
-		for x := 0; x < outputSize; x++ {
-			out.Set(x, y, src.At(cropMinX+x/factor, cropMinY+y/factor))
+			sourceX := min(maxX, max(bounds.Min.X, int(math.Floor(startX+float64(x)*tilesPerPixel))))
+			out.Set(x, y, src.At(sourceX, sourceY))
 		}
 	}
 	return out

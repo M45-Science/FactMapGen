@@ -129,6 +129,10 @@
                   <input id="autoRefreshPreview" type="checkbox" checked />
                   <span>Auto-refresh</span>
                 </label>
+                <select id="previewEngine" title="Fast uses the built-in Go renderer. Exact uses the Factorio binary when installed." aria-label="Preview engine">
+                  <option value="fast" selected>Fast</option>
+                  <option value="factorio">Exact</option>
+                </select>
                 <select id="previewPlanet" title="Preview surface. Space Age planets require a Space Age-capable Factorio install." aria-label="Preview surface">
                   <option value="nauvis" selected>Nauvis</option>
                   <option value="vulcanus">Vulcanus</option>
@@ -147,15 +151,21 @@
                   <option value="3072">3K</option>
                   <option value="4096">4K</option>
                 </select>
-                <select id="previewZoom" title="Map scale in meters per output pixel. Larger values show more area; smaller values zoom into the center with integer scaling." aria-label="Preview scale">
-                  <option value="out-4">4 m/px - widest</option>
-                  <option value="out-3">3 m/px</option>
-                  <option value="out-2">2 m/px</option>
-                  <option value="1" selected>1 m/px - normal</option>
-                  <option value="in-2">1/2 m/px</option>
-                  <option value="in-3">1/3 m/px</option>
-                  <option value="in-4">1/4 m/px - closest</option>
-                </select>
+                <label id="previewScaleField" class="preview-scale-field" title="Map scale in meters per output pixel. Enter any value from 0.015625 to 64; larger values show more area.">
+                  <input id="previewZoom" type="number" min="0.015625" max="64" step="any" value="1" list="previewScalePresets" aria-label="Preview scale in meters per pixel" />
+                  <span>m/px</span>
+                </label>
+                <datalist id="previewScalePresets">
+                  <option value="0.0625"></option>
+                  <option value="0.125"></option>
+                  <option value="0.25"></option>
+                  <option value="0.5"></option>
+                  <option value="1"></option>
+                  <option value="2"></option>
+                  <option value="4"></option>
+                  <option value="8"></option>
+                  <option value="16"></option>
+                </datalist>
                 <label id="previewLosslessField" class="check-field" title="Use PNG output for exact pixels. Leave off for high-quality JPEG previews that load faster.">
                   <input id="previewLossless" type="checkbox" />
                   <span>Lossless</span>
