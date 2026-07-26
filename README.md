@@ -92,6 +92,10 @@ The natural-layer gallery writes `test-output/preview-gallery/default-10-seeds-t
 
 The resource-layer gallery writes `test-output/preview-gallery/default-10-seeds-resources-oil-rocks/index.html`, with trees, enemies, cliffs, fish, and decorations disabled. It includes per-seed ore-region correlation, ore/oil/rock coverage ratios, amplified diffs, and content-addressed Factorio references.
 
+The current ten-seed results and interpretation are documented in
+[`docs/render-comparison.md`](docs/render-comparison.md). Generated gallery
+artifacts remain local under the ignored `test-output/` directory.
+
 ## Presets
 
 Built-in presets:
