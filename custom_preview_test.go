@@ -123,6 +123,40 @@ func TestIslandElevationHasLandAndEndlessOcean(t *testing.T) {
 	}
 }
 
+func TestFastStartingPositionsRejectUnsafeInput(t *testing.T) {
+	valid := make([]any, maxFastPreviewStartingPoints)
+	for index := range valid {
+		valid[index] = map[string]any{"x": index, "y": -index}
+	}
+	points, err := fastStartingPositions(valid)
+	if err != nil || len(points) != maxFastPreviewStartingPoints {
+		t.Fatalf("valid starting points = %d, %v; want %d, nil", len(points), err, maxFastPreviewStartingPoints)
+	}
+
+	tooMany := append(valid, map[string]any{"x": 0, "y": 0})
+	for _, test := range []struct {
+		name  string
+		value any
+	}{
+		{name: "not an array", value: "origin"},
+		{name: "too many", value: tooMany},
+		{name: "non-object entry", value: []any{nil}},
+		{name: "NaN coordinate", value: []any{map[string]any{"x": "NaN", "y": 0}}},
+		{name: "infinite coordinate", value: []any{map[string]any{"x": "+Inf", "y": 0}}},
+		{name: "out-of-range coordinate", value: []any{map[string]any{"x": maxPreviewCenter + 1, "y": 0}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := fastStartingPositions(test.value); err == nil {
+				t.Fatal("unsafe starting points were accepted")
+			}
+		})
+	}
+
+	if got := fastNumber("NaN", 7); got != 7 {
+		t.Fatalf("fastNumber NaN = %g, want fallback 7", got)
+	}
+}
+
 func TestRenderPreviewUsesFastEngineWithoutFactorio(t *testing.T) {
 	root := t.TempDir()
 	st := &store{

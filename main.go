@@ -769,7 +769,7 @@ func writeError(w http.ResponseWriter, status int, message string) {
 func writeStoreError(w http.ResponseWriter, err error) {
 	var status int
 	switch {
-	case errors.Is(err, errInvalidProfileName):
+	case errors.Is(err, errInvalidProfileName), errors.Is(err, errInvalidPreviewRequest):
 		status = http.StatusBadRequest
 	case errors.Is(err, errProfileExists):
 		status = http.StatusConflict
@@ -788,12 +788,20 @@ func writeStoreError(w http.ResponseWriter, err error) {
 }
 
 var (
-	errInvalidProfileName = errors.New("profile names must be 1-64 characters and use letters, numbers, spaces, dots, underscores, or hyphens")
-	errProfileExists      = errors.New("profile already exists")
-	errProfileNotFound    = errors.New("profile not found")
-	errReadOnlyProfile    = errors.New("default presets are read-only; duplicate this preset before saving changes")
-	errPreviewUnavailable = errors.New("Factorio preview is not configured")
+	errInvalidProfileName    = errors.New("profile names must be 1-64 characters and use letters, numbers, spaces, dots, underscores, or hyphens")
+	errProfileExists         = errors.New("profile already exists")
+	errProfileNotFound       = errors.New("profile not found")
+	errReadOnlyProfile       = errors.New("default presets are read-only; duplicate this preset before saving changes")
+	errPreviewUnavailable    = errors.New("Factorio preview is not configured")
+	errInvalidPreviewRequest = errors.New("invalid preview request")
 )
+
+func invalidPreviewRequest(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %v", errInvalidPreviewRequest, err)
+}
 
 func (s *store) ensure() error {
 	if sameDirectory(s.defaultRoot, s.customRoot) {
@@ -1354,7 +1362,7 @@ func (s *server) renderPreview(ctx context.Context, name string, req previewRequ
 		return s.renderFastPreview(ctx, name, req)
 	}
 	if engine != previewEngineFactorio {
-		return previewResponse{}, errors.New("preview engine must be fast or factorio")
+		return previewResponse{}, invalidPreviewRequest(errors.New("preview engine must be fast or factorio"))
 	}
 	if s.previewer == nil || s.previewer.factorioBinary() == "" {
 		return previewResponse{}, errPreviewUnavailable
@@ -1442,7 +1450,7 @@ func (s *server) previewMapGenBytes(ref profileRef, req previewRequest) ([]byte,
 	}
 	normalized, err := normalizePreviewMapGen(req.MapGen)
 	if err != nil {
-		return nil, fmt.Errorf("%s is invalid JSON: %w", mapGenFile, err)
+		return nil, invalidPreviewRequest(fmt.Errorf("%s is invalid JSON: %w", mapGenFile, err))
 	}
 	return normalized, nil
 }
@@ -1455,7 +1463,7 @@ func (s *server) previewMapGenPath(ref profileRef, req previewRequest) (string, 
 
 	normalized, err := normalizePreviewMapGen(req.MapGen)
 	if err != nil {
-		return "", cleanup, fmt.Errorf("%s is invalid JSON: %w", mapGenFile, err)
+		return "", cleanup, invalidPreviewRequest(fmt.Errorf("%s is invalid JSON: %w", mapGenFile, err))
 	}
 
 	tmp, err := os.CreateTemp("", "factmapgen-map-gen-*.json")
@@ -1499,6 +1507,18 @@ func (s *server) handlePreviewImage(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(img.data)
 }
 
+func validatePreviewSeedOverride(value string) error {
+	seed := strings.TrimSpace(value)
+	if seed == "" {
+		return nil
+	}
+	n, err := strconv.ParseUint(seed, 10, 32)
+	if err != nil || n == 0 {
+		return errors.New("preview seed override must be an integer between 1 and 4294967295")
+	}
+	return nil
+}
+
 func (p *previewer) render(ctx context.Context, ref profileRef, mapGenPath string, req previewRequest, pinned bool) (previewResponse, error) {
 	factorioBin := p.factorioBinary()
 	if factorioBin == "" {
@@ -1513,22 +1533,28 @@ func (p *previewer) render(ctx context.Context, ref profileRef, mapGenPath strin
 		size = 768
 	}
 	if size < 256 || size > maxPreviewOutputSize {
-		return previewResponse{}, fmt.Errorf("preview size must be between 256 and %d pixels", maxPreviewOutputSize)
+		return previewResponse{}, invalidPreviewRequest(fmt.Errorf("preview size must be between 256 and %d pixels", maxPreviewOutputSize))
 	}
 	planet := strings.TrimSpace(req.Planet)
 	if planet == "" {
-		planet = "nauvis"
+		planet = fastPreviewPlanetNauvis
+	}
+	if canonical, canonicalErr := normalizeFastPreviewPlanet(planet); canonicalErr == nil {
+		planet = canonical
 	}
 	if !regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`).MatchString(planet) {
-		return previewResponse{}, errors.New("preview planet must use letters, numbers, underscores, or hyphens")
+		return previewResponse{}, invalidPreviewRequest(errors.New("preview planet must use letters, numbers, underscores, or hyphens"))
 	}
 	zoom, err := previewZoomSpec(req.Zoom, size)
 	if err != nil {
-		return previewResponse{}, err
+		return previewResponse{}, invalidPreviewRequest(err)
 	}
 	centerX, centerY, err := normalizedPreviewCenter(req.CenterX, req.CenterY, zoom.tilesPerPixel)
 	if err != nil {
-		return previewResponse{}, err
+		return previewResponse{}, invalidPreviewRequest(err)
+	}
+	if err := validatePreviewSeedOverride(req.Seed); err != nil {
+		return previewResponse{}, invalidPreviewRequest(err)
 	}
 
 	tmp, err := os.CreateTemp("", "factmapgen-preview-*.png")
@@ -1557,9 +1583,6 @@ func (p *previewer) render(ctx context.Context, ref profileRef, mapGenPath strin
 		args = append(args, "--map-preview-offset", formatPreviewCenter(centerX)+","+formatPreviewCenter(centerY))
 	}
 	if seed := strings.TrimSpace(req.Seed); seed != "" {
-		if !regexp.MustCompile(`^[0-9]+$`).MatchString(seed) {
-			return previewResponse{}, errors.New("preview seed override must be an unsigned integer")
-		}
 		args = append(args, "--map-gen-seed", seed)
 	}
 
@@ -1615,6 +1638,14 @@ type previewZoom struct {
 }
 
 func previewZoomSpec(value string, outputSize int) (previewZoom, error) {
+	return previewZoomSpecWithSourceLimit(value, outputSize, true)
+}
+
+func fastPreviewZoomSpec(value string, outputSize int) (previewZoom, error) {
+	return previewZoomSpecWithSourceLimit(value, outputSize, false)
+}
+
+func previewZoomSpecWithSourceLimit(value string, outputSize int, enforceSourceLimit bool) (previewZoom, error) {
 	raw := strings.ToLower(strings.TrimSpace(value))
 	if raw == "" || raw == "1" || raw == "1x" {
 		return previewZoom{mode: "normal", tilesPerPixel: 1, renderSize: outputSize}, nil
@@ -1650,7 +1681,7 @@ func previewZoomSpec(value string, outputSize int) (previewZoom, error) {
 	renderSize := outputSize
 	if tilesPerPixel > 1 {
 		renderSize = int(math.Ceil(float64(outputSize) * tilesPerPixel))
-		if renderSize > maxFactorioPreviewSize {
+		if enforceSourceLimit && renderSize > maxFactorioPreviewSize {
 			return previewZoom{}, fmt.Errorf(
 				"preview scale %.6g m/px requires a %d pixel source render; reduce the scale or output size",
 				tilesPerPixel,

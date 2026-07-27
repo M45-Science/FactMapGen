@@ -1,3 +1,5 @@
+const previewSource = window.PreviewSource;
+
 const state = {
   config: {
     presetDir: "presets",
@@ -16,6 +18,7 @@ const state = {
   mapSettings: null,
   previewSeeds: {},
   previewViews: {},
+  previewPlanets: {},
   dirty: false,
   session: null,
 };
@@ -65,7 +68,7 @@ const resources = [
 ];
 
 const resourceKeys = ["coal", "iron-ore", "copper-ore", "stone", "uranium-ore", "crude-oil"];
-const knownPlanets = ["nauvis", "vulcanus", "gleba", "fulgora", "aquilo"];
+const knownPlanets = previewSource.knownPlanets;
 const spaceAgeControlGroups = [
   {
     key: "nauvis",
@@ -164,7 +167,7 @@ const planetMapGenDefaults = {
     autoplace_settings: {
       tile: ["volcanic-soil-dark", "volcanic-soil-light", "volcanic-ash-soil", "volcanic-ash-flats", "volcanic-ash-light", "volcanic-ash-dark", "volcanic-cracks", "volcanic-cracks-warm", "volcanic-folds", "volcanic-folds-flat", "lava", "lava-hot", "volcanic-folds-warm", "volcanic-pumice-stones", "volcanic-cracks-hot", "volcanic-jagged-ground", "volcanic-smooth-stone", "volcanic-smooth-stone-warm", "volcanic-ash-cracks"],
       decorative: ["v-brown-carpet-grass", "v-green-hairy-grass", "v-brown-hairy-grass", "v-red-pita", "vulcanus-rock-decal-large", "vulcanus-crack-decal-large", "vulcanus-crack-decal-huge-warm", "vulcanus-dune-decal", "vulcanus-sand-decal", "vulcanus-lava-fire", "calcite-stain", "calcite-stain-small", "sulfur-stain", "sulfur-stain-small", "sulfuric-acid-puddle", "sulfuric-acid-puddle-small", "crater-small", "crater-large", "pumice-relief-decal", "small-volcanic-rock", "medium-volcanic-rock", "tiny-volcanic-rock", "tiny-rock-cluster", "small-sulfur-rock", "tiny-sulfur-rock", "sulfur-rock-cluster", "waves-decal"],
-      entity: ["coal", "calcite", "sulfuric-acid-geyser", "tungsten-ore", "huge-volcanic-rock", "big-volcanic-rock", "crater-cliff", "vulcanus-chimney", "vulcanus-chimney-faded", "vulcanus-chimney-cold", "vulcanus-chimney-short", "vulcanus-chimney-truncated", "ashland-lichen-tree", "ashland-lichen-tree-flaming"],
+      entity: ["big-volcanic-rock-hot", "huge-volcanic-rock-hot", "coal", "calcite", "sulfuric-acid-geyser", "tungsten-ore", "huge-volcanic-rock", "big-volcanic-rock", "crater-cliff", "vulcanus-chimney", "vulcanus-chimney-faded", "vulcanus-chimney-cold", "vulcanus-chimney-short", "vulcanus-chimney-truncated", "ashland-lichen-tree", "ashland-lichen-tree-flaming"],
     },
   },
   gleba: {
@@ -228,9 +231,9 @@ const planetMapGenDefaults = {
     },
     autoplace_controls: ["scrap", "fulgora_islands", "fulgora_cliff"],
     autoplace_settings: {
-      tile: ["oil-ocean-shallow", "oil-ocean-deep", "fulgoran-rock", "fulgoran-dust", "fulgoran-sand", "fulgoran-dunes", "fulgoran-walls", "fulgoran-paving", "fulgoran-conduit", "fulgoran-machinery"],
-      decorative: ["fulgoran-ruin-tiny", "fulgoran-gravewort", "urchin-cactus", "medium-fulgora-rock", "small-fulgora-rock", "tiny-fulgora-rock"],
-      entity: ["scrap", "fulgoran-ruin-vault", "fulgoran-ruin-attractor", "fulgoran-ruin-colossal", "fulgoran-ruin-huge", "fulgoran-ruin-big", "fulgoran-ruin-stonehenge", "fulgoran-ruin-medium", "fulgoran-ruin-small", "fulgurite", "big-fulgora-rock"],
+      tile: ["oil-ocean-shallow-2", "oil-ocean-shallow", "oil-ocean-deep", "oil-ocean-deep-2", "fulgoran-rock", "fulgoran-dust", "fulgoran-sand", "fulgoran-dunes", "fulgoran-walls", "fulgoran-paving", "fulgoran-conduit", "fulgoran-machinery"],
+      decorative: ["fulgora-sunk-ruin-big-decal", "fulgora-sunk-ruin-medium", "fulgora-sunk-ruin-small", "fulgoran-ruin-tiny", "small-fulgoran-gravewort", "medium-fulgoran-gravewort", "urchin-cactus", "medium-fulgora-rock", "small-fulgora-rock", "tiny-fulgora-rock"],
+      entity: ["scrap", "fulgora-sunk-ruin-big", "fulgora-sunk-ruin-medium-tall", "fulgoran-ruin-vault", "fulgoran-ruin-attractor", "fulgoran-ruin-colossal", "fulgoran-ruin-huge", "fulgoran-ruin-big", "fulgoran-ruin-stonehenge", "fulgoran-ruin-medium", "fulgoran-ruin-small", "fulgurite", "big-fulgora-rock"],
     },
   },
   aquilo: {
@@ -523,7 +526,10 @@ async function init() {
       scheduleAutoPreview();
     }
   });
-  els.previewPlanet.addEventListener("change", () => scheduleAutoPreview());
+  els.previewPlanet.addEventListener("change", () => {
+    const changed = setPreviewPlanet(els.previewPlanet.value);
+    if (changed) scheduleAutoPreview();
+  });
   els.previewZoom.addEventListener("input", () => {
     if (fastTileViewerActive()) {
       const displayed = displayedPreviewForCurrentProfile();
@@ -1428,6 +1434,10 @@ async function renameProfile(event) {
         state.previewViews[profile.id] = state.previewViews[oldID];
         delete state.previewViews[oldID];
       }
+      if (state.previewPlanets[oldID]) {
+        state.previewPlanets[profile.id] = state.previewPlanets[oldID];
+        delete state.previewPlanets[oldID];
+      }
       state.selected = profile.id;
       closeRenameDialog();
       await loadProfiles(true);
@@ -1468,6 +1478,10 @@ async function renameProfile(event) {
     if (oldID !== newID && state.previewViews[oldID]) {
       state.previewViews[newID] = state.previewViews[oldID];
       delete state.previewViews[oldID];
+    }
+    if (oldID !== newID && state.previewPlanets[oldID]) {
+      state.previewPlanets[newID] = state.previewPlanets[oldID];
+      delete state.previewPlanets[oldID];
     }
     state.selected = newID;
     state.mapGen = wasDirty ? currentMapGen : body.mapGen;
@@ -1684,7 +1698,7 @@ async function generatePreview(options = {}) {
 
   try {
     const size = currentPreviewSize();
-    const planet = knownPlanetName(els.previewPlanet.value);
+    const planet = previewPlanetForCurrentProfile();
     updatePreviewFrameSize(size);
     els.previewBtn.disabled = true;
     setPreviewUpdating("Generating preview...");
@@ -1711,6 +1725,12 @@ async function generatePreview(options = {}) {
       body: JSON.stringify(payload),
     });
     if (!previewRequestIsCurrent(previewProfile, requestRevision)) return true;
+    if (String(body.planet || "") !== planet) {
+      throw new Error("preview response did not use the selected planet");
+    }
+    if (body.engine && body.engine !== payload.engine) {
+      throw new Error("preview response did not use the selected engine");
+    }
     const renderedSize = positivePreviewNumber(body.size, size);
     const renderedScale = positivePreviewNumber(body.tilesPerPixel, Number(payload.zoom));
     const renderedCenterX = finitePreviewNumber(body.centerX, payload.centerX);
@@ -1718,6 +1738,8 @@ async function generatePreview(options = {}) {
     updatePreviewFrameSize(renderedSize);
     showPreviewImage(body.url, {
       profile: previewProfile,
+      engine: body.engine || payload.engine,
+      planet: body.planet,
       size: renderedSize,
       tilesPerPixel: renderedScale,
       centerX: renderedCenterX,
@@ -1768,6 +1790,7 @@ function currentMapgenTab() {
 }
 
 function renderAll() {
+  restorePreviewPlanetForCurrentProfile();
   renderProfileSelect();
   renderHeader();
   if (state.selected) {
@@ -1912,13 +1935,7 @@ function fastTileViewerActive() {
 }
 
 function fastTileSourceKey(profile, payload) {
-  return JSON.stringify({
-    profile,
-    engine: "fast",
-    planet: payload.planet,
-    seed: payload.seed || "",
-    mapGen: payload.mapGen,
-  });
+  return previewSource.fastTileSourceKey(profile, payload);
 }
 
 function canUsePreviewZoom() {
@@ -1946,7 +1963,13 @@ function previewViewForCurrentProfile() {
 }
 
 function displayedPreviewForCurrentProfile() {
-  if (!displayedPreview || displayedPreview.profile !== state.selected) return null;
+  if (
+    !displayedPreview
+    || displayedPreview.profile !== state.selected
+    || (displayedPreview.planet && displayedPreview.planet !== previewPlanetForCurrentProfile())
+  ) {
+    return null;
+  }
   return displayedPreview;
 }
 
@@ -2327,12 +2350,9 @@ function renderPreviewEngineControls() {
 
   const fast = currentPreviewEngine() === "fast";
   els.previewSize.hidden = fast;
-  for (const option of els.previewPlanet.options) {
-    option.disabled = fast && option.value !== "nauvis";
-  }
-  if (fast && knownPlanetName(els.previewPlanet.value) !== "nauvis") els.previewPlanet.value = "nauvis";
+  for (const option of els.previewPlanet.options) option.disabled = false;
   els.previewPlanet.title = fast
-    ? "Fast custom preview supports Nauvis-style maps. Use Exact for Space Age planets."
+    ? "Fast preview surface. Uses the built-in seeded approximation for Nauvis and all Space Age planets."
     : "Preview surface. Space Age planets require a Space Age-capable Factorio install.";
 }
 
@@ -2652,7 +2672,7 @@ function canUseDefaultCachedPreview() {
     && view.centerY === 0
     && state.selected === "default:Default"
     && !state.dirty
-    && knownPlanetName(els.previewPlanet.value) === "nauvis"
+    && previewPlanetForCurrentProfile() === "nauvis"
   );
 }
 
@@ -2663,6 +2683,8 @@ function showDefaultCachedPreview() {
   updatePreviewFrameSize(size);
   showPreviewImage(preview.url, {
     profile: state.selected,
+    engine: preview.engine || "factorio",
+    planet: preview.planet || "nauvis",
     size,
     tilesPerPixel: 1,
     centerX: 0,
@@ -2840,6 +2862,8 @@ async function showFastTilePreview(profile, payload, requestRevision) {
   const loadID = ++previewImageLoadID;
   displayedPreview = {
     profile,
+    engine: "fast",
+    planet: payload.planet,
     size,
     tilesPerPixel: scale,
     centerX,
@@ -2881,6 +2905,9 @@ async function showFastTilePreview(profile, payload, requestRevision) {
         signal: tile.signal,
       });
       if (body.engine && body.engine !== "fast") throw new Error("tile request did not use the Fast renderer");
+      if (String(body.planet || "") !== payload.planet) {
+        throw new Error("tile response did not use the selected planet");
+      }
       if (!body.url) throw new Error("tile response did not include an image URL");
       return body.url;
     },
@@ -2922,6 +2949,8 @@ function showPreviewImage(url, metadata = {}, options = {}) {
   const nextPreview = {
     profile: metadata.profile || state.selected,
     url,
+    engine: metadata.engine || currentPreviewEngine(),
+    planet: knownPlanetName(metadata.planet || previewPlanetForCurrentProfile()),
     size: positivePreviewNumber(metadata.size, currentPreviewSize()),
     tilesPerPixel: positivePreviewNumber(metadata.tilesPerPixel, Number(currentPreviewScale())),
     centerX: finitePreviewNumber(metadata.centerX, fallbackView.centerX),
@@ -3550,7 +3579,7 @@ function baseControlLabel(labelText) {
 }
 
 function knownPlanetName(name) {
-  return knownPlanets.includes(name) ? name : "nauvis";
+  return previewSource.knownPlanetName(name);
 }
 
 function titleCase(value) {
@@ -3667,10 +3696,37 @@ function planetAutoplaceSettings(settings) {
   return out;
 }
 
+function previewPlanetForCurrentProfile() {
+  const stored = state.selected ? state.previewPlanets[state.selected] : "";
+  if (knownPlanets.includes(stored)) return stored;
+  return knownPlanetName(els.previewPlanet?.value);
+}
+
+function restorePreviewPlanetForCurrentProfile() {
+  if (!state.selected) return;
+  let planet = state.previewPlanets[state.selected];
+  if (!knownPlanets.includes(planet)) {
+    planet = previewSource.inferPreviewPlanet(state.mapGen);
+    state.previewPlanets[state.selected] = planet;
+  }
+  els.previewPlanet.value = planet;
+}
+
+function invalidatePreviewForPlanetChange() {
+  const message = "Preview planet changed; generate a preview to update the map.";
+  hidePreview(message);
+  els.previewStatus.classList.remove("error");
+  els.previewStatus.textContent = message;
+}
+
 function setPreviewPlanet(planetKey) {
-  if (!knownPlanets.includes(planetKey)) return;
+  if (!knownPlanets.includes(planetKey)) return false;
+  const previous = previewPlanetForCurrentProfile();
   els.previewPlanet.value = planetKey;
-  scheduleAutoPreview();
+  if (state.selected) state.previewPlanets[state.selected] = planetKey;
+  if (previous === planetKey) return false;
+  invalidatePreviewForPlanetChange();
+  return true;
 }
 
 function applyResourcePreset(name) {

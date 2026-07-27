@@ -661,6 +661,38 @@ func TestGuestExactPreviewRequestIsForbidden(t *testing.T) {
 	}
 }
 
+func TestFastPreviewValidationErrorsReturnBadRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "unsupported planet", body: `{"engine":"fast","planet":"mars","seed":"1"}`},
+		{name: "zero seed", body: `{"engine":"fast","planet":"nauvis","seed":"0"}`},
+		{name: "overflow seed", body: `{"engine":"fast","planet":"nauvis","seed":"4294967296"}`},
+		{name: "non-object map generation settings", body: `{"engine":"fast","planet":"nauvis","seed":"1","mapGen":[]}`},
+		{name: "out-of-range JSON number", body: `{"engine":"fast","planet":"nauvis","seed":"1","mapGen":{"width":1e400}}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			preview := &previewer{}
+			srv := &server{store: newTestStore(t), previewer: preview}
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/api/profiles/default:Default/preview",
+				strings.NewReader(test.body),
+			)
+			rec := httptest.NewRecorder()
+			srv.handleProfile(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d body=%s, want 400", rec.Code, rec.Body.String())
+			}
+			if preview.fastPreviewCache != nil {
+				t.Fatal("invalid request initialized the Fast tile cache")
+			}
+		})
+	}
+}
+
 func TestPreviewZoomSpec(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -699,6 +731,19 @@ func TestPreviewZoomSpec(t *testing.T) {
 				t.Fatalf("previewZoomSpec(%q, %d) = %#v, want mode=%s scale=%g render=%d", test.zoom, test.outputSize, got, test.wantMode, test.wantScale, test.wantRender)
 			}
 		})
+	}
+}
+
+func TestFastPreviewZoomSpecDoesNotUseFactorioSourceLimit(t *testing.T) {
+	got, err := fastPreviewZoomSpec("64", maxPreviewOutputSize)
+	if err != nil {
+		t.Fatalf("fastPreviewZoomSpec at maximum scale: %v", err)
+	}
+	if got.tilesPerPixel != 64 || got.renderSize != maxPreviewOutputSize*64 {
+		t.Fatalf("fast zoom = %#v, want scale 64 and render size %d", got, maxPreviewOutputSize*64)
+	}
+	if _, err := previewZoomSpec("64", maxPreviewOutputSize); err == nil {
+		t.Fatal("exact preview accepted a source render above the Factorio limit")
 	}
 }
 

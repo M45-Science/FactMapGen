@@ -16,9 +16,9 @@ import (
 const (
 	fastPreviewTileEdge           = 128
 	defaultFastPreviewCacheBytes  = 2 << 30
-	defaultFastPreviewCacheWorlds = 4
+	defaultFastPreviewCacheWorlds = 5
 	fastPreviewMaxRegionsPerField = 64
-	fastPreviewRendererRevision   = "factorio-preview-v4"
+	fastPreviewRendererRevision   = "factorio-preview-v5"
 )
 
 type fastPreviewWorldKey [sha256.Size]byte
@@ -104,6 +104,18 @@ func fastPreviewRenderConcurrency() int {
 }
 
 func fastPreviewCacheKey(raw json.RawMessage, effectiveSeed uint32) (fastPreviewWorldKey, error) {
+	return fastPreviewCacheKeyForPlanet(raw, effectiveSeed, fastPreviewPlanetNauvis)
+}
+
+func fastPreviewCacheKeyForPlanet(
+	raw json.RawMessage,
+	effectiveSeed uint32,
+	planet string,
+) (fastPreviewWorldKey, error) {
+	normalizedPlanet, err := normalizeFastPreviewPlanet(planet)
+	if err != nil {
+		return fastPreviewWorldKey{}, err
+	}
 	var root any
 	if err := json.Unmarshal(raw, &root); err != nil {
 		return fastPreviewWorldKey{}, err
@@ -119,6 +131,8 @@ func fastPreviewCacheKey(raw json.RawMessage, effectiveSeed uint32) (fastPreview
 	}
 	hash := sha256.New()
 	_, _ = hash.Write([]byte(fastPreviewRendererRevision))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write([]byte(normalizedPlanet))
 	_, _ = hash.Write([]byte{0})
 	_, _ = hash.Write(canonical)
 	var key fastPreviewWorldKey

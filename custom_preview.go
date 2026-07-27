@@ -18,6 +18,7 @@ import (
 
 type fastPreviewSettings struct {
 	seed                          uint32
+	planet                        string
 	mapType                       string
 	width                         float64
 	height                        float64
@@ -41,6 +42,7 @@ type fastPreviewSettings struct {
 	startingAreaMoistureFrequency float64
 	startingPositions             []factorioPoint
 	resourceControls              map[string]fastControl
+	autoplaceControls             map[string]fastControl
 	propertyExpression            map[string]any
 }
 
@@ -54,11 +56,28 @@ type fastControl struct {
 type fastPreviewWorld struct {
 	settings  fastPreviewSettings
 	nauvis    *factorioNauvisEvaluator
+	spaceAge  *factorioSpaceAgeEvaluator
 	trees     *factorioTreeEvaluator
 	resources *factorioResourceEvaluator
 	rocks     *factorioRockEvaluator
 	cliffs    *factorioCliffEvaluator
 	enemies   *factorioEnemyEvaluator
+}
+
+const (
+	fastPreviewPlanetNauvis   = "nauvis"
+	fastPreviewPlanetVulcanus = "vulcanus"
+	fastPreviewPlanetGleba    = "gleba"
+	fastPreviewPlanetFulgora  = "fulgora"
+	fastPreviewPlanetAquilo   = "aquilo"
+)
+
+var fastPreviewPlanets = map[string]struct{}{
+	fastPreviewPlanetNauvis:   {},
+	fastPreviewPlanetVulcanus: {},
+	fastPreviewPlanetGleba:    {},
+	fastPreviewPlanetFulgora:  {},
+	fastPreviewPlanetAquilo:   {},
 }
 
 var fastResourceNames = []string{
@@ -68,6 +87,25 @@ var fastResourceNames = []string{
 	"stone",
 	"crude-oil",
 	"uranium-ore",
+}
+
+var fastSpaceAgeControlNames = []string{
+	"vulcanus_coal",
+	"sulfuric_acid_geyser",
+	"tungsten_ore",
+	"calcite",
+	"vulcanus_volcanism",
+	"gleba_stone",
+	"gleba_water",
+	"gleba_plants",
+	"gleba_cliff",
+	"gleba_enemy_base",
+	"scrap",
+	"fulgora_islands",
+	"fulgora_cliff",
+	"aquilo_crude_oil",
+	"lithium_brine",
+	"fluorine_vent",
 }
 
 var fastScaleValues = map[string]float64{
@@ -92,30 +130,30 @@ func (p *previewer) renderFast(ctx context.Context, ref profileRef, mapGen json.
 		size = 768
 	}
 	if size < 256 || size > maxPreviewOutputSize {
-		return previewResponse{}, fmt.Errorf("preview size must be between 256 and %d pixels", maxPreviewOutputSize)
+		return previewResponse{}, invalidPreviewRequest(fmt.Errorf("preview size must be between 256 and %d pixels", maxPreviewOutputSize))
 	}
-	planet := strings.TrimSpace(req.Planet)
-	if planet == "" {
-		planet = "nauvis"
-	}
-	if planet != "nauvis" {
-		return previewResponse{}, errors.New("fast preview currently supports the Nauvis surface only; use exact Factorio preview for Space Age planets")
-	}
-	zoom, err := previewZoomSpec(req.Zoom, size)
+	planet, err := normalizeFastPreviewPlanet(req.Planet)
 	if err != nil {
-		return previewResponse{}, err
+		return previewResponse{}, invalidPreviewRequest(err)
+	}
+	zoom, err := fastPreviewZoomSpec(req.Zoom, size)
+	if err != nil {
+		return previewResponse{}, invalidPreviewRequest(err)
 	}
 	centerX, centerY, err := normalizedPreviewCenter(req.CenterX, req.CenterY, zoom.tilesPerPixel)
 	if err != nil {
-		return previewResponse{}, err
+		return previewResponse{}, invalidPreviewRequest(err)
 	}
-	settings, err := parseFastPreviewSettings(mapGen, req.Seed)
-	if err != nil {
-		return previewResponse{}, err
+	if err := validatePreviewSeedOverride(req.Seed); err != nil {
+		return previewResponse{}, invalidPreviewRequest(err)
 	}
-	cacheKey, err := fastPreviewCacheKey(mapGen, settings.seed)
+	settings, err := parseFastPreviewSettingsForPlanet(mapGen, req.Seed, planet)
 	if err != nil {
-		return previewResponse{}, err
+		return previewResponse{}, invalidPreviewRequest(err)
+	}
+	cacheKey, err := fastPreviewCacheKeyForPlanet(mapGen, settings.seed, planet)
+	if err != nil {
+		return previewResponse{}, invalidPreviewRequest(err)
 	}
 	tpp := fastTilesPerPixel(zoom)
 	img, err := p.fastCache().render(ctx, cacheKey, settings, size, tpp, centerX, centerY)
@@ -143,9 +181,23 @@ func (p *previewer) renderFast(ctx context.Context, ref profileRef, mapGen json.
 		TilesPerPixel: tpp,
 		Output: fmt.Sprintf(
 			"Fast Go preview rendered %s at %.6g tiles/pixel centered on %.6g, %.6g for %s.",
-			settings.mapType, tpp, centerX, centerY, ref.id(),
+			planet, tpp, centerX, centerY, ref.id(),
 		),
 	}, nil
+}
+
+func normalizeFastPreviewPlanet(value string) (string, error) {
+	planet := strings.ToLower(strings.TrimSpace(value))
+	if planet == "" {
+		planet = fastPreviewPlanetNauvis
+	}
+	if _, ok := fastPreviewPlanets[planet]; !ok {
+		return "", fmt.Errorf(
+			"fast preview planet %q is not supported; choose nauvis, vulcanus, gleba, fulgora, or aquilo",
+			planet,
+		)
+	}
+	return planet, nil
 }
 
 func (p *previewer) fastCache() *fastPreviewCache {
@@ -162,26 +214,52 @@ func (p *previewer) fastCache() *fastPreviewCache {
 }
 
 func parseFastPreviewSettings(raw json.RawMessage, seedOverride string) (fastPreviewSettings, error) {
+	return parseFastPreviewSettingsForPlanet(raw, seedOverride, fastPreviewPlanetNauvis)
+}
+
+func parseFastPreviewSettingsForPlanet(
+	raw json.RawMessage,
+	seedOverride string,
+	planet string,
+) (fastPreviewSettings, error) {
 	var root map[string]any
 	if err := decodeObject(raw, &root); err != nil {
 		return fastPreviewSettings{}, err
 	}
+	normalizedPlanet, err := normalizeFastPreviewPlanet(planet)
+	if err != nil {
+		return fastPreviewSettings{}, err
+	}
 	props := fastMap(root["property_expression_names"])
 	cliffSettings := fastMap(root["cliff_settings"])
+	cliffControl := fastPlanetCliffControl(normalizedPlanet)
+	waterControl := "water"
+	treeControl := "trees"
+	enemyControl := "enemy-base"
+	if normalizedPlanet == fastPreviewPlanetGleba {
+		waterControl = "gleba_water"
+		treeControl = "gleba_plants"
+		enemyControl = "gleba_enemy_base"
+	}
+	startingPositions, err := fastStartingPositions(root["starting_points"])
+	if err != nil {
+		return fastPreviewSettings{}, err
+	}
 	settings := fastPreviewSettings{
 		seed:                          fastPreviewSeed(root, seedOverride),
-		mapType:                       fastMapType(props),
+		planet:                        normalizedPlanet,
+		mapType:                       normalizedPlanet,
 		width:                         fastNumber(root["width"], 0),
 		height:                        fastNumber(root["height"], 0),
 		startingArea:                  fastNumber(root["starting_area"], 1),
-		water:                         fastAutoplaceControl(root, "water"),
-		trees:                         fastAutoplaceControl(root, "trees"),
+		water:                         fastAutoplaceControl(root, waterControl),
+		trees:                         fastAutoplaceControl(root, treeControl),
 		rocks:                         fastAutoplaceControl(root, "rocks"),
-		cliffs:                        fastAutoplaceControl(root, "nauvis_cliff"),
+		cliffs:                        fastAutoplaceControl(root, cliffControl),
 		cliffElevation0:               fastNumber(cliffSettings["cliff_elevation_0"], 10),
 		cliffElevationInterval:        fastNumber(cliffSettings["cliff_elevation_interval"], 40),
 		cliffRichness:                 fastNumber(cliffSettings["richness"], 1),
-		enemyBases:                    fastAutoplaceControl(root, "enemy-base"),
+		enemyBases:                    fastAutoplaceControl(root, enemyControl),
 		noEnemies:                     fastBool(root["no_enemies_mode"]),
 		moistureFrequency:             fastNumber(props["control:moisture:frequency"], 1),
 		moistureBias:                  fastNumber(props["control:moisture:bias"], 0),
@@ -191,17 +269,41 @@ func parseFastPreviewSettings(raw json.RawMessage, seedOverride string) (fastPre
 		temperatureBias:               fastNumber(props["control:temperature:bias"], 0),
 		startingAreaMoistureSize:      fastNumber(props["control:starting_area_moisture:size"], 1),
 		startingAreaMoistureFrequency: fastNumber(props["control:starting_area_moisture:frequency"], 1),
-		startingPositions:             fastStartingPositions(root["starting_points"]),
+		startingPositions:             startingPositions,
 		resourceControls:              map[string]fastControl{},
+		autoplaceControls:             map[string]fastControl{},
 		propertyExpression:            props,
 	}
-	for _, resource := range fastResourceNames {
-		settings.resourceControls[resource] = fastAutoplaceControl(root, resource)
+	if normalizedPlanet == fastPreviewPlanetNauvis {
+		settings.mapType = fastMapType(props)
 	}
+	for _, resource := range fastResourceNames {
+		control := fastAutoplaceControl(root, resource)
+		settings.resourceControls[resource] = control
+		settings.autoplaceControls[resource] = control
+	}
+	for _, name := range fastSpaceAgeControlNames {
+		settings.autoplaceControls[name] = fastAutoplaceControl(root, name)
+	}
+	settings.autoplaceControls[waterControl] = settings.water
+	settings.autoplaceControls[treeControl] = settings.trees
+	settings.autoplaceControls[cliffControl] = settings.cliffs
+	settings.autoplaceControls[enemyControl] = settings.enemyBases
 	if settings.startingArea <= 0 {
 		settings.startingArea = 1
 	}
 	return settings, nil
+}
+
+func fastPlanetCliffControl(planet string) string {
+	switch planet {
+	case fastPreviewPlanetGleba:
+		return "gleba_cliff"
+	case fastPreviewPlanetFulgora:
+		return "fulgora_cliff"
+	default:
+		return "nauvis_cliff"
+	}
 }
 
 func fastPreviewSeed(root map[string]any, override string) uint32 {
@@ -232,7 +334,7 @@ func fastUnsignedSeed(value any) (uint32, bool) {
 		}
 		return uint32(v), true
 	case int:
-		if v < 1 {
+		if v < 1 || uint64(v) > uint64(^uint32(0)) {
 			return 0, false
 		}
 		return uint32(v), true
@@ -290,6 +392,10 @@ func renderFastMapPreviewAt(
 
 func newFastPreviewWorld(settings fastPreviewSettings) *fastPreviewWorld {
 	world := &fastPreviewWorld{settings: settings}
+	if settings.planet != "" && settings.planet != fastPreviewPlanetNauvis {
+		world.spaceAge = newFactorioSpaceAgeEvaluator(settings)
+		return world
+	}
 	world.nauvis = newFactorioNauvisEvaluator(settings)
 	if settings.trees.enabled {
 		world.trees = newFactorioTreeEvaluator(settings, world.nauvis)
@@ -341,6 +447,9 @@ func (w *fastPreviewWorld) renderBase(
 ) error {
 	settings := w.settings
 	size := img.Bounds().Dx()
+	if w.spaceAge != nil {
+		return w.spaceAge.render(ctx, img, settings, originX, originY, tpp)
+	}
 	xAxis := newFastPreviewAxis(originX, tpp)
 	yAxis := newFastPreviewAxis(originY, tpp)
 	if w.nauvis != nil && tpp == 1 {
@@ -682,23 +791,39 @@ func clampFloat(value, min, max float64) float64 {
 	return value
 }
 
-func fastStartingPositions(value any) []factorioPoint {
+const maxFastPreviewStartingPoints = 64
+
+func fastStartingPositions(value any) ([]factorioPoint, error) {
+	if value == nil {
+		return []factorioPoint{{}}, nil
+	}
 	items, ok := value.([]any)
-	if !ok || len(items) == 0 {
-		return []factorioPoint{{}}
+	if !ok {
+		return nil, errors.New("starting_points must be an array")
+	}
+	if len(items) == 0 {
+		return []factorioPoint{{}}, nil
+	}
+	if len(items) > maxFastPreviewStartingPoints {
+		return nil, fmt.Errorf("starting_points supports at most %d entries", maxFastPreviewStartingPoints)
 	}
 	points := make([]factorioPoint, 0, len(items))
-	for _, item := range items {
-		point := fastMap(item)
-		points = append(points, factorioPoint{
-			x: fastNumber(point["x"], 0),
-			y: fastNumber(point["y"], 0),
-		})
+	for index, item := range items {
+		point, ok := item.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("starting_points[%d] must be an object", index)
+		}
+		x, xOK := fastFiniteNumber(point["x"], 0)
+		y, yOK := fastFiniteNumber(point["y"], 0)
+		if !xOK || !yOK || math.Abs(x) > maxPreviewCenter || math.Abs(y) > maxPreviewCenter {
+			return nil, fmt.Errorf(
+				"starting_points[%d] coordinates must be finite and between -%.0f and %.0f",
+				index, maxPreviewCenter, maxPreviewCenter,
+			)
+		}
+		points = append(points, factorioPoint{x: x, y: y})
 	}
-	if len(points) == 0 {
-		return []factorioPoint{{}}
-	}
-	return points
+	return points, nil
 }
 
 func fastMap(value any) map[string]any {
@@ -721,24 +846,45 @@ func fastString(value any) string {
 }
 
 func fastNumber(value any, fallback float64) float64 {
+	n, ok := fastFiniteNumber(value, fallback)
+	if !ok {
+		return fallback
+	}
+	return n
+}
+
+func fastFiniteNumber(value any, fallback float64) (float64, bool) {
+	if value == nil {
+		return fallback, true
+	}
+	var n float64
 	switch v := value.(type) {
 	case json.Number:
-		n, err := v.Float64()
-		if err == nil {
-			return n
+		parsed, err := v.Float64()
+		if err != nil {
+			return fallback, false
 		}
+		n = parsed
 	case float64:
-		return v
+		n = v
 	case int:
-		return float64(v)
+		n = float64(v)
 	case string:
 		s := strings.TrimSpace(v)
-		if n, ok := fastScaleValues[s]; ok {
-			return n
+		if scaled, ok := fastScaleValues[strings.ToLower(s)]; ok {
+			n = scaled
+		} else {
+			parsed, err := strconv.ParseFloat(s, 64)
+			if err != nil {
+				return fallback, false
+			}
+			n = parsed
 		}
-		if n, err := strconv.ParseFloat(s, 64); err == nil {
-			return n
-		}
+	default:
+		return fallback, false
 	}
-	return fallback
+	if math.IsNaN(n) || math.IsInf(n, 0) {
+		return fallback, false
+	}
+	return n, true
 }
