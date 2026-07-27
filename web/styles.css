@@ -295,10 +295,35 @@ input[type="range"] {
 
 .preview-tools {
   display: grid;
-  grid-template-columns: auto 110px 104px minmax(96px, auto);
+  grid-template-columns: auto 88px 110px minmax(104px, auto);
   align-items: center;
   gap: 8px;
   padding: 0 6px;
+}
+
+.preview-scale-field {
+  display: grid;
+  grid-template-columns: minmax(64px, 82px) auto;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.preview-scale-field[hidden] {
+  display: none;
+}
+
+.preview-scale-field input {
+  min-width: 0;
+  padding: 0 5px;
+}
+
+.preview-scale-field span {
+  color: var(--muted);
 }
 
 .preview-button {
@@ -307,6 +332,12 @@ input[type="range"] {
   padding: 0 14px;
   background: linear-gradient(#ffc24f, #e38a1f);
   color: #17100a;
+}
+
+.preview-reset-button {
+  min-height: 30px;
+  padding: 0 9px;
+  white-space: nowrap;
 }
 
 .mapgen-body {
@@ -778,17 +809,77 @@ input[type="range"] {
   box-shadow: 0 0 0 3px var(--line);
 }
 
-.preview-frame img {
+.preview-frame.preview-interactive {
+  cursor: grab;
+  touch-action: none;
+}
+
+.preview-frame.preview-panning {
+  cursor: grabbing;
+}
+
+#previewImage {
   display: none;
   width: 100%;
   height: 100%;
   max-width: none;
   max-height: none;
   object-fit: fill;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
-.preview-frame img.updating {
+.preview-frame.preview-panning #previewImage,
+.preview-frame.preview-panning .preview-tile {
+  will-change: transform;
+}
+
+#previewImage.updating,
+.preview-tiles.updating {
   filter: brightness(0.72) saturate(0.9);
+}
+
+.preview-tiles {
+  display: none;
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
+.preview-tile {
+  display: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  max-width: none;
+  max-height: none;
+  object-fit: fill;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  transform-origin: 0 0;
+}
+
+.preview-coordinates {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 4;
+  padding: 4px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 3px;
+  background: rgba(5, 10, 11, 0.78);
+  color: #f2f4e8;
+  font: 12px/1.25 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  user-select: none;
+}
+
+.preview-coordinates[hidden] {
+  display: none;
 }
 
 .preview-empty {
@@ -796,7 +887,7 @@ input[type="range"] {
   place-items: center;
   position: absolute;
   inset: 0;
-  z-index: 1;
+  z-index: 3;
   width: 100%;
   height: 100%;
   min-height: 100%;

@@ -6,13 +6,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
+	"image/png"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -614,10 +616,7 @@ func TestStoreDefaultProfilesAreReadOnly(t *testing.T) {
 }
 
 func TestPreviewRequestForUserLimitsGuestPreviewOptions(t *testing.T) {
-	guest := previewRequestForUser(previewRequest{Size: 4096, Zoom: "out-4", Lossless: true}, nil)
-	if guest.Lossless {
-		t.Fatal("guest preview retained lossless output")
-	}
+	guest := previewRequestForUser(previewRequest{Size: 4096, Zoom: "out-4"}, nil)
 	if guest.Size != guestMaxPreviewSize {
 		t.Fatalf("guest preview size = %d, want %d", guest.Size, guestMaxPreviewSize)
 	}
@@ -625,17 +624,40 @@ func TestPreviewRequestForUserLimitsGuestPreviewOptions(t *testing.T) {
 		t.Fatalf("guest preview zoom = %q, want normal", guest.Zoom)
 	}
 
+	fastGuest := previewRequestForUser(previewRequest{Engine: previewEngineFast, Size: 512, Zoom: "2.75"}, nil)
+	if fastGuest.Zoom != "1" {
+		t.Fatalf("fast guest preview zoom = %q, want 1", fastGuest.Zoom)
+	}
+	exactGuest := previewRequestForUser(previewRequest{Engine: previewEngineFactorio, Size: 512, Zoom: "2.75"}, nil)
+	if exactGuest.Engine != previewEngineFast {
+		t.Fatalf("exact guest preview engine = %q, want fast", exactGuest.Engine)
+	}
+	if exactGuest.Zoom != "1" {
+		t.Fatalf("exact guest preview zoom = %q, want normal", exactGuest.Zoom)
+	}
+
 	defaultSizedGuest := previewRequestForUser(previewRequest{}, nil)
 	if defaultSizedGuest.Size != guestMaxPreviewSize {
 		t.Fatalf("default guest preview size = %d, want %d", defaultSizedGuest.Size, guestMaxPreviewSize)
 	}
 
-	signedIn := previewRequestForUser(previewRequest{Size: 4096, Zoom: "out-4", Lossless: true}, &authUser{ID: 1, Username: "user"})
-	if !signedIn.Lossless {
-		t.Fatal("signed-in preview lost lossless output")
-	}
+	signedIn := previewRequestForUser(previewRequest{Size: 4096, Zoom: "out-4"}, &authUser{ID: 1, Username: "user"})
 	if signedIn.Size != 4096 || signedIn.Zoom != "out-4" {
 		t.Fatalf("signed-in preview request = %#v, want unchanged", signedIn)
+	}
+}
+
+func TestGuestExactPreviewRequestIsForbidden(t *testing.T) {
+	srv := &server{store: newTestStore(t)}
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/profiles/default:Default/preview",
+		strings.NewReader(`{"engine":"factorio","size":512,"planet":"nauvis"}`),
+	)
+	rec := httptest.NewRecorder()
+	srv.handleProfile(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("guest Exact preview status = %d body=%s, want 403", rec.Code, rec.Body.String())
 	}
 }
 
@@ -645,15 +667,18 @@ func TestPreviewZoomSpec(t *testing.T) {
 		zoom       string
 		outputSize int
 		wantMode   string
-		wantFactor int
+		wantScale  float64
 		wantRender int
 		wantErr    bool
 	}{
-		{name: "normal", zoom: "", outputSize: 1024, wantMode: "normal", wantFactor: 1, wantRender: 1024},
-		{name: "zoom out max", zoom: "out-4", outputSize: 4096, wantMode: "out", wantFactor: 4, wantRender: 16384},
-		{name: "zoom out too large", zoom: "out-4", outputSize: 4097, wantErr: true},
-		{name: "zoom in divisible", zoom: "in-3", outputSize: 768, wantMode: "in", wantFactor: 3, wantRender: 768},
-		{name: "zoom in not divisible", zoom: "in-3", outputSize: 1024, wantErr: true},
+		{name: "normal", zoom: "", outputSize: 1024, wantMode: "normal", wantScale: 1, wantRender: 1024},
+		{name: "legacy zoom out", zoom: "out-4", outputSize: 4096, wantMode: "scale", wantScale: 4, wantRender: 16384},
+		{name: "decimal zoom out", zoom: "2.75", outputSize: 1024, wantMode: "scale", wantScale: 2.75, wantRender: 2816},
+		{name: "decimal zoom in", zoom: "0.37", outputSize: 1024, wantMode: "scale", wantScale: 0.37, wantRender: 1024},
+		{name: "legacy zoom in", zoom: "in-3", outputSize: 1024, wantMode: "scale", wantScale: 1.0 / 3, wantRender: 1024},
+		{name: "source render too large", zoom: "4.0001", outputSize: 4096, wantErr: true},
+		{name: "below minimum", zoom: "0.001", outputSize: 1024, wantErr: true},
+		{name: "above maximum", zoom: "65", outputSize: 256, wantErr: true},
 		{name: "bad", zoom: "sideways-2", outputSize: 1024, wantErr: true},
 	}
 	for _, test := range tests {
@@ -668,31 +693,173 @@ func TestPreviewZoomSpec(t *testing.T) {
 			if err != nil {
 				t.Fatalf("previewZoomSpec(%q, %d): %v", test.zoom, test.outputSize, err)
 			}
-			if got.mode != test.wantMode || got.factor != test.wantFactor || got.renderSize != test.wantRender {
-				t.Fatalf("previewZoomSpec(%q, %d) = %#v, want mode=%s factor=%d render=%d", test.zoom, test.outputSize, got, test.wantMode, test.wantFactor, test.wantRender)
+			if got.mode != test.wantMode ||
+				math.Abs(got.tilesPerPixel-test.wantScale) > 1e-12 ||
+				got.renderSize != test.wantRender {
+				t.Fatalf("previewZoomSpec(%q, %d) = %#v, want mode=%s scale=%g render=%d", test.zoom, test.outputSize, got, test.wantMode, test.wantScale, test.wantRender)
 			}
 		})
 	}
 }
 
-func TestEncodeAVIFImageWithFFmpeg(t *testing.T) {
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		t.Skip("ffmpeg not installed")
-	}
-	img := image.NewRGBA(image.Rect(0, 0, 8, 8))
-	for y := 0; y < 8; y++ {
-		for x := 0; x < 8; x++ {
-			img.Set(x, y, color.RGBA{R: uint8(x * 24), G: uint8(y * 24), B: 120, A: 255})
+func TestNormalizedPreviewCenterRejectsScaleAlignmentOutsideBounds(t *testing.T) {
+	for _, center := range []float64{maxPreviewCenter, -maxPreviewCenter} {
+		if _, _, err := normalizedPreviewCenter(center, 0, 63); err == nil {
+			t.Fatalf("normalizedPreviewCenter(%g, 0, 63) succeeded outside aligned bounds", center)
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	data, err := encodeAVIFImage(ctx, img)
-	if err != nil {
-		t.Fatalf("encodeAVIFImage: %v", err)
+}
+
+func TestFastPreviewCacheBudgetFromMiB(t *testing.T) {
+	for _, test := range []struct {
+		mebibytes int64
+		wantBytes int64
+		wantError bool
+	}{
+		{mebibytes: 1, wantBytes: 1 << 20},
+		{mebibytes: 2048, wantBytes: 2 << 30},
+		{mebibytes: 0, wantError: true},
+		{mebibytes: (math.MaxInt64 >> 20) + 1, wantError: true},
+	} {
+		got, err := fastPreviewCacheBytesForMiB(test.mebibytes)
+		if test.wantError {
+			if err == nil {
+				t.Fatalf("fastPreviewCacheBytesForMiB(%d) succeeded with %d", test.mebibytes, got)
+			}
+			continue
+		}
+		if err != nil || got != test.wantBytes {
+			t.Fatalf("fastPreviewCacheBytesForMiB(%d) = %d, %v; want %d, nil", test.mebibytes, got, err, test.wantBytes)
+		}
 	}
-	if len(data) < 16 || string(data[4:12]) != "ftypavif" {
-		t.Fatalf("encoded AVIF header = % x", data[:min(len(data), 16)])
+
+	preview := &previewer{fastPreviewCacheBytes: 7 << 20}
+	if got := preview.fastCache().maxBytes; got != 7<<20 {
+		t.Fatalf("configured Fast cache bytes = %d, want %d", got, 7<<20)
+	}
+}
+
+func TestWarmDefaultFastPreviewCache(t *testing.T) {
+	st := newTestStore(t)
+	preview := &previewer{fastPreviewCacheBytes: 8 << 20}
+	srv := &server{store: st, previewer: preview}
+	srv.warmDefaultFastPreviewCache(context.Background())
+
+	stats := preview.fastCache().stats()
+	wantBytes := int64(1024 * 1024 * 4)
+	if stats.Worlds != 1 || stats.Tiles != 64 || stats.Bytes != wantBytes {
+		t.Fatalf("warm Default cache stats = %#v, want one world, 64 tiles, and %d bytes", stats, wantBytes)
+	}
+
+	ref := profileRef{Source: profileSourceDefault, Name: "Default"}
+	mapGen, err := readNormalizedMapGenJSON(filepath.Join(st.profileDir(ref), mapGenFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := parseFastPreviewSettings(mapGen, defaultFastPreviewWarmSeed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := fastPreviewCacheKey(mapGen, settings.seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := preview.fastCache().render(context.Background(), key, settings, 1024, 1, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	after := preview.fastCache().stats()
+	if after.Misses != stats.Misses || after.Hits-stats.Hits != 64 {
+		t.Fatalf("repeat Default cache stats = %#v after %#v, want 64 hits and no misses", after, stats)
+	}
+}
+
+func TestExactPreviewPassesNormalizedMapOffset(t *testing.T) {
+	dir := t.TempDir()
+	argsPath := filepath.Join(dir, "args.txt")
+	pngPath := filepath.Join(dir, "source.png")
+	pngFile, err := os.Create(pngPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(pngFile, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+		_ = pngFile.Close()
+		t.Fatal(err)
+	}
+	if err := pngFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	bin := filepath.Join(dir, "fake-factorio")
+	script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$@" > %q
+output=
+next_is_output=0
+for argument in "$@"; do
+  if [ "$next_is_output" = 1 ]; then
+    output="$argument"
+    break
+  fi
+  if [ "$argument" = "--generate-map-preview" ]; then
+    next_is_output=1
+  fi
+done
+cp %q "$output"
+`, argsPath, pngPath)
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mapGenPath := filepath.Join(dir, mapGenFile)
+	if err := os.WriteFile(mapGenPath, []byte(`{"seed":123456}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	preview := &previewer{factorioBin: bin, timeout: 5 * time.Second}
+	response, err := preview.render(
+		context.Background(),
+		profileRef{Source: profileSourceCustom, Name: "offset"},
+		mapGenPath,
+		previewRequest{Size: 256, Planet: "nauvis", Zoom: "2.75", CenterX: 12.4, CenterY: -8.6},
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.CenterX != 13.75 || response.CenterY != -8.25 || response.TilesPerPixel != 2.75 {
+		t.Fatalf("response viewport = (%g,%g) at %g, want (13.75,-8.25) at 2.75", response.CenterX, response.CenterY, response.TilesPerPixel)
+	}
+	arguments, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(arguments), "--map-preview-offset\n13.75,-8.25\n") {
+		t.Fatalf("Factorio arguments missing normalized offset:\n%s", arguments)
+	}
+}
+
+func TestEncodePNGPreviewImageUsesOpaqueTruecolor(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			img.Set(x, y, color.RGBA{R: uint8(x * 7), G: uint8(y * 7), B: uint8((x + y) * 3), A: 255})
+		}
+	}
+	got, contentType, ext, err := encodePNGPreviewImage(img)
+	if err != nil {
+		t.Fatalf("encodePNGPreviewImage: %v", err)
+	}
+	if contentType != "image/png" || ext != ".png" {
+		t.Fatalf("PNG metadata = (%q, %q)", contentType, ext)
+	}
+	decoded, err := png.Decode(bytes.NewReader(got))
+	if err != nil {
+		t.Fatalf("decode encoded preview: %v", err)
+	}
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			if decoded.At(x, y) != img.At(x, y) {
+				t.Fatalf("pixel (%d,%d) changed", x, y)
+			}
+		}
 	}
 }
 
@@ -702,7 +869,7 @@ func TestPreviewImagesRemainAvailableForSaving(t *testing.T) {
 		store:     st,
 		previewer: &previewer{},
 	}
-	name, err := srv.previewer.storePreviewImage([]byte("jpg"), "image/jpeg", ".jpg")
+	name, err := srv.previewer.storePreviewImage([]byte("png"), "image/png", ".png")
 	if err != nil {
 		t.Fatalf("storePreviewImage: %v", err)
 	}
@@ -712,14 +879,14 @@ func TestPreviewImagesRemainAvailableForSaving(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("preview status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get("Content-Type"); got != "image/jpeg" {
-		t.Fatalf("Content-Type = %q, want image/jpeg", got)
+	if got := rec.Header().Get("Content-Type"); got != "image/png" {
+		t.Fatalf("Content-Type = %q, want image/png", got)
 	}
 	if got := rec.Header().Get("Content-Disposition"); got != `inline; filename="`+name+`"` {
 		t.Fatalf("Content-Disposition = %q, want inline filename", got)
 	}
-	if got := rec.Body.String(); got != "jpg" {
-		t.Fatalf("preview body = %q, want jpg", got)
+	if got := rec.Body.String(); got != "png" {
+		t.Fatalf("preview body = %q, want png", got)
 	}
 
 	again := httptest.NewRecorder()
@@ -727,8 +894,8 @@ func TestPreviewImagesRemainAvailableForSaving(t *testing.T) {
 	if again.Code != http.StatusOK {
 		t.Fatalf("second preview status = %d body=%s", again.Code, again.Body.String())
 	}
-	if got := again.Body.String(); got != "jpg" {
-		t.Fatalf("second preview body = %q, want jpg", got)
+	if got := again.Body.String(); got != "png" {
+		t.Fatalf("second preview body = %q, want png", got)
 	}
 
 	bad := httptest.NewRecorder()
@@ -742,7 +909,7 @@ func TestPreviewImagesAreCapped(t *testing.T) {
 	preview := &previewer{}
 	var first string
 	for i := 0; i < maxPreviewImages+1; i++ {
-		name, err := preview.storePreviewImage([]byte("jpg"), "image/jpeg", ".jpg")
+		name, err := preview.storePreviewImage([]byte("png"), "image/png", ".png")
 		if err != nil {
 			t.Fatalf("storePreviewImage %d: %v", i, err)
 		}
@@ -753,20 +920,150 @@ func TestPreviewImagesAreCapped(t *testing.T) {
 	if got := len(preview.images); got != maxPreviewImages {
 		t.Fatalf("preview image count = %d, want %d", got, maxPreviewImages)
 	}
+	if got, want := preview.imageBytes, int64(maxPreviewImages*len("png")); got != want {
+		t.Fatalf("preview image bytes = %d, want %d", got, want)
+	}
 	if _, ok := preview.getPreviewImage(first); ok {
 		t.Fatal("oldest preview was retained after exceeding cap")
 	}
 }
 
+func TestPreviewImagesAreEvictedByPayloadBytes(t *testing.T) {
+	preview := &previewer{imageByteLimit: 6}
+	first, err := preview.storePreviewImage([]byte("1234"), "image/png", ".png")
+	if err != nil {
+		t.Fatalf("store first preview: %v", err)
+	}
+	second, err := preview.storePreviewImage([]byte("abc"), "image/png", ".png")
+	if err != nil {
+		t.Fatalf("store second preview: %v", err)
+	}
+
+	if got := len(preview.images); got != 1 {
+		t.Fatalf("preview image count = %d, want 1", got)
+	}
+	if got := preview.imageBytes; got != 3 {
+		t.Fatalf("preview image bytes = %d, want 3", got)
+	}
+	if _, ok := preview.getPreviewImage(first); ok {
+		t.Fatal("oldest preview was retained after exceeding byte cap")
+	}
+	if img, ok := preview.getPreviewImage(second); !ok || string(img.data) != "abc" {
+		t.Fatalf("new preview = (%q, %v), want (abc, true)", img.data, ok)
+	}
+}
+
+func TestPreviewImageExpirationReleasesPayloadBytes(t *testing.T) {
+	t.Run("during insert", func(t *testing.T) {
+		preview := &previewer{imageByteLimit: 4}
+		first, err := preview.storePreviewImage([]byte("1234"), "image/png", ".png")
+		if err != nil {
+			t.Fatalf("store first preview: %v", err)
+		}
+		preview.mu.Lock()
+		image := preview.images[first]
+		image.expiresAt = time.Now().UTC().Add(-time.Second)
+		preview.images[first] = image
+		preview.mu.Unlock()
+
+		if _, err := preview.storePreviewImage([]byte("abc"), "image/png", ".png"); err != nil {
+			t.Fatalf("store after expiration: %v", err)
+		}
+		if got := len(preview.images); got != 1 {
+			t.Fatalf("preview image count = %d, want 1", got)
+		}
+		if got := preview.imageBytes; got != 3 {
+			t.Fatalf("preview image bytes = %d, want 3", got)
+		}
+	})
+
+	t.Run("during get", func(t *testing.T) {
+		preview := &previewer{imageByteLimit: 4}
+		name, err := preview.storePreviewImage([]byte("1234"), "image/png", ".png")
+		if err != nil {
+			t.Fatalf("store preview: %v", err)
+		}
+		preview.mu.Lock()
+		image := preview.images[name]
+		image.expiresAt = time.Now().UTC().Add(-time.Second)
+		preview.images[name] = image
+		preview.mu.Unlock()
+
+		if _, ok := preview.getPreviewImage(name); ok {
+			t.Fatal("expired preview was returned")
+		}
+		if got := len(preview.images); got != 0 {
+			t.Fatalf("preview image count = %d, want 0", got)
+		}
+		if got := preview.imageBytes; got != 0 {
+			t.Fatalf("preview image bytes = %d, want 0", got)
+		}
+	})
+}
+
+func TestPinnedPreviewImageSurvivesByteEviction(t *testing.T) {
+	preview := &previewer{imageByteLimit: 10}
+	pinnedName, err := preview.storePinnedPreviewImage([]byte("pin!"), "image/png", ".png")
+	if err != nil {
+		t.Fatalf("store pinned preview: %v", err)
+	}
+	oldName, err := preview.storePreviewImage([]byte("old!"), "image/png", ".png")
+	if err != nil {
+		t.Fatalf("store old preview: %v", err)
+	}
+	newName, err := preview.storePreviewImage([]byte("new!"), "image/png", ".png")
+	if err != nil {
+		t.Fatalf("store new preview: %v", err)
+	}
+
+	if _, ok := preview.getPreviewImage(pinnedName); !ok {
+		t.Fatal("pinned preview was evicted to satisfy byte cap")
+	}
+	if _, ok := preview.getPreviewImage(oldName); ok {
+		t.Fatal("old unpinned preview survived byte eviction")
+	}
+	if _, ok := preview.getPreviewImage(newName); !ok {
+		t.Fatal("new preview was not retained")
+	}
+	if got := preview.imageBytes; got != 8 {
+		t.Fatalf("preview image bytes = %d, want 8", got)
+	}
+}
+
+func TestPinnedPreviewImagePayloadCapacityError(t *testing.T) {
+	preview := &previewer{imageByteLimit: 8}
+	pinnedName, err := preview.storePinnedPreviewImage([]byte("12345678"), "image/png", ".png")
+	if err != nil {
+		t.Fatalf("store pinned preview: %v", err)
+	}
+	if got := preview.imageBytes; got != 8 {
+		t.Fatalf("preview image bytes = %d, want 8", got)
+	}
+
+	_, err = preview.storePreviewImage([]byte("x"), "image/png", ".png")
+	if err == nil || !strings.Contains(err.Error(), "pinned preview payloads use 8 of the 8-byte store limit") {
+		t.Fatalf("store over pinned capacity error = %v, want clear pinned-byte error", err)
+	}
+	if got := len(preview.images); got != 1 {
+		t.Fatalf("preview image count after failed insert = %d, want 1", got)
+	}
+	if got := preview.imageBytes; got != 8 {
+		t.Fatalf("preview image bytes after failed insert = %d, want 8", got)
+	}
+	if _, ok := preview.getPreviewImage(pinnedName); !ok {
+		t.Fatal("pinned preview was lost after capacity error")
+	}
+}
+
 func TestPinnedPreviewImageSurvivesPrune(t *testing.T) {
 	preview := &previewer{}
-	pinnedName, err := preview.storePinnedPreviewImage([]byte("default"), "image/jpeg", ".jpg")
+	pinnedName, err := preview.storePinnedPreviewImage([]byte("default"), "image/png", ".png")
 	if err != nil {
 		t.Fatalf("storePinnedPreviewImage: %v", err)
 	}
 
 	for i := 0; i < maxPreviewImages+1; i++ {
-		if _, err := preview.storePreviewImage([]byte("jpg"), "image/jpeg", ".jpg"); err != nil {
+		if _, err := preview.storePreviewImage([]byte("png"), "image/png", ".png"); err != nil {
 			t.Fatalf("storePreviewImage %d: %v", i, err)
 		}
 	}
@@ -1227,6 +1524,54 @@ func TestFactorioVersionNewer(t *testing.T) {
 	}
 }
 
+func TestFactorioReleaseChannels(t *testing.T) {
+	for _, test := range []struct {
+		input string
+		want  factorioReleaseChannel
+	}{
+		{input: "stable", want: factorioReleaseStable},
+		{input: " EXPERIMENTAL ", want: factorioReleaseExperimental},
+	} {
+		got, err := parseFactorioReleaseChannel(test.input)
+		if err != nil || got != test.want {
+			t.Errorf("parseFactorioReleaseChannel(%q) = %q, %v; want %q", test.input, got, err, test.want)
+		}
+	}
+	if _, err := parseFactorioReleaseChannel("latest"); err == nil {
+		t.Fatal("parseFactorioReleaseChannel accepted an unknown channel")
+	}
+	if factorioDefaultReleaseChannel != factorioReleaseExperimental {
+		t.Fatalf("default release channel = %q, want experimental", factorioDefaultReleaseChannel)
+	}
+}
+
+func TestFactorioManagerSelectsReleaseChannel(t *testing.T) {
+	latest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"stable":{"headless":"2.0.77"},"experimental":{"headless":"2.1.12"}}`))
+	}))
+	defer latest.Close()
+
+	for _, test := range []struct {
+		channel     factorioReleaseChannel
+		wantVersion string
+		wantURL     string
+	}{
+		{channel: factorioReleaseStable, wantVersion: "2.0.77", wantURL: factorioStableDownloadURL},
+		{channel: factorioReleaseExperimental, wantVersion: "2.1.12", wantURL: factorioExperimentalDownloadURL},
+	} {
+		manager := newFactorioManager("tools/factorio", nil, true, test.channel)
+		manager.latestURL = latest.URL
+		got, err := manager.fetchLatestVersion(context.Background())
+		if err != nil {
+			t.Fatalf("fetch latest %s: %v", test.channel, err)
+		}
+		if got != test.wantVersion || manager.downloadURL != test.wantURL {
+			t.Errorf("channel %s = version %q URL %q, want %q and %q", test.channel, got, manager.downloadURL, test.wantVersion, test.wantURL)
+		}
+	}
+}
+
 func TestFactorioStatusCachesVersionAndChecksLatest(t *testing.T) {
 	root := t.TempDir()
 	installDir := filepath.Join(root, "factorio")
@@ -1242,17 +1587,18 @@ func TestFactorioStatusCachesVersionAndChecksLatest(t *testing.T) {
 
 	latest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"stable":{"headless":"2.0.72"}}`))
+		_, _ = w.Write([]byte(`{"stable":{"headless":"2.0.72"},"experimental":{"headless":"2.1.12"}}`))
 	}))
 	defer latest.Close()
 
 	preview := &previewer{factorioBin: bin}
-	manager := newFactorioManager(installDir, preview, true)
+	manager := newFactorioManager(installDir, preview, true, factorioReleaseExperimental)
 	manager.latestURL = latest.URL
 
 	first := manager.status(context.Background(), true)
-	if first.Version != "2.0.70" || first.LatestVersion != "2.0.72" || !first.UpdateAvailable {
-		t.Fatalf("first status = %#v, want current 2.0.70 with 2.0.72 update", first)
+	if first.Version != "2.0.70" || first.LatestVersion != "2.1.12" || !first.UpdateAvailable ||
+		first.ReleaseChannel != "experimental" {
+		t.Fatalf("first status = %#v, want current 2.0.70 with 2.1.12 experimental update", first)
 	}
 	second := manager.status(context.Background(), true)
 	if second.Version != "2.0.70" || !second.UpdateAvailable {

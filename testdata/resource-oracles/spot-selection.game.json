@@ -1,0 +1,3549 @@
+{
+ "note": "spot_noise selected spots captured from Factorio 2.1.11 (headless probes; spots as [x, y, peak] with radius 20; peak = 3q/(pi*400*coneScale^2)). Expression 'kind's are decoded in test/spotSelection.spec.ts.",
+ "cases": [
+  {
+   "name": "dens1",
+   "seed0": 0,
+   "seed1": 9001,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 0.001,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.002384185791015625
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -370,
+     594,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "dens2",
+   "seed0": 0,
+   "seed1": 9002,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 0.001,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.00476837158203125
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -704,
+     386,
+     23.873
+    ],
+    [
+     363,
+     340,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "dens3",
+   "seed0": 0,
+   "seed1": 9003,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 0.001,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.007152557373046875
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -927,
+     834,
+     23.873
+    ],
+    [
+     -583,
+     766,
+     23.873
+    ],
+    [
+     25,
+     414,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "dens4",
+   "seed0": 0,
+   "seed1": 9004,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 0.001,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.0095367431640625
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -1019,
+     -649,
+     23.873
+    ],
+    [
+     -766,
+     386,
+     23.873
+    ],
+    [
+     -247,
+     193,
+     23.873
+    ],
+    [
+     332,
+     1012,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "dens5",
+   "seed0": 0,
+   "seed1": 9005,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 0.001,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.011920928955078125
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -611,
+     -1012,
+     23.873
+    ],
+    [
+     -525,
+     -572,
+     23.873
+    ],
+    [
+     -349,
+     66,
+     23.873
+    ],
+    [
+     156,
+     -986,
+     23.873
+    ],
+    [
+     918,
+     11,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "dens6",
+   "seed0": 0,
+   "seed1": 9006,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 0.001,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.01430511474609375
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -1001,
+     -145,
+     23.873
+    ],
+    [
+     -517,
+     -39,
+     23.873
+    ],
+    [
+     -363,
+     -998,
+     23.873
+    ],
+    [
+     101,
+     257,
+     23.873
+    ],
+    [
+     356,
+     403,
+     23.873
+    ],
+    [
+     417,
+     -222,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "favx",
+   "seed0": 0,
+   "seed1": 9101,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 0.001,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.007152557373046875
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "x"
+   },
+   "spots": [
+    [
+     221,
+     194,
+     23.873
+    ],
+    [
+     516,
+     1023,
+     23.873
+    ],
+    [
+     951,
+     576,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "favnegx",
+   "seed0": 0,
+   "seed1": 9102,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 0.001,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.007152557373046875
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "negx"
+   },
+   "spots": [
+    [
+     -954,
+     -925,
+     23.873
+    ],
+    [
+     -749,
+     1011,
+     23.873
+    ],
+    [
+     -317,
+     282,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "spac500",
+   "seed0": 0,
+   "seed1": 9103,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 500,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.01430511474609375
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -985,
+     235,
+     23.873
+    ],
+    [
+     -583,
+     -215,
+     23.873
+    ],
+    [
+     -56,
+     -838,
+     23.873
+    ],
+    [
+     240,
+     251,
+     23.873
+    ],
+    [
+     467,
+     -538,
+     23.873
+    ],
+    [
+     520,
+     -946,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "hard1",
+   "seed0": 0,
+   "seed1": 9104,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 0.001,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": true,
+   "density": {
+    "kind": "const",
+    "value": 0.0059604644775390625
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -553,
+     748,
+     23.872
+    ],
+    [
+     645,
+     214,
+     18.949
+    ],
+    [
+     977,
+     699,
+     23.872
+    ]
+   ]
+  },
+  {
+   "name": "qexpr",
+   "seed0": 0,
+   "seed1": 9105,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 0.001,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.01430511474609375
+   },
+   "quantity": {
+    "kind": "xplus",
+    "base": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -1024,
+     481,
+     21.429
+    ],
+    [
+     -766,
+     738,
+     22.045
+    ],
+    [
+     -679,
+     456,
+     22.252
+    ],
+    [
+     -510,
+     -284,
+     22.656
+    ],
+    [
+     -214,
+     -774,
+     23.362
+    ],
+    [
+     575,
+     -513,
+     25.246
+    ]
+   ]
+  },
+  {
+   "name": "skip20",
+   "seed0": 0,
+   "seed1": 9106,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 0.001,
+   "skipSpan": 2,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.01430511474609375
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -989,
+     162,
+     23.873
+    ],
+    [
+     -499,
+     -279,
+     23.873
+    ],
+    [
+     -342,
+     -487,
+     23.873
+    ],
+    [
+     499,
+     803,
+     23.873
+    ],
+    [
+     606,
+     -96,
+     23.873
+    ],
+    [
+     1021,
+     710,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "skip21",
+   "seed0": 0,
+   "seed1": 9106,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 0.001,
+   "skipSpan": 2,
+   "skipOffset": 1,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.01430511474609375
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -206,
+     -466,
+     23.873
+    ],
+    [
+     14,
+     -535,
+     23.873
+    ],
+    [
+     99,
+     823,
+     23.873
+    ],
+    [
+     259,
+     550,
+     23.873
+    ],
+    [
+     632,
+     -487,
+     23.873
+    ],
+    [
+     901,
+     204,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "qdens",
+   "seed0": 0,
+   "seed1": 9201,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 0.001,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "x2",
+    "scale": 2.0459102254593068e-08
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -382,
+     486,
+     23.873
+    ],
+    [
+     -31,
+     -217,
+     23.873
+    ],
+    [
+     615,
+     -861,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "favallneg",
+   "seed0": 0,
+   "seed1": 9202,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 0.001,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.01430511474609375
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "xminus",
+    "offset": 2048
+   },
+   "spots": [
+    [
+     -917,
+     783,
+     23.873
+    ],
+    [
+     -554,
+     -665,
+     23.873
+    ],
+    [
+     -277,
+     802,
+     23.873
+    ],
+    [
+     84,
+     477,
+     23.873
+    ],
+    [
+     343,
+     -528,
+     23.873
+    ],
+    [
+     689,
+     -467,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "favzero",
+   "seed0": 0,
+   "seed1": 9204,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 0.001,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.01430511474609375
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 0
+   },
+   "spots": [
+    [
+     -761,
+     509,
+     23.873
+    ],
+    [
+     -185,
+     -504,
+     23.873
+    ],
+    [
+     12,
+     817,
+     23.873
+    ],
+    [
+     549,
+     149,
+     23.873
+    ],
+    [
+     804,
+     35,
+     23.873
+    ],
+    [
+     823,
+     280,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "skipfav20",
+   "seed0": 0,
+   "seed1": 9203,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 0.001,
+   "skipSpan": 2,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.01430511474609375
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "negx"
+   },
+   "spots": [
+    [
+     -538,
+     218,
+     23.873
+    ],
+    [
+     -259,
+     510,
+     23.873
+    ],
+    [
+     163,
+     -791,
+     23.873
+    ],
+    [
+     351,
+     -424,
+     23.873
+    ],
+    [
+     619,
+     633,
+     23.873
+    ],
+    [
+     781,
+     979,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "skipfav21",
+   "seed0": 0,
+   "seed1": 9203,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 0.001,
+   "skipSpan": 2,
+   "skipOffset": 1,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.01430511474609375
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "negx"
+   },
+   "spots": [
+    [
+     -705,
+     496,
+     23.873
+    ],
+    [
+     -684,
+     260,
+     23.873
+    ],
+    [
+     101,
+     -740,
+     23.873
+    ],
+    [
+     352,
+     -159,
+     23.873
+    ],
+    [
+     787,
+     986,
+     23.873
+    ],
+    [
+     806,
+     -244,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "spacfav",
+   "seed0": 0,
+   "seed1": 9205,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 500,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.01430511474609375
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "negx"
+   },
+   "spots": [
+    [
+     -551,
+     478,
+     23.873
+    ],
+    [
+     34,
+     -449,
+     23.873
+    ],
+    [
+     83,
+     82,
+     23.873
+    ],
+    [
+     655,
+     487,
+     23.873
+    ],
+    [
+     898,
+     -720,
+     23.873
+    ],
+    [
+     907,
+     -101,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "skipspac20",
+   "seed0": 0,
+   "seed1": 9301,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 500,
+   "skipSpan": 2,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.01430511474609375
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -975,
+     226,
+     23.873
+    ],
+    [
+     -691,
+     589,
+     23.873
+    ],
+    [
+     -300,
+     214,
+     23.873
+    ],
+    [
+     328,
+     -189,
+     23.873
+    ],
+    [
+     557,
+     -539,
+     23.873
+    ],
+    [
+     886,
+     -213,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "skipspac21",
+   "seed0": 0,
+   "seed1": 9301,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 500,
+   "skipSpan": 2,
+   "skipOffset": 1,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.01430511474609375
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -755,
+     -801,
+     23.873
+    ],
+    [
+     -541,
+     943,
+     23.873
+    ],
+    [
+     -260,
+     659,
+     23.873
+    ],
+    [
+     -96,
+     -633,
+     23.873
+    ],
+    [
+     192,
+     633,
+     23.873
+    ],
+    [
+     1006,
+     -1022,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "spac1200",
+   "seed0": 0,
+   "seed1": 9302,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 1200,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.01430511474609375
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -666,
+     9,
+     23.873
+    ],
+    [
+     -552,
+     -969,
+     23.873
+    ],
+    [
+     -146,
+     472,
+     23.873
+    ],
+    [
+     224,
+     37,
+     23.873
+    ],
+    [
+     688,
+     -703,
+     23.873
+    ],
+    [
+     950,
+     964,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "densstep",
+   "seed0": 0,
+   "seed1": 9327,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 0.001,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "stepx",
+    "value": 0.0286102294921875
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": []
+  },
+  {
+   "name": "s800c12",
+   "seed0": 0,
+   "seed1": 9401,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 12,
+   "spacing": 800,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.0286102294921875
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -824,
+     14,
+     23.873
+    ],
+    [
+     -407,
+     -598,
+     23.873
+    ],
+    [
+     -317,
+     535,
+     23.873
+    ],
+    [
+     -100,
+     140,
+     23.873
+    ],
+    [
+     112,
+     -724,
+     23.873
+    ],
+    [
+     245,
+     -154,
+     23.873
+    ],
+    [
+     251,
+     596,
+     23.873
+    ],
+    [
+     569,
+     151,
+     23.873
+    ],
+    [
+     597,
+     -700,
+     23.873
+    ],
+    [
+     777,
+     -1001,
+     23.873
+    ],
+    [
+     928,
+     -148,
+     23.873
+    ],
+    [
+     950,
+     811,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "s300c24",
+   "seed0": 0,
+   "seed1": 9402,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 24,
+   "spacing": 300,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.057220458984375
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -1017,
+     -303,
+     23.873
+    ],
+    [
+     -962,
+     -755,
+     23.873
+    ],
+    [
+     -953,
+     191,
+     23.873
+    ],
+    [
+     -885,
+     -452,
+     23.873
+    ],
+    [
+     -777,
+     121,
+     23.873
+    ],
+    [
+     -711,
+     442,
+     23.873
+    ],
+    [
+     -678,
+     -299,
+     23.873
+    ],
+    [
+     -583,
+     -1024,
+     23.873
+    ],
+    [
+     -450,
+     234,
+     23.873
+    ],
+    [
+     -169,
+     866,
+     23.873
+    ],
+    [
+     -110,
+     323,
+     23.873
+    ],
+    [
+     -94,
+     -535,
+     23.873
+    ],
+    [
+     11,
+     -16,
+     23.873
+    ],
+    [
+     44,
+     659,
+     23.873
+    ],
+    [
+     165,
+     468,
+     23.873
+    ],
+    [
+     204,
+     934,
+     23.873
+    ],
+    [
+     258,
+     -673,
+     23.873
+    ],
+    [
+     493,
+     891,
+     23.873
+    ],
+    [
+     597,
+     410,
+     23.873
+    ],
+    [
+     676,
+     133,
+     23.873
+    ],
+    [
+     696,
+     -272,
+     23.873
+    ],
+    [
+     779,
+     -898,
+     23.873
+    ],
+    [
+     925,
+     367,
+     23.873
+    ],
+    [
+     979,
+     721,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "s1600c8",
+   "seed0": 0,
+   "seed1": 9403,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 8,
+   "spacing": 1600,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.019073486328125
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -801,
+     -454,
+     23.873
+    ],
+    [
+     -723,
+     1020,
+     23.873
+    ],
+    [
+     -444,
+     50,
+     23.873
+    ],
+    [
+     -262,
+     -822,
+     23.873
+    ],
+    [
+     309,
+     550,
+     23.873
+    ],
+    [
+     324,
+     -191,
+     23.873
+    ],
+    [
+     731,
+     965,
+     23.873
+    ],
+    [
+     930,
+     -738,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "s500c12",
+   "seed0": 0,
+   "seed1": 9404,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 12,
+   "spacing": 500,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.0286102294921875
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -846,
+     279,
+     23.873
+    ],
+    [
+     -805,
+     -656,
+     23.873
+    ],
+    [
+     -430,
+     622,
+     23.873
+    ],
+    [
+     -245,
+     -385,
+     23.873
+    ],
+    [
+     -94,
+     -896,
+     23.873
+    ],
+    [
+     -24,
+     112,
+     23.873
+    ],
+    [
+     252,
+     -115,
+     23.873
+    ],
+    [
+     263,
+     675,
+     23.873
+    ],
+    [
+     435,
+     -455,
+     23.873
+    ],
+    [
+     556,
+     72,
+     23.873
+    ],
+    [
+     694,
+     818,
+     23.873
+    ],
+    [
+     943,
+     74,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "s1000c10",
+   "seed0": 0,
+   "seed1": 9405,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 10,
+   "spacing": 1000,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.02384185791015625
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -1004,
+     -914,
+     23.873
+    ],
+    [
+     -984,
+     200,
+     23.873
+    ],
+    [
+     -325,
+     810,
+     23.873
+    ],
+    [
+     -206,
+     -564,
+     23.873
+    ],
+    [
+     67,
+     -44,
+     23.873
+    ],
+    [
+     209,
+     -1004,
+     23.873
+    ],
+    [
+     628,
+     552,
+     23.873
+    ],
+    [
+     636,
+     994,
+     23.873
+    ],
+    [
+     845,
+     -150,
+     23.873
+    ],
+    [
+     970,
+     -818,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "n1",
+   "seed0": 0,
+   "seed1": 9501,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 14,
+   "spacing": 700,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.03337860107421875
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -1019,
+     -935,
+     23.873
+    ],
+    [
+     -991,
+     776,
+     23.873
+    ],
+    [
+     -779,
+     408,
+     23.873
+    ],
+    [
+     -716,
+     -586,
+     23.873
+    ],
+    [
+     -560,
+     640,
+     23.873
+    ],
+    [
+     -451,
+     55,
+     23.873
+    ],
+    [
+     -228,
+     -840,
+     23.873
+    ],
+    [
+     -148,
+     -288,
+     23.873
+    ],
+    [
+     -26,
+     754,
+     23.873
+    ],
+    [
+     315,
+     -1002,
+     23.873
+    ],
+    [
+     363,
+     -397,
+     23.873
+    ],
+    [
+     580,
+     185,
+     23.873
+    ],
+    [
+     716,
+     -669,
+     23.873
+    ],
+    [
+     893,
+     803,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "n2",
+   "seed0": 0,
+   "seed1": 9502,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 14,
+   "spacing": 900,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.03337860107421875
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -997,
+     -816,
+     23.873
+    ],
+    [
+     -971,
+     255,
+     23.873
+    ],
+    [
+     -807,
+     852,
+     23.873
+    ],
+    [
+     -633,
+     246,
+     23.873
+    ],
+    [
+     -590,
+     -241,
+     23.873
+    ],
+    [
+     -199,
+     112,
+     23.873
+    ],
+    [
+     -137,
+     -413,
+     23.873
+    ],
+    [
+     -114,
+     -940,
+     23.873
+    ],
+    [
+     28,
+     -163,
+     23.873
+    ],
+    [
+     281,
+     301,
+     23.873
+    ],
+    [
+     518,
+     814,
+     23.873
+    ],
+    [
+     620,
+     -275,
+     23.873
+    ],
+    [
+     926,
+     -679,
+     23.873
+    ],
+    [
+     996,
+     490,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "n3",
+   "seed0": 0,
+   "seed1": 9503,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 16,
+   "spacing": 600,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.03814697265625
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -1002,
+     940,
+     23.873
+    ],
+    [
+     -876,
+     343,
+     23.873
+    ],
+    [
+     -670,
+     870,
+     23.873
+    ],
+    [
+     -502,
+     -1013,
+     23.873
+    ],
+    [
+     -489,
+     -51,
+     23.873
+    ],
+    [
+     -380,
+     -549,
+     23.873
+    ],
+    [
+     -194,
+     581,
+     23.873
+    ],
+    [
+     -119,
+     -796,
+     23.873
+    ],
+    [
+     -105,
+     47,
+     23.873
+    ],
+    [
+     116,
+     -485,
+     23.873
+    ],
+    [
+     479,
+     289,
+     23.873
+    ],
+    [
+     483,
+     1016,
+     23.873
+    ],
+    [
+     732,
+     -878,
+     23.873
+    ],
+    [
+     861,
+     259,
+     23.873
+    ],
+    [
+     975,
+     814,
+     23.873
+    ],
+    [
+     1003,
+     -343,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "n4",
+   "seed0": 0,
+   "seed1": 9504,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 12,
+   "spacing": 1100,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.0286102294921875
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -1010,
+     -662,
+     23.873
+    ],
+    [
+     -890,
+     740,
+     23.873
+    ],
+    [
+     -629,
+     -99,
+     23.873
+    ],
+    [
+     -391,
+     -642,
+     23.873
+    ],
+    [
+     -90,
+     223,
+     23.873
+    ],
+    [
+     2,
+     -647,
+     23.873
+    ],
+    [
+     109,
+     -275,
+     23.873
+    ],
+    [
+     297,
+     675,
+     23.873
+    ],
+    [
+     492,
+     -575,
+     23.873
+    ],
+    [
+     824,
+     -207,
+     23.873
+    ],
+    [
+     868,
+     -549,
+     23.873
+    ],
+    [
+     934,
+     490,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "n5",
+   "seed0": 0,
+   "seed1": 9505,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 10,
+   "spacing": 1400,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.02384185791015625
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -891,
+     361,
+     23.873
+    ],
+    [
+     -830,
+     -312,
+     23.873
+    ],
+    [
+     -210,
+     1018,
+     23.873
+    ],
+    [
+     -124,
+     -84,
+     23.873
+    ],
+    [
+     86,
+     348,
+     23.873
+    ],
+    [
+     218,
+     -693,
+     23.873
+    ],
+    [
+     399,
+     868,
+     23.873
+    ],
+    [
+     571,
+     -859,
+     23.873
+    ],
+    [
+     980,
+     -687,
+     23.873
+    ],
+    [
+     994,
+     535,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "n7",
+   "seed0": 0,
+   "seed1": 9507,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 16,
+   "spacing": 750,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.03814697265625
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -875,
+     682,
+     23.873
+    ],
+    [
+     -874,
+     -24,
+     23.873
+    ],
+    [
+     -842,
+     347,
+     23.873
+    ],
+    [
+     -624,
+     -814,
+     23.873
+    ],
+    [
+     -244,
+     -859,
+     23.873
+    ],
+    [
+     -214,
+     -175,
+     23.873
+    ],
+    [
+     -202,
+     796,
+     23.873
+    ],
+    [
+     -165,
+     281,
+     23.873
+    ],
+    [
+     131,
+     -262,
+     23.873
+    ],
+    [
+     393,
+     117,
+     23.873
+    ],
+    [
+     553,
+     739,
+     23.873
+    ],
+    [
+     558,
+     -922,
+     23.873
+    ],
+    [
+     682,
+     -184,
+     23.873
+    ],
+    [
+     787,
+     -623,
+     23.873
+    ],
+    [
+     854,
+     596,
+     23.873
+    ],
+    [
+     865,
+     142,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "n8",
+   "seed0": 0,
+   "seed1": 9508,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 12,
+   "spacing": 1000,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.0286102294921875
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -812,
+     -148,
+     23.873
+    ],
+    [
+     -801,
+     465,
+     23.873
+    ],
+    [
+     -791,
+     878,
+     23.873
+    ],
+    [
+     -191,
+     468,
+     23.873
+    ],
+    [
+     -183,
+     -535,
+     23.873
+    ],
+    [
+     -148,
+     974,
+     23.873
+    ],
+    [
+     160,
+     -60,
+     23.873
+    ],
+    [
+     234,
+     -722,
+     23.873
+    ],
+    [
+     555,
+     817,
+     23.873
+    ],
+    [
+     713,
+     -41,
+     23.873
+    ],
+    [
+     762,
+     -738,
+     23.873
+    ],
+    [
+     984,
+     601,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "cap",
+   "seed0": 0,
+   "seed1": 9510,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 100000,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.01430511474609375
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -859,
+     742,
+     23.873
+    ],
+    [
+     115,
+     -529,
+     23.873
+    ],
+    [
+     197,
+     364,
+     23.873
+    ],
+    [
+     445,
+     -924,
+     23.873
+    ],
+    [
+     974,
+     31,
+     23.873
+    ],
+    [
+     1010,
+     869,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "v1024",
+   "seed0": 0,
+   "seed1": 9511,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 1024,
+   "count": 12,
+   "spacing": 300,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.11444091796875
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -507,
+     103,
+     23.873
+    ],
+    [
+     -401,
+     -296,
+     23.873
+    ],
+    [
+     -202,
+     -422,
+     23.873
+    ],
+    [
+     -194,
+     -167,
+     23.873
+    ],
+    [
+     -174,
+     303,
+     23.873
+    ],
+    [
+     102,
+     110,
+     23.873
+    ],
+    [
+     162,
+     -177,
+     23.873
+    ],
+    [
+     202,
+     -363,
+     23.873
+    ],
+    [
+     204,
+     338,
+     23.873
+    ],
+    [
+     365,
+     108,
+     23.873
+    ],
+    [
+     474,
+     473,
+     23.873
+    ],
+    [
+     486,
+     -256,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "d20008",
+   "seed0": 0,
+   "seed1": 20008,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 10,
+   "spacing": 20000,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.02384185791015625
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -914,
+     931,
+     23.873
+    ],
+    [
+     -806,
+     530,
+     23.873
+    ],
+    [
+     -765,
+     -821,
+     23.873
+    ],
+    [
+     -647,
+     97,
+     23.873
+    ],
+    [
+     -378,
+     890,
+     23.873
+    ],
+    [
+     -244,
+     -849,
+     23.873
+    ],
+    [
+     145,
+     873,
+     23.873
+    ],
+    [
+     459,
+     -635,
+     23.873
+    ],
+    [
+     584,
+     91,
+     23.873
+    ],
+    [
+     982,
+     634,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "d20016",
+   "seed0": 0,
+   "seed1": 20016,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 8,
+   "spacing": 50000,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.019073486328125
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -648,
+     -540,
+     23.873
+    ],
+    [
+     -474,
+     948,
+     23.873
+    ],
+    [
+     -131,
+     -582,
+     23.873
+    ],
+    [
+     178,
+     29,
+     23.873
+    ],
+    [
+     387,
+     700,
+     23.873
+    ],
+    [
+     823,
+     202,
+     23.873
+    ],
+    [
+     975,
+     -451,
+     23.873
+    ],
+    [
+     995,
+     705,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "d20043",
+   "seed0": 0,
+   "seed1": 20043,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 8,
+   "spacing": 50000,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.019073486328125
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -962,
+     828,
+     23.873
+    ],
+    [
+     -780,
+     -518,
+     23.873
+    ],
+    [
+     -621,
+     97,
+     23.873
+    ],
+    [
+     -228,
+     640,
+     23.873
+    ],
+    [
+     -131,
+     -964,
+     23.873
+    ],
+    [
+     144,
+     28,
+     23.873
+    ],
+    [
+     762,
+     -316,
+     23.873
+    ],
+    [
+     958,
+     960,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "d20064",
+   "seed0": 0,
+   "seed1": 20064,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 8,
+   "spacing": 50000,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.019073486328125
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -832,
+     -631,
+     23.873
+    ],
+    [
+     -484,
+     754,
+     23.873
+    ],
+    [
+     -295,
+     -186,
+     23.873
+    ],
+    [
+     388,
+     -948,
+     23.873
+    ],
+    [
+     628,
+     946,
+     23.873
+    ],
+    [
+     728,
+     282,
+     23.873
+    ],
+    [
+     820,
+     -239,
+     23.873
+    ],
+    [
+     1019,
+     -877,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "d20094",
+   "seed0": 0,
+   "seed1": 20094,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 8,
+   "spacing": 50000,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.019073486328125
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -836,
+     997,
+     23.873
+    ],
+    [
+     -642,
+     489,
+     23.873
+    ],
+    [
+     -292,
+     -383,
+     23.873
+    ],
+    [
+     -84,
+     894,
+     23.873
+    ],
+    [
+     382,
+     -419,
+     23.873
+    ],
+    [
+     477,
+     367,
+     23.873
+    ],
+    [
+     822,
+     704,
+     23.873
+    ],
+    [
+     824,
+     -740,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "d20115",
+   "seed0": 0,
+   "seed1": 20115,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 10,
+   "spacing": 20000,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.02384185791015625
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -997,
+     919,
+     23.873
+    ],
+    [
+     -911,
+     -563,
+     23.873
+    ],
+    [
+     -713,
+     -173,
+     23.873
+    ],
+    [
+     -532,
+     874,
+     23.873
+    ],
+    [
+     -290,
+     -759,
+     23.873
+    ],
+    [
+     -58,
+     234,
+     23.873
+    ],
+    [
+     93,
+     857,
+     23.873
+    ],
+    [
+     554,
+     494,
+     23.873
+    ],
+    [
+     579,
+     -70,
+     23.873
+    ],
+    [
+     669,
+     -666,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "d20120",
+   "seed0": 0,
+   "seed1": 20120,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 10,
+   "spacing": 20000,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.02384185791015625
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -986,
+     -840,
+     23.873
+    ],
+    [
+     -853,
+     709,
+     23.873
+    ],
+    [
+     -790,
+     -185,
+     23.873
+    ],
+    [
+     -37,
+     -347,
+     23.873
+    ],
+    [
+     13,
+     245,
+     23.873
+    ],
+    [
+     209,
+     -955,
+     23.873
+    ],
+    [
+     370,
+     830,
+     23.873
+    ],
+    [
+     724,
+     -359,
+     23.873
+    ],
+    [
+     824,
+     -1008,
+     23.873
+    ],
+    [
+     925,
+     594,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "d20152",
+   "seed0": 0,
+   "seed1": 20152,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 8,
+   "spacing": 50000,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.019073486328125
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -968,
+     -100,
+     23.873
+    ],
+    [
+     -764,
+     775,
+     23.873
+    ],
+    [
+     -633,
+     -676,
+     23.873
+    ],
+    [
+     -320,
+     -185,
+     23.873
+    ],
+    [
+     314,
+     741,
+     23.873
+    ],
+    [
+     453,
+     -951,
+     23.873
+    ],
+    [
+     933,
+     -76,
+     23.873
+    ],
+    [
+     935,
+     733,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "d20157",
+   "seed0": 0,
+   "seed1": 20157,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 8,
+   "spacing": 50000,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.019073486328125
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -688,
+     -747,
+     23.873
+    ],
+    [
+     -628,
+     170,
+     23.873
+    ],
+    [
+     -433,
+     755,
+     23.873
+    ],
+    [
+     -198,
+     -268,
+     23.873
+    ],
+    [
+     90,
+     544,
+     23.873
+    ],
+    [
+     304,
+     -982,
+     23.873
+    ],
+    [
+     602,
+     919,
+     23.873
+    ],
+    [
+     842,
+     -384,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "d20186",
+   "seed0": 0,
+   "seed1": 20186,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 10,
+   "spacing": 20000,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.02384185791015625
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -794,
+     95,
+     23.873
+    ],
+    [
+     -725,
+     898,
+     23.873
+    ],
+    [
+     -670,
+     -882,
+     23.873
+    ],
+    [
+     -40,
+     291,
+     23.873
+    ],
+    [
+     33,
+     -331,
+     23.873
+    ],
+    [
+     404,
+     819,
+     23.873
+    ],
+    [
+     569,
+     -268,
+     23.873
+    ],
+    [
+     711,
+     101,
+     23.873
+    ],
+    [
+     885,
+     993,
+     23.873
+    ],
+    [
+     901,
+     -501,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "d20190",
+   "seed0": 0,
+   "seed1": 20190,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 8,
+   "spacing": 50000,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.019073486328125
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -999,
+     709,
+     23.873
+    ],
+    [
+     -638,
+     -162,
+     23.873
+    ],
+    [
+     -270,
+     793,
+     23.873
+    ],
+    [
+     -218,
+     -844,
+     23.873
+    ],
+    [
+     485,
+     -765,
+     23.873
+    ],
+    [
+     668,
+     83,
+     23.873
+    ],
+    [
+     709,
+     837,
+     23.873
+    ],
+    [
+     774,
+     -398,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "d20198",
+   "seed0": 0,
+   "seed1": 20198,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 10,
+   "spacing": 20000,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "const",
+    "value": 0.02384185791015625
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -855,
+     -532,
+     23.873
+    ],
+    [
+     -845,
+     924,
+     23.873
+    ],
+    [
+     -786,
+     151,
+     23.873
+    ],
+    [
+     -437,
+     -147,
+     23.873
+    ],
+    [
+     -217,
+     -769,
+     23.873
+    ],
+    [
+     -100,
+     799,
+     23.873
+    ],
+    [
+     244,
+     641,
+     23.873
+    ],
+    [
+     539,
+     -597,
+     23.873
+    ],
+    [
+     850,
+     910,
+     23.873
+    ],
+    [
+     959,
+     -67,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "ds30080",
+   "seed0": 0,
+   "seed1": 30080,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 20000,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "stepx",
+    "value": 0.0286102294921875
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -1016,
+     403,
+     23.873
+    ],
+    [
+     -8,
+     -851,
+     23.873
+    ],
+    [
+     228,
+     717,
+     23.873
+    ],
+    [
+     999,
+     -571,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "ds30109",
+   "seed0": 0,
+   "seed1": 30109,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 20000,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "stepx",
+    "value": 0.0286102294921875
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -261,
+     -933,
+     23.873
+    ],
+    [
+     -253,
+     351,
+     23.873
+    ],
+    [
+     879,
+     586,
+     23.873
+    ],
+    [
+     941,
+     -280,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "ds30157",
+   "seed0": 0,
+   "seed1": 30157,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 20000,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "stepx",
+    "value": 0.0286102294921875
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -710,
+     1013,
+     23.873
+    ],
+    [
+     -26,
+     -814,
+     23.873
+    ],
+    [
+     330,
+     133,
+     23.873
+    ],
+    [
+     979,
+     986,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "ds30191",
+   "seed0": 0,
+   "seed1": 30191,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 20000,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "stepx",
+    "value": 0.0286102294921875
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -1003,
+     -719,
+     23.873
+    ],
+    [
+     -505,
+     692,
+     23.873
+    ],
+    [
+     569,
+     -639,
+     23.873
+    ],
+    [
+     990,
+     699,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "ds30305",
+   "seed0": 0,
+   "seed1": 30305,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 20000,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "stepx",
+    "value": 0.0286102294921875
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -743,
+     -14,
+     23.873
+    ],
+    [
+     -396,
+     -950,
+     23.873
+    ],
+    [
+     -2,
+     312,
+     23.873
+    ],
+    [
+     649,
+     -862,
+     23.873
+    ]
+   ]
+  },
+  {
+   "name": "ds30385",
+   "seed0": 0,
+   "seed1": 30385,
+   "regionX": 0,
+   "regionY": 0,
+   "regionSize": 2048,
+   "count": 6,
+   "spacing": 20000,
+   "skipSpan": 1,
+   "skipOffset": 0,
+   "hard": false,
+   "density": {
+    "kind": "stepx",
+    "value": 0.0286102294921875
+   },
+   "quantity": {
+    "kind": "const",
+    "value": 10000
+   },
+   "favorability": {
+    "kind": "const",
+    "value": 1
+   },
+   "spots": [
+    [
+     -780,
+     867,
+     23.873
+    ],
+    [
+     -342,
+     -592,
+     23.873
+    ],
+    [
+     -62,
+     392,
+     23.873
+    ],
+    [
+     950,
+     619,
+     23.873
+    ]
+   ]
+  }
+ ]
+}

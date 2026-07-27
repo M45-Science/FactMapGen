@@ -2,6 +2,7 @@ const state = {
   config: {
     presetDir: "presets",
     previewEnabled: false,
+    fastPreviewEnabled: true,
     factorio: {
       previewEnabled: false,
       installManaged: false,
@@ -14,6 +15,7 @@ const state = {
   mapGen: null,
   mapSettings: null,
   previewSeeds: {},
+  previewViews: {},
   dirty: false,
   session: null,
 };
@@ -22,6 +24,15 @@ const defaultPreviewSize = 768;
 const minPreviewSize = 256;
 const maxPreviewSizePx = 4096;
 const guestMaxPreviewSize = 512;
+const minPreviewScale = 1 / 64;
+const maxPreviewScale = 25;
+const previewWheelDebounceMs = 180;
+const previewTileSize = 512;
+const previewTileSourceScale = 1;
+const clientPreviewCacheMiB = 512;
+const decodedPreviewTileBytes = previewTileSize * previewTileSize * 4;
+const maxClientPreviewTiles = Math.floor(clientPreviewCacheMiB * 1024 * 1024 / decodedPreviewTileBytes);
+const maxConcurrentPreviewTileRequests = 8;
 const safePreviewSizes = [256, 512, 768, 1024, 1536, 2048, 3072, 4096];
 const maxPreviewSeed = 4294967295;
 const minAutoplaceFrequency = 0.1;
@@ -31,6 +42,12 @@ let autoPreviewTimer = null;
 let autoPreviewPending = false;
 let previewInFlight = false;
 let previewImageLoadID = 0;
+let previewRequestRevision = 0;
+let previewWheelTimer = null;
+let previewPanGesture = null;
+let previewTileViewer = null;
+let displayedPreview = null;
+let previewPointerView = null;
 let factorioUpdateNoticeShown = false;
 
 const resources = [
@@ -356,18 +373,22 @@ const els = {
   cancelRenameBtn: $("#cancelRenameBtn"),
   renameProfileName: $("#renameProfileName"),
   previewBtn: $("#previewBtn"),
+  previewEngine: $("#previewEngine"),
   previewSize: $("#previewSize"),
   mapgenBody: $(".mapgen-body"),
   previewPlanet: $("#previewPlanet"),
   previewZoom: $("#previewZoom"),
-  previewLossless: $("#previewLossless"),
-  previewLosslessField: $("#previewLosslessField"),
+  previewScaleField: $("#previewScaleField"),
+  previewResetView: $("#previewResetView"),
   autoRefreshPreview: $("#autoRefreshPreview"),
   seedValue: $("#seedValue"),
   seedRandom: $("#seedRandom"),
   seedRerollBtn: $("#seedRerollBtn"),
+  previewFrame: $(".preview-frame"),
+  previewTiles: $("#previewTiles"),
   previewImage: $("#previewImage"),
   previewEmpty: $("#previewEmpty"),
+  previewCoordinates: $("#previewCoordinates"),
   previewStatus: $("#previewStatus"),
   mapgenSubtabs: document.querySelectorAll(".mapgen-subtab"),
   mapgenSubpanels: {
@@ -421,6 +442,12 @@ const els = {
 document.addEventListener("DOMContentLoaded", init);
 
 async function init() {
+  previewTileViewer = new TilePreviewViewer(els.previewTiles, {
+    tileSize: previewTileSize,
+    maxTiles: maxClientPreviewTiles,
+    maxConcurrent: maxConcurrentPreviewTileRequests,
+    onState: updateFastTileViewerState,
+  });
   els.loginForm.addEventListener("submit", login);
   els.guestBtn.addEventListener("click", continueAsGuest);
   els.loginBtn.addEventListener("click", showLogin);
@@ -474,17 +501,50 @@ async function init() {
   els.saveBtn.addEventListener("click", saveProfile);
   els.downloadZipBtn.addEventListener("click", downloadPresetZip);
   els.previewBtn.addEventListener("click", () => generatePreview());
+  els.previewEngine.addEventListener("change", () => {
+    renderPreviewEngineControls();
+    renderPreviewScaleControl(Boolean(state.selected));
+    updatePreviewViewControls();
+    renderPreview();
+    scheduleAutoPreview();
+  });
   els.previewSize.addEventListener("change", () => {
     updatePreviewFrameSize();
     scheduleAutoPreview();
   });
   window.addEventListener("resize", () => {
     const changed = updatePreviewFrameSize();
-    if (changed && previewSizeIsAuto()) scheduleAutoPreview();
+    if (!changed) return;
+    if (fastTileViewerActive()) {
+      const displayed = displayedPreviewForCurrentProfile();
+      setFastTileView(displayed.centerX, displayed.centerY, displayed.tilesPerPixel, currentPreviewSize());
+      refreshVisibleFastTiles();
+    } else if (previewSizeIsAuto()) {
+      scheduleAutoPreview();
+    }
   });
   els.previewPlanet.addEventListener("change", () => scheduleAutoPreview());
-  els.previewZoom.addEventListener("change", () => scheduleAutoPreview());
-  els.previewLossless.addEventListener("change", () => scheduleAutoPreview());
+  els.previewZoom.addEventListener("input", () => {
+    if (fastTileViewerActive()) {
+      const displayed = displayedPreviewForCurrentProfile();
+      setFastTileView(displayed.centerX, displayed.centerY, Number(currentPreviewScale()), displayed.size);
+      refreshVisibleFastTiles();
+      return;
+    }
+    previewPointerView = null;
+    updatePreviewViewControls();
+    scheduleAutoPreview();
+  });
+  els.previewResetView.addEventListener("click", resetPreviewView);
+  els.previewFrame.addEventListener("pointerdown", beginPreviewPan);
+  els.previewFrame.addEventListener("pointermove", updatePreviewPan);
+  els.previewFrame.addEventListener("pointermove", updatePreviewCoordinates);
+  els.previewFrame.addEventListener("pointerleave", hidePreviewCoordinates);
+  els.previewFrame.addEventListener("pointerup", finishPreviewPan);
+  els.previewFrame.addEventListener("pointercancel", cancelPreviewPan);
+  els.previewFrame.addEventListener("lostpointercapture", cancelPreviewPan);
+  els.previewFrame.addEventListener("wheel", zoomPreviewAtPointer, { passive: false });
+  els.previewImage.addEventListener("dragstart", (event) => event.preventDefault());
   els.autoRefreshPreview.addEventListener("change", () => {
     renderPreviewButtonState();
     if (els.autoRefreshPreview.checked) {
@@ -995,17 +1055,27 @@ function renderAudit(entries) {
 
 function currentFactorioStatus() {
   return state.config.factorio || {
-    previewEnabled: Boolean(state.config.previewEnabled),
+    previewEnabled: Boolean(state.config.factorioBin),
     bin: state.config.factorioBin || "",
     installManaged: false,
+    releaseChannel: "experimental",
     updateAvailable: false,
   };
+}
+
+function factorioReleaseChannel(status = currentFactorioStatus()) {
+  return status.releaseChannel === "stable" ? "stable" : "experimental";
+}
+
+function factorioReleaseChannelLabel(status = currentFactorioStatus()) {
+  const channel = factorioReleaseChannel(status);
+  return channel.charAt(0).toUpperCase() + channel.slice(1);
 }
 
 function applyFactorioStatus(status) {
   if (!status) return;
   state.config.factorio = status;
-  state.config.previewEnabled = Boolean(status.previewEnabled);
+  state.config.previewEnabled = Boolean(state.config.fastPreviewEnabled || status.previewEnabled);
   state.config.factorioBin = status.bin || "";
   renderFactorioStatus(status);
   renderFactorioAdmin(status);
@@ -1018,18 +1088,21 @@ function renderFactorioStatus(status = currentFactorioStatus()) {
   const version = status.version || "";
   const latest = status.latestVersion || "";
   const updateAvailable = Boolean(status.updateAvailable && latest);
-  const unavailable = !version && !status.previewEnabled;
+  const channel = factorioReleaseChannel(status);
+  const unavailable = !version && !status.previewEnabled && !fastPreviewAvailable();
 
   els.factorioVersion.classList.toggle("update", updateAvailable);
-  els.factorioVersion.classList.toggle("error", unavailable || Boolean(status.statusError && !version));
+  els.factorioVersion.classList.toggle("error", unavailable || Boolean(status.statusError && !version && !fastPreviewAvailable()));
   els.factorioVersion.title = status.statusError || "";
 
   if (status.installing) {
     els.factorioVersion.textContent = "Factorio: installing...";
   } else if (version) {
-    els.factorioVersion.textContent = updateAvailable ? `Factorio ${version} - ${latest} available` : `Factorio ${version}`;
+    els.factorioVersion.textContent = updateAvailable ? `Factorio ${version} - ${channel} ${latest} available` : `Factorio ${version}`;
   } else if (status.previewEnabled) {
     els.factorioVersion.textContent = "Factorio: version unavailable";
+  } else if (fastPreviewAvailable()) {
+    els.factorioVersion.textContent = "Fast preview ready";
   } else {
     els.factorioVersion.textContent = "Factorio: not installed";
   }
@@ -1039,7 +1112,10 @@ function renderFactorioAdmin(status = currentFactorioStatus()) {
   if (!els.factorioAdminStatus) return;
   els.factorioAdminStatus.innerHTML = "";
   appendFactorioAdminLine("Current", status.version || (status.previewEnabled ? "version unavailable" : "not installed"));
-  appendFactorioAdminLine("Latest stable", status.latestVersion || "not checked");
+  const channel = factorioReleaseChannel(status);
+  const channelLabel = factorioReleaseChannelLabel(status);
+  appendFactorioAdminLine("Release channel", channelLabel);
+  appendFactorioAdminLine(`Latest ${channel}`, status.latestVersion || "not checked");
   appendFactorioAdminLine("Binary", status.bin || "not configured");
   appendFactorioAdminLine("Install dir", status.installDir || "not configured");
   appendFactorioAdminLine("Managed install", status.installManaged ? "yes" : "no");
@@ -1052,9 +1128,9 @@ function renderFactorioAdmin(status = currentFactorioStatus()) {
 
   els.refreshFactorioBtn.disabled = Boolean(status.installing);
   els.installFactorioBtn.disabled = !status.installManaged || Boolean(status.installing);
-  els.installFactorioBtn.textContent = status.installing ? "Installing..." : "Delete and reinstall stable";
+  els.installFactorioBtn.textContent = status.installing ? "Installing..." : `Delete and reinstall ${channel}`;
   els.installFactorioBtn.title = status.installManaged
-    ? "Delete the managed Factorio install and install the latest stable headless build."
+    ? `Delete the managed Factorio install and install the latest ${channel} headless build.`
     : "Install management is available only when the active binary is from -factorio-dir.";
 }
 
@@ -1082,7 +1158,8 @@ async function refreshFactorioStatus(options = {}) {
 async function installFactorio() {
   const status = currentFactorioStatus();
   if (!status.installManaged || status.installing) return;
-  if (!window.confirm("Delete the current managed Factorio install and install a fresh stable headless copy?")) return;
+  const channel = factorioReleaseChannel(status);
+  if (!window.confirm(`Delete the current managed Factorio install and install a fresh ${channel} headless copy?`)) return;
 
   renderFactorioAdmin({ ...status, installing: true });
   renderFactorioStatus({ ...status, installing: true });
@@ -1106,13 +1183,24 @@ function notifyFactorioUpdate() {
     return;
   }
   if (!state.session?.isAdmin || factorioUpdateNoticeShown || !status.latestVersion) return;
-  showToast(`Factorio ${status.latestVersion} is available.`);
+  showToast(`Factorio ${status.latestVersion} is available on the ${factorioReleaseChannel(status)} channel.`);
   factorioUpdateNoticeShown = true;
 }
 
 async function loadConfig() {
   try {
     state.config = await api("/api/config");
+    // Match the server's boot-warmed Default world. The cache itself is entirely
+    // server-side; this only gives a seed:null preset a stable initial cache key.
+    const warmSeed = Number(state.config.fastPreviewWarmSeed);
+    if (
+      !state.previewSeeds["default:Default"]
+      && Number.isInteger(warmSeed)
+      && warmSeed >= 1
+      && warmSeed <= maxPreviewSeed
+    ) state.previewSeeds["default:Default"] = String(warmSeed);
+    state.config.fastPreviewEnabled = state.config.fastPreviewEnabled !== false;
+    state.config.previewEnabled = Boolean(state.config.fastPreviewEnabled || state.config.factorio?.previewEnabled);
     renderFactorioStatus();
     notifyFactorioUpdate();
   } catch (error) {
@@ -1336,6 +1424,10 @@ async function renameProfile(event) {
         state.previewSeeds[profile.id] = state.previewSeeds[oldID];
         delete state.previewSeeds[oldID];
       }
+      if (state.previewViews[oldID]) {
+        state.previewViews[profile.id] = state.previewViews[oldID];
+        delete state.previewViews[oldID];
+      }
       state.selected = profile.id;
       closeRenameDialog();
       await loadProfiles(true);
@@ -1372,6 +1464,10 @@ async function renameProfile(event) {
     if (oldID !== newID && state.previewSeeds[oldID]) {
       state.previewSeeds[newID] = state.previewSeeds[oldID];
       delete state.previewSeeds[oldID];
+    }
+    if (oldID !== newID && state.previewViews[oldID]) {
+      state.previewViews[newID] = state.previewViews[oldID];
+      delete state.previewViews[oldID];
     }
     state.selected = newID;
     state.mapGen = wasDirty ? currentMapGen : body.mapGen;
@@ -1529,13 +1625,31 @@ function canAutoRefreshPreview() {
   return Boolean(state.selected && state.config.previewEnabled && els.autoRefreshPreview.checked);
 }
 
+function invalidatePreviewResponse() {
+  previewRequestRevision++;
+  return previewRequestRevision;
+}
+
+function clearPreviewWheelTimer() {
+  window.clearTimeout(previewWheelTimer);
+  previewWheelTimer = null;
+}
+
 function cancelAutoPreview() {
   window.clearTimeout(autoPreviewTimer);
   autoPreviewTimer = null;
+  clearPreviewWheelTimer();
   autoPreviewPending = false;
+  invalidatePreviewResponse();
 }
 
 function scheduleAutoPreview() {
+  invalidatePreviewResponse();
+  clearPreviewWheelTimer();
+  requestAutoPreview();
+}
+
+function requestAutoPreview() {
   if (!canAutoRefreshPreview()) return;
   if (previewInFlight) {
     autoPreviewPending = true;
@@ -1544,7 +1658,7 @@ function scheduleAutoPreview() {
   }
   window.clearTimeout(autoPreviewTimer);
   autoPreviewTimer = null;
-  generatePreview({ automatic: true });
+  generatePreview({ automatic: true, revision: previewRequestRevision });
 }
 
 async function generatePreview(options = {}) {
@@ -1552,7 +1666,7 @@ async function generatePreview(options = {}) {
   if (!state.selected || !state.mapGen) return false;
   if (automatic && !canAutoRefreshPreview()) return false;
   if (!state.config.previewEnabled) {
-    if (!automatic) showToast("Factorio preview is not configured.", true);
+    if (!automatic) showToast(previewUnavailableMessage(), true);
     return false;
   }
   if (previewInFlight) {
@@ -1562,6 +1676,9 @@ async function generatePreview(options = {}) {
     }
     return false;
   }
+  const requestRevision = Number.isInteger(options.revision)
+    ? options.revision
+    : invalidatePreviewResponse();
   previewInFlight = true;
   const previewProfile = state.selected;
 
@@ -1573,18 +1690,43 @@ async function generatePreview(options = {}) {
     setPreviewUpdating("Generating preview...");
 
     const seed = previewSeedOverride();
-    const payload = { size, planet, zoom: canUsePreviewZoom() ? els.previewZoom.value : "1", lossless: canUseLosslessPreview() && els.previewLossless.checked, mapGen: previewMapGenPayload() };
+    const view = previewViewForCurrentProfile();
+    const payload = {
+      engine: currentPreviewEngine(),
+      size,
+      planet,
+      zoom: canUsePreviewZoom() ? currentPreviewScale() : "1",
+      centerX: view.centerX,
+      centerY: view.centerY,
+      mapGen: previewMapGenPayload(),
+    };
     if (seed) payload.seed = seed;
+    if (payload.engine === "fast") {
+      await showFastTilePreview(previewProfile, payload, requestRevision);
+      if (!automatic) showToast("Preview generated.");
+      return true;
+    }
     const body = await api(`/api/profiles/${encodeURIComponent(previewProfile)}/preview`, {
       method: "POST",
       body: JSON.stringify(payload),
     });
-    if (state.selected !== previewProfile) return true;
-    updatePreviewFrameSize(body.size);
-    showPreviewImage(body.url);
+    if (!previewRequestIsCurrent(previewProfile, requestRevision)) return true;
+    const renderedSize = positivePreviewNumber(body.size, size);
+    const renderedScale = positivePreviewNumber(body.tilesPerPixel, Number(payload.zoom));
+    const renderedCenterX = finitePreviewNumber(body.centerX, payload.centerX);
+    const renderedCenterY = finitePreviewNumber(body.centerY, payload.centerY);
+    updatePreviewFrameSize(renderedSize);
+    showPreviewImage(body.url, {
+      profile: previewProfile,
+      size: renderedSize,
+      tilesPerPixel: renderedScale,
+      centerX: renderedCenterX,
+      centerY: renderedCenterY,
+    }, { revision: requestRevision });
     if (!automatic) showToast("Preview generated.");
   } catch (error) {
-    clearPreviewUpdating();
+    if (!previewRequestIsCurrent(previewProfile, requestRevision)) return true;
+    settlePreviewUpdating();
     els.previewStatus.classList.add("error");
     els.previewStatus.textContent = clippedClientMessage(error.message, 1200);
     if (!automatic) showToast("Preview failed.", true);
@@ -1594,10 +1736,20 @@ async function generatePreview(options = {}) {
     renderPreviewButtonState();
     if (autoPreviewPending) {
       autoPreviewPending = false;
-      scheduleAutoPreview();
+      if (previewWheelTimer === null) requestAutoPreview();
+    } else if (
+      requestRevision !== previewRequestRevision
+      && previewWheelTimer === null
+      && state.selected === previewProfile
+    ) {
+      settlePreviewUpdating();
     }
   }
   return true;
+}
+
+function previewRequestIsCurrent(profile, revision) {
+  return state.selected === profile && previewRequestRevision === revision;
 }
 
 function setMapgenTab(tabName) {
@@ -1743,12 +1895,382 @@ function maxPreviewSizeForSession() {
   return state.session ? maxPreviewSizePx : guestMaxPreviewSize;
 }
 
+function factorioPreviewAvailable() {
+  return Boolean(currentFactorioStatus().previewEnabled);
+}
+
+function fastPreviewAvailable() {
+  return state.config.fastPreviewEnabled !== false;
+}
+
+function currentPreviewEngine() {
+  return els.previewEngine?.value === "factorio" ? "factorio" : "fast";
+}
+
+function fastTileViewerActive() {
+  return Boolean(previewTileViewer?.isActive() && displayedPreviewForCurrentProfile()?.tiled);
+}
+
+function fastTileSourceKey(profile, payload) {
+  return JSON.stringify({
+    profile,
+    engine: "fast",
+    planet: payload.planet,
+    seed: payload.seed || "",
+    mapGen: payload.mapGen,
+  });
+}
+
 function canUsePreviewZoom() {
   return Boolean(state.session);
 }
 
-function canUseLosslessPreview() {
-  return Boolean(state.session);
+function currentPreviewScale() {
+  const scale = Number.parseFloat(els.previewZoom.value);
+  if (!Number.isFinite(scale)) return "1";
+  const bounded = Math.min(maxPreviewScale, Math.max(minPreviewScale, scale));
+  if (bounded !== scale) els.previewZoom.value = String(bounded);
+  return String(bounded);
+}
+
+function previewViewForCurrentProfile() {
+  if (!state.selected) return { centerX: 0, centerY: 0 };
+  let view = state.previewViews[state.selected];
+  if (!view) {
+    view = { centerX: 0, centerY: 0 };
+    state.previewViews[state.selected] = view;
+  }
+  if (!Number.isFinite(view.centerX)) view.centerX = 0;
+  if (!Number.isFinite(view.centerY)) view.centerY = 0;
+  return view;
+}
+
+function displayedPreviewForCurrentProfile() {
+  if (!displayedPreview || displayedPreview.profile !== state.selected) return null;
+  return displayedPreview;
+}
+
+function pointerViewForCurrentPreview() {
+  const displayed = displayedPreviewForCurrentProfile();
+  if (!displayed) return null;
+  if (
+    previewPointerView
+    && previewPointerView.profile === displayed.profile
+    && previewPointerView.displayedLoadID === displayed.loadID
+  ) {
+    return previewPointerView;
+  }
+  return {
+    profile: displayed.profile,
+    displayedLoadID: displayed.loadID,
+    size: displayed.size,
+    tilesPerPixel: displayed.tilesPerPixel,
+    centerX: displayed.centerX,
+    centerY: displayed.centerY,
+  };
+}
+
+function previewViewIsReset() {
+  const view = previewViewForCurrentProfile();
+  return view.centerX === 0 && view.centerY === 0 && currentPreviewScale() === "1";
+}
+
+function updatePreviewViewControls() {
+  const enabled = Boolean(state.selected && state.config.previewEnabled);
+  const displayed = displayedPreviewForCurrentProfile();
+  const interactive = Boolean(
+    enabled
+    && displayed
+    && (displayed.tiled ? previewTileViewer?.isActive() : els.previewImage.getAttribute("src"))
+    && els.previewEmpty.style.display === "none",
+  );
+  els.previewResetView.disabled = !enabled || previewViewIsReset();
+  els.previewFrame.classList.toggle("preview-interactive", interactive);
+  els.previewFrame.title = interactive
+    ? canUsePreviewZoom()
+      ? "Drag to pan. Use the mouse wheel to zoom around the pointer."
+      : "Drag to pan."
+    : "";
+}
+
+function resetPreviewView() {
+  if (!state.selected) return;
+  cancelPreviewPan();
+  previewPointerView = null;
+  const view = previewViewForCurrentProfile();
+  view.centerX = 0;
+  view.centerY = 0;
+  els.previewZoom.value = "1";
+  updatePreviewViewControls();
+  if (canUseDefaultCachedPreview()) {
+    invalidatePreviewResponse();
+    clearPreviewWheelTimer();
+    autoPreviewPending = false;
+    showDefaultCachedPreview();
+    return;
+  }
+  if (fastTileViewerActive()) {
+    setFastTileView(0, 0, 1, displayedPreview.size);
+    refreshVisibleFastTiles();
+    return;
+  }
+  scheduleAutoPreview();
+}
+
+function previewInteractionEnabled() {
+  return els.previewFrame.classList.contains("preview-interactive");
+}
+
+function updatePreviewCoordinates(event) {
+  const pointerView = pointerViewForCurrentPreview();
+  if (!previewInteractionEnabled() || !pointerView) {
+    hidePreviewCoordinates();
+    return;
+  }
+  const rect = els.previewFrame.getBoundingClientRect();
+  const screenX = event.clientX - rect.left;
+  const screenY = event.clientY - rect.top;
+  if (
+    rect.width <= 0
+    || rect.height <= 0
+    || screenX < 0
+    || screenY < 0
+    || screenX >= rect.width
+    || screenY >= rect.height
+  ) {
+    hidePreviewCoordinates();
+    return;
+  }
+  let coordinateView = pointerView;
+  if (previewPanGesture && previewPanGesture.pointerID === event.pointerId && !fastTileViewerActive()) {
+    coordinateView = {
+      ...pointerView,
+      centerX: previewPanGesture.centerX - previewPanGesture.dx * previewPanGesture.worldUnitsPerClientX,
+      centerY: previewPanGesture.centerY - previewPanGesture.dy * previewPanGesture.worldUnitsPerClientY,
+    };
+  }
+  const point = TilePreviewViewer.screenPointToWorld(
+    coordinateView, screenX, screenY, rect.width, rect.height,
+  );
+  const precision = coordinateView.tilesPerPixel < 0.1 ? 2 : coordinateView.tilesPerPixel < 1 ? 1 : 0;
+  els.previewCoordinates.textContent =
+    `x ${formatPreviewCoordinate(point.x, precision)}  y ${formatPreviewCoordinate(point.y, precision)}`;
+  els.previewCoordinates.hidden = false;
+}
+
+function formatPreviewCoordinate(value, precision) {
+  const zeroThreshold = 0.5 * 10 ** -precision;
+  const normalized = Math.abs(value) < zeroThreshold ? 0 : value;
+  return normalized.toFixed(precision);
+}
+
+function hidePreviewCoordinates() {
+  els.previewCoordinates.hidden = true;
+}
+
+function beginPreviewPan(event) {
+  if (!previewInteractionEnabled() || event.isPrimary === false || event.button !== 0) return;
+  const rect = els.previewFrame.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return;
+  const pointerView = pointerViewForCurrentPreview();
+  if (!pointerView) return;
+  previewPanGesture = {
+    pointerID: event.pointerId,
+    profile: pointerView.profile,
+    displayedLoadID: pointerView.displayedLoadID,
+    size: pointerView.size,
+    tilesPerPixel: pointerView.tilesPerPixel,
+    startClientX: event.clientX,
+    startClientY: event.clientY,
+    centerX: pointerView.centerX,
+    centerY: pointerView.centerY,
+    worldUnitsPerClientX: pointerView.tilesPerPixel * pointerView.size / rect.width,
+    worldUnitsPerClientY: pointerView.tilesPerPixel * pointerView.size / rect.height,
+    dx: 0,
+    dy: 0,
+  };
+  els.previewFrame.classList.add("preview-panning");
+  els.previewFrame.setPointerCapture(event.pointerId);
+  event.preventDefault();
+}
+
+function updatePreviewPan(event) {
+  const gesture = previewPanGesture;
+  if (!gesture || gesture.pointerID !== event.pointerId) return;
+  gesture.dx = event.clientX - gesture.startClientX;
+  gesture.dy = event.clientY - gesture.startClientY;
+  if (fastTileViewerActive()) {
+    const centerX = gesture.centerX - gesture.dx * gesture.worldUnitsPerClientX;
+    const centerY = gesture.centerY - gesture.dy * gesture.worldUnitsPerClientY;
+    setFastTileView(centerX, centerY, gesture.tilesPerPixel, gesture.size);
+    refreshVisibleFastTiles();
+  } else {
+    els.previewImage.style.transform = `translate(${gesture.dx}px, ${gesture.dy}px)`;
+  }
+  event.preventDefault();
+}
+
+function finishPreviewPan(event) {
+  const gesture = previewPanGesture;
+  if (!gesture || gesture.pointerID !== event.pointerId) return;
+  const moved = Math.hypot(gesture.dx, gesture.dy) >= 2;
+  previewPanGesture = null;
+  clearPreviewPanTransform();
+  if (els.previewFrame.hasPointerCapture(event.pointerId)) {
+    els.previewFrame.releasePointerCapture(event.pointerId);
+  }
+  if (moved) {
+    const centerX = gesture.centerX - gesture.dx * gesture.worldUnitsPerClientX;
+    const centerY = gesture.centerY - gesture.dy * gesture.worldUnitsPerClientY;
+    if (fastTileViewerActive()) {
+      setFastTileView(centerX, centerY, gesture.tilesPerPixel, gesture.size);
+      refreshVisibleFastTiles();
+      event.preventDefault();
+      return;
+    }
+    const view = previewViewForCurrentProfile();
+    view.centerX = centerX;
+    view.centerY = centerY;
+    previewPointerView = {
+      profile: gesture.profile,
+      displayedLoadID: gesture.displayedLoadID,
+      size: gesture.size,
+      tilesPerPixel: gesture.tilesPerPixel,
+      centerX,
+      centerY,
+    };
+    updatePreviewViewControls();
+    scheduleAutoPreview();
+  } else if (fastTileViewerActive()) {
+    setFastTileView(gesture.centerX, gesture.centerY, gesture.tilesPerPixel, gesture.size);
+    refreshVisibleFastTiles();
+  }
+  event.preventDefault();
+}
+
+function cancelPreviewPan(event) {
+  const gesture = previewPanGesture;
+  if (event && gesture && gesture.pointerID !== event.pointerId) return;
+  previewPanGesture = null;
+  if (gesture && fastTileViewerActive()) {
+    setFastTileView(gesture.centerX, gesture.centerY, gesture.tilesPerPixel, gesture.size);
+    refreshVisibleFastTiles();
+  }
+  clearPreviewPanTransform();
+  if (gesture && els.previewFrame.hasPointerCapture(gesture.pointerID)) {
+    els.previewFrame.releasePointerCapture(gesture.pointerID);
+  }
+}
+
+function clearPreviewPanTransform() {
+  els.previewFrame.classList.remove("preview-panning");
+  els.previewImage.style.removeProperty("transform");
+}
+
+function setFastTileView(centerX, centerY, scale, size) {
+  const displayed = displayedPreviewForCurrentProfile();
+  if (!displayed?.tiled || !previewTileViewer?.isActive()) return false;
+  const nextCenterX = finitePreviewNumber(centerX, displayed.centerX);
+  const nextCenterY = finitePreviewNumber(centerY, displayed.centerY);
+  const nextScale = positivePreviewNumber(scale, displayed.tilesPerPixel);
+  const nextSize = positivePreviewNumber(size, displayed.size);
+  const view = previewViewForCurrentProfile();
+  view.centerX = nextCenterX;
+  view.centerY = nextCenterY;
+  displayed.centerX = nextCenterX;
+  displayed.centerY = nextCenterY;
+  displayed.tilesPerPixel = nextScale;
+  displayed.size = nextSize;
+  previewPointerView = {
+    profile: displayed.profile,
+    displayedLoadID: displayed.loadID,
+    size: nextSize,
+    tilesPerPixel: nextScale,
+    centerX: nextCenterX,
+    centerY: nextCenterY,
+  };
+  els.previewZoom.value = String(nextScale);
+  previewTileViewer.setView({
+    size: nextSize,
+    scale: nextScale,
+    centerX: nextCenterX,
+    centerY: nextCenterY,
+  });
+  updatePreviewViewControls();
+  return true;
+}
+
+function refreshVisibleFastTiles() {
+  const displayed = displayedPreviewForCurrentProfile();
+  if (!displayed?.tiled || !previewTileViewer?.isActive()) return Promise.resolve(null);
+  const loadID = displayed.loadID;
+  const sourceKey = displayed.sourceKey;
+  return previewTileViewer.refresh().catch((error) => {
+    const current = displayedPreviewForCurrentProfile();
+    if (!current?.tiled || current.loadID !== loadID || current.sourceKey !== sourceKey) return null;
+    els.previewStatus.classList.add("error");
+    els.previewStatus.textContent = clippedClientMessage(error.message, 1200);
+    return null;
+  });
+}
+
+function zoomPreviewAtPointer(event) {
+  if (!previewInteractionEnabled() || !canUsePreviewZoom()) return;
+  const rect = els.previewFrame.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return;
+
+  const pointerView = pointerViewForCurrentPreview();
+  if (!pointerView) return;
+  const oldScale = pointerView.tilesPerPixel;
+  let delta = event.deltaY;
+  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) delta *= 16;
+  if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) delta *= rect.height;
+  const scaled = Math.min(
+    maxPreviewScale,
+    Math.max(minPreviewScale, oldScale * Math.pow(2, delta / 300)),
+  );
+  const nextScale = Number(scaled.toPrecision(8));
+  if (!Number.isFinite(nextScale) || nextScale === oldScale) return;
+  event.preventDefault();
+
+  const size = pointerView.size;
+  const pixelX = (event.clientX - rect.left) * size / rect.width;
+  const pixelY = (event.clientY - rect.top) * size / rect.height;
+  const centerX = pointerView.centerX + (pixelX - size / 2) * (oldScale - nextScale);
+  const centerY = pointerView.centerY + (pixelY - size / 2) * (oldScale - nextScale);
+  const view = previewViewForCurrentProfile();
+  view.centerX = centerX;
+  view.centerY = centerY;
+  previewPointerView = {
+    profile: pointerView.profile,
+    displayedLoadID: pointerView.displayedLoadID,
+    size,
+    tilesPerPixel: nextScale,
+    centerX,
+    centerY,
+  };
+  els.previewZoom.value = String(nextScale);
+  updatePreviewViewControls();
+
+  if (fastTileViewerActive()) {
+    setFastTileView(centerX, centerY, nextScale, size);
+    refreshVisibleFastTiles();
+    return;
+  }
+
+  invalidatePreviewResponse();
+  clearPreviewWheelTimer();
+  previewWheelTimer = window.setTimeout(() => {
+    previewWheelTimer = null;
+    requestAutoPreview();
+  }, previewWheelDebounceMs);
+}
+
+function renderPreviewScaleControl(enabled) {
+  const canUseScale = canUsePreviewZoom();
+  els.previewScaleField.hidden = !canUseScale;
+  if (!canUseScale) els.previewZoom.value = "1";
+  els.previewZoom.disabled = !enabled || !state.config.previewEnabled || !canUseScale;
 }
 
 function setControlsEnabled(enabled) {
@@ -1771,6 +2293,7 @@ function setControlsEnabled(enabled) {
   els.seedRerollBtn.disabled = !enabled || !state.mapGen || !isRandomSeed(state.mapGen.seed);
   els.autoRefreshPreview.disabled = !enabled || !state.config.previewEnabled;
   renderPreviewButtonState();
+  renderPreviewEngineControls();
   const maxPreviewSize = maxPreviewSizeForSession();
   for (const option of els.previewSize.options) {
     const optionSize = Number(option.value);
@@ -1779,18 +2302,38 @@ function setControlsEnabled(enabled) {
   const selectedPreviewSize = Number(els.previewSize.value);
   if (Number.isFinite(selectedPreviewSize) && selectedPreviewSize > maxPreviewSize) els.previewSize.value = String(maxPreviewSize);
 
-  const canUseZoom = canUsePreviewZoom();
-  els.previewZoom.hidden = !canUseZoom;
-  if (!canUseZoom) els.previewZoom.value = "1";
-  els.previewZoom.disabled = !enabled || !state.config.previewEnabled || !canUseZoom;
-
-  const canUseLossless = canUseLosslessPreview();
-  els.previewLosslessField.hidden = !canUseLossless;
-  if (!canUseLossless) els.previewLossless.checked = false;
-  els.previewLossless.disabled = !enabled || !state.config.previewEnabled || !canUseLossless;
+  renderPreviewScaleControl(enabled);
 
   els.previewSize.disabled = !enabled || !state.config.previewEnabled;
   els.previewPlanet.disabled = !enabled || !state.config.previewEnabled;
+  updatePreviewViewControls();
+}
+
+function renderPreviewEngineControls() {
+  if (!els.previewEngine) return;
+  const exactOption = Array.from(els.previewEngine.options).find((option) => option.value === "factorio");
+  const fastOption = Array.from(els.previewEngine.options).find((option) => option.value === "fast");
+  const exactAllowed = Boolean(state.session);
+  const exactAvailable = exactAllowed && factorioPreviewAvailable();
+  if (fastOption) fastOption.disabled = !fastPreviewAvailable();
+  if (exactOption) {
+    exactOption.hidden = !exactAllowed;
+    exactOption.disabled = !exactAvailable;
+  }
+  if (currentPreviewEngine() === "factorio" && !exactAvailable) els.previewEngine.value = "fast";
+  if (currentPreviewEngine() === "fast" && !fastPreviewAvailable() && exactAvailable) els.previewEngine.value = "factorio";
+  els.previewEngine.hidden = !exactAllowed;
+  els.previewEngine.disabled = !state.selected || !state.config.previewEnabled;
+
+  const fast = currentPreviewEngine() === "fast";
+  els.previewSize.hidden = fast;
+  for (const option of els.previewPlanet.options) {
+    option.disabled = fast && option.value !== "nauvis";
+  }
+  if (fast && knownPlanetName(els.previewPlanet.value) !== "nauvis") els.previewPlanet.value = "nauvis";
+  els.previewPlanet.title = fast
+    ? "Fast custom preview supports Nauvis-style maps. Use Exact for Space Age planets."
+    : "Preview surface. Space Age planets require a Space Age-capable Factorio install.";
 }
 
 function clearVisualControls() {
@@ -2045,6 +2588,7 @@ function rerollPreviewSeed() {
   if (els.autoRefreshPreview.checked) {
     scheduleAutoPreview();
   } else {
+    invalidatePreviewResponse();
     els.previewStatus.classList.remove("error");
     els.previewStatus.textContent = "Preview seed changed; generate a preview to update the image.";
   }
@@ -2099,8 +2643,13 @@ function validAutoplaceFrequency(value) {
 
 function canUseDefaultCachedPreview() {
   const preview = state.config.defaultPreview;
+  const view = previewViewForCurrentProfile();
   return Boolean(
     preview?.url
+    && currentPreviewEngine() === "factorio"
+    && currentPreviewScale() === "1"
+    && view.centerX === 0
+    && view.centerY === 0
     && state.selected === "default:Default"
     && !state.dirty
     && knownPlanetName(els.previewPlanet.value) === "nauvis"
@@ -2110,22 +2659,35 @@ function canUseDefaultCachedPreview() {
 function showDefaultCachedPreview() {
   if (!canUseDefaultCachedPreview()) return false;
   const preview = state.config.defaultPreview;
-  updatePreviewFrameSize(preview.size || guestMaxPreviewSize);
-  clearPreviewUpdating();
-  showPreviewImage(preview.url);
+  const size = positivePreviewNumber(preview.size, guestMaxPreviewSize);
+  updatePreviewFrameSize(size);
+  showPreviewImage(preview.url, {
+    profile: state.selected,
+    size,
+    tilesPerPixel: 1,
+    centerX: 0,
+    centerY: 0,
+  });
   return true;
 }
 
 function renderPreview() {
+  invalidatePreviewResponse();
+  cancelPreviewPan();
+  updatePreviewViewControls();
   if (showDefaultCachedPreview()) return;
   if (!state.selected) {
     hidePreview("No preview image");
     return;
   }
   els.previewStatus.classList.remove("error");
-  els.previewStatus.textContent = state.config.previewEnabled ? "" : "Preview binary unavailable.";
+  els.previewStatus.textContent = state.config.previewEnabled ? "" : previewUnavailableMessage();
   updatePreviewFrameSize();
   hidePreview("No preview image");
+}
+
+function previewUnavailableMessage() {
+  return currentPreviewEngine() === "factorio" ? "Exact preview binary unavailable." : "Preview renderer unavailable.";
 }
 
 function previewSizeIsAuto() {
@@ -2133,7 +2695,9 @@ function previewSizeIsAuto() {
 }
 
 function currentPreviewSize() {
-  if (previewSizeIsAuto()) return clampPreviewSize(autoPreviewSize());
+  if (currentPreviewEngine() === "fast" || previewSizeIsAuto()) {
+    return clampPreviewSize(autoPreviewSize());
+  }
   const size = Number(els.previewSize.value || defaultPreviewSize);
   if (!Number.isFinite(size)) return defaultPreviewSize;
   return clampPreviewSize(size);
@@ -2152,6 +2716,7 @@ function autoPreviewSize() {
   const availableHeight = pane.clientHeight - usedHeight;
   const fit = Math.min(availableWidth, availableHeight);
   if (!Number.isFinite(fit) || fit <= 0) return defaultPreviewSize;
+  if (currentPreviewEngine() === "fast") return Math.round(fit);
   return largestSafePreviewSize(fit);
 }
 
@@ -2177,7 +2742,8 @@ function numericCSSPixels(value) {
 }
 
 function clampPreviewSize(size) {
-  return Math.min(maxPreviewSizeForSession(), Math.max(minPreviewSize, Math.round(size)));
+  const maximum = currentPreviewEngine() === "fast" ? maxPreviewSizePx : maxPreviewSizeForSession();
+  return Math.min(maximum, Math.max(minPreviewSize, Math.round(size)));
 }
 
 function updatePreviewFrameSize(size = currentPreviewSize()) {
@@ -2188,6 +2754,20 @@ function updatePreviewFrameSize(size = currentPreviewSize()) {
   return true;
 }
 
+function positivePreviewNumber(value, fallback) {
+  const number = Number(value);
+  if (Number.isFinite(number) && number > 0) return number;
+  const fallbackNumber = Number(fallback);
+  return Number.isFinite(fallbackNumber) && fallbackNumber > 0 ? fallbackNumber : 1;
+}
+
+function finitePreviewNumber(value, fallback) {
+  const number = Number(value);
+  if (Number.isFinite(number)) return number;
+  const fallbackNumber = Number(fallback);
+  return Number.isFinite(fallbackNumber) ? fallbackNumber : 0;
+}
+
 function setPreviewUpdating(message) {
   els.previewStatus.classList.remove("error");
   els.previewStatus.textContent = message;
@@ -2195,28 +2775,196 @@ function setPreviewUpdating(message) {
   els.previewEmpty.textContent = message;
   els.previewEmpty.classList.add("updating");
   els.previewImage.classList.add("updating");
+  if (fastTileViewerActive()) els.previewTiles.classList.add("updating");
+  updatePreviewViewControls();
 }
 
 function clearPreviewUpdating() {
   els.previewEmpty.classList.remove("updating");
   els.previewImage.classList.remove("updating");
+  els.previewTiles.classList.remove("updating");
   els.previewStatus.classList.remove("error");
   els.previewStatus.textContent = "";
 }
 
-function showPreviewImage(url) {
+function previewReplacementPending(requestRevision) {
+  if (requestRevision === previewRequestRevision) return false;
+  return Boolean(
+    previewInFlight
+    || autoPreviewPending
+    || (previewWheelTimer !== null && canAutoRefreshPreview())
+  );
+}
+
+function settlePreviewUpdating(message = state.config.previewEnabled ? "No preview image" : previewUnavailableMessage()) {
+  const preview = displayedPreviewForCurrentProfile();
+  if (!preview) {
+    hidePreview(message);
+    return false;
+  }
+  if (preview.tiled) {
+    const summary = previewTileViewer?.stateSummary();
+    if (!summary || summary.loaded === 0) {
+      hidePreview(message);
+      return false;
+    }
+    clearPreviewUpdating();
+    els.previewEmpty.style.display = "none";
+    els.previewTiles.style.display = "block";
+    els.previewImage.style.display = "none";
+    updatePreviewViewControls();
+    return true;
+  }
+  if (els.previewImage.getAttribute("src") !== preview.url) {
+    showPreviewImage(
+      preview.url,
+      preview,
+      { revision: previewRequestRevision, syncView: false },
+    );
+    return false;
+  }
+  clearPreviewUpdating();
+  els.previewEmpty.style.display = "none";
+  els.previewImage.style.display = "block";
+  updatePreviewViewControls();
+  return true;
+}
+
+async function showFastTilePreview(profile, payload, requestRevision) {
+  if (!previewRequestIsCurrent(profile, requestRevision)) return false;
+  const size = positivePreviewNumber(payload.size, currentPreviewSize());
+  const scale = positivePreviewNumber(payload.zoom, 1);
+  const centerX = finitePreviewNumber(payload.centerX, 0);
+  const centerY = finitePreviewNumber(payload.centerY, 0);
+  const sourceKey = fastTileSourceKey(profile, payload);
+  const loadID = ++previewImageLoadID;
+  displayedPreview = {
+    profile,
+    size,
+    tilesPerPixel: scale,
+    centerX,
+    centerY,
+    tiled: true,
+    sourceKey,
+    loadID,
+  };
+  previewPointerView = null;
+  const view = previewViewForCurrentProfile();
+  view.centerX = centerX;
+  view.centerY = centerY;
+  els.previewZoom.value = String(scale);
+  els.previewImage.onload = null;
+  els.previewImage.onerror = null;
+  els.previewImage.removeAttribute("src");
+  els.previewImage.style.display = "none";
+  els.previewTiles.style.display = "block";
+  els.previewEmpty.style.display = "grid";
+  els.previewEmpty.textContent = "Loading map tiles...";
+  els.previewEmpty.classList.add("updating");
+  els.previewTiles.classList.add("updating");
+
+  previewTileViewer.configure({
+    sourceKey,
+    tileScale: previewTileSourceScale,
+    view: { size, scale, centerX, centerY },
+    requestTile: async (tile) => {
+      const tilePayload = {
+        ...payload,
+        size: previewTileSize,
+        zoom: String(tile.scale),
+        centerX: tile.centerX,
+        centerY: tile.centerY,
+      };
+      const body = await api(`/api/profiles/${encodeURIComponent(profile)}/preview`, {
+        method: "POST",
+        body: JSON.stringify(tilePayload),
+        signal: tile.signal,
+      });
+      if (body.engine && body.engine !== "fast") throw new Error("tile request did not use the Fast renderer");
+      if (!body.url) throw new Error("tile response did not include an image URL");
+      return body.url;
+    },
+  });
+  updatePreviewViewControls();
+  const summary = await previewTileViewer.refresh();
+  if (!previewRequestIsCurrent(profile, requestRevision) || displayedPreview?.loadID !== loadID) return false;
+  if (summary.loaded === 0) throw new Error("map tiles failed to load");
+  if (summary.failed === 0) settlePreviewUpdating();
+  else updateFastTileViewerState(summary);
+  return true;
+}
+
+function updateFastTileViewerState(summary) {
+  if (!fastTileViewerActive()) return;
+  if (summary.loaded > 0) {
+    els.previewEmpty.classList.remove("updating");
+    els.previewEmpty.style.display = "none";
+    els.previewTiles.classList.remove("updating");
+  }
+  els.previewStatus.classList.toggle("error", summary.failed > 0);
+  if (summary.failed > 0) {
+    els.previewStatus.textContent = `${summary.failed} of ${summary.total} visible map tiles failed to load.`;
+  } else if (summary.pending > 0) {
+    els.previewStatus.textContent = `Loading map tiles (${summary.loaded}/${summary.total})...`;
+  } else if (summary.complete) {
+    els.previewStatus.textContent = "";
+  }
+  updatePreviewViewControls();
+}
+
+function showPreviewImage(url, metadata = {}, options = {}) {
+  previewTileViewer?.deactivate();
+  els.previewTiles.classList.remove("updating");
+  const requestRevision = Number.isInteger(options.revision)
+    ? options.revision
+    : previewRequestRevision;
+  const fallbackView = previewViewForCurrentProfile();
+  const nextPreview = {
+    profile: metadata.profile || state.selected,
+    url,
+    size: positivePreviewNumber(metadata.size, currentPreviewSize()),
+    tilesPerPixel: positivePreviewNumber(metadata.tilesPerPixel, Number(currentPreviewScale())),
+    centerX: finitePreviewNumber(metadata.centerX, fallbackView.centerX),
+    centerY: finitePreviewNumber(metadata.centerY, fallbackView.centerY),
+  };
   const loadID = ++previewImageLoadID;
   els.previewImage.onload = () => {
     if (loadID !== previewImageLoadID) return;
-    clearPreviewUpdating();
-    els.previewEmpty.style.display = "none";
+    if (nextPreview.profile !== state.selected) {
+      hidePreview("No preview image");
+      return;
+    }
+    displayedPreview = { ...nextPreview, loadID };
+    previewPointerView = null;
     els.previewImage.style.display = "block";
+    if (options.syncView !== false && previewRequestIsCurrent(nextPreview.profile, requestRevision)) {
+      const view = previewViewForCurrentProfile();
+      view.centerX = nextPreview.centerX;
+      view.centerY = nextPreview.centerY;
+      els.previewZoom.value = String(nextPreview.tilesPerPixel);
+    }
+    if (previewReplacementPending(requestRevision)) {
+      updatePreviewViewControls();
+      return;
+    }
+    settlePreviewUpdating();
   };
   els.previewImage.onerror = () => {
     if (loadID !== previewImageLoadID) return;
-    hidePreview(state.config.previewEnabled ? "No preview image" : "Preview binary unavailable");
+    if (nextPreview.profile !== state.selected) {
+      hidePreview("No preview image");
+      return;
+    }
+    const fallback = displayedPreviewForCurrentProfile();
+    if (fallback && fallback.url !== url) {
+      settlePreviewUpdating();
+      return;
+    }
+    displayedPreview = null;
+    previewPointerView = null;
+    hidePreview(state.config.previewEnabled ? "No preview image" : previewUnavailableMessage());
   };
-  const hadImage = Boolean(els.previewImage.getAttribute("src"));
+  const hadImage = Boolean(displayedPreviewForCurrentProfile());
   if (!hadImage) els.previewImage.style.display = "none";
   els.previewStatus.classList.remove("error");
   els.previewStatus.textContent = "Loading preview...";
@@ -2225,9 +2973,16 @@ function showPreviewImage(url) {
   els.previewEmpty.classList.add("updating");
   els.previewImage.classList.toggle("updating", hadImage);
   els.previewImage.src = url;
+  updatePreviewViewControls();
 }
 
 function hidePreview(message) {
+  cancelPreviewPan();
+  hidePreviewCoordinates();
+  previewTileViewer?.deactivate();
+  els.previewTiles.classList.remove("updating");
+  displayedPreview = null;
+  previewPointerView = null;
   previewImageLoadID++;
   els.previewImage.removeAttribute("src");
   els.previewImage.classList.remove("updating");
@@ -2235,6 +2990,7 @@ function hidePreview(message) {
   els.previewEmpty.classList.remove("updating");
   els.previewEmpty.style.display = "grid";
   els.previewEmpty.textContent = message;
+  updatePreviewViewControls();
 }
 
 function renderAutoplace() {
@@ -3255,7 +4011,11 @@ function afterVisualEdit(options = {}) {
   state.dirty = !selectedProfileIsLocal();
   if (selectedProfileIsLocal()) saveSelectedLocalProfile();
   renderHeader();
-  if (options.preview !== false) scheduleAutoPreview();
+  if (options.preview !== false) {
+    scheduleAutoPreview();
+  } else {
+    invalidatePreviewResponse();
+  }
 }
 
 function numericValue(value) {
