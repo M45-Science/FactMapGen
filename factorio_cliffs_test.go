@@ -316,14 +316,14 @@ func TestFactorioCliffPixelSpanScalesInWorldTiles(t *testing.T) {
 		wantMin       int
 		wantMax       int
 	}{
-		{tilesPerPixel: 0.4, wantMin: 23, wantMax: 29},
-		{tilesPerPixel: 1, wantMin: 9, wantMax: 11},
+		{tilesPerPixel: 0.4, wantMin: 23, wantMax: 27},
+		{tilesPerPixel: 1, wantMin: 9, wantMax: 10},
 		{tilesPerPixel: 2, wantMin: 5, wantMax: 5},
 		{tilesPerPixel: 2.5, wantMin: 4, wantMax: 4},
 		{tilesPerPixel: 4, wantMin: 2, wantMax: 2},
 	}
 	for _, test := range tests {
-		minPixel, maxPixel := factorioCliffPixelSpan(9, 12, 0, test.tilesPerPixel)
+		minPixel, maxPixel := factorioCliffPixelSpan(9, 11, 0, test.tilesPerPixel)
 		if minPixel != test.wantMin || maxPixel != test.wantMax {
 			t.Errorf("span at %g tiles/pixel = [%d,%d], want [%d,%d]", test.tilesPerPixel, minPixel, maxPixel, test.wantMin, test.wantMax)
 		}

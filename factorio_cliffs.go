@@ -12,7 +12,7 @@ const (
 	factorioCliffCellCenterX      = 2
 	factorioCliffCellCenterY      = 2.5
 	factorioCliffCornerOffsetY    = 0.5
-	factorioCliffStrokeHalfWidth  = 1
+	factorioCliffStrokeInset      = 1
 	factorioCliffStrokeReach      = 2
 	factorioCliffLowFrequencySeed = 86883
 	factorioNauvisOffsetXSeed     = 593691028
@@ -268,7 +268,7 @@ func renderFactorioCliffs(
 		return nil
 	}
 	bounds := img.Bounds()
-	queryPadding := float64(factorioCliffStrokeReach + factorioCliffStrokeHalfWidth)
+	queryPadding := float64(factorioCliffStrokeReach + factorioCliffStrokeInset)
 	cells, err := evaluator.placedCells(
 		ctx,
 		originX-queryPadding,
@@ -315,20 +315,22 @@ func renderFactorioCliffs(
 func factorioCliffStrokeRects(cell factorioCliffCell, paint func(x0, y0, x1, y1 float64)) {
 	centerX := math.Floor(cell.x)
 	centerY := math.Floor(cell.y)
-	halfWidth := float64(factorioCliffStrokeHalfWidth)
+	inset := float64(factorioCliffStrokeInset)
 	reach := float64(factorioCliffStrokeReach)
-	paint(centerX-halfWidth, centerY-halfWidth, centerX+halfWidth+1, centerY+halfWidth+1)
+	lowX, highX := centerX-inset, centerX+inset
+	lowY, highY := centerY-inset, centerY+inset
+	paint(lowX, lowY, highX, highY)
 	if cell.left != 0 {
-		paint(centerX-reach, centerY-halfWidth, centerX+1, centerY+halfWidth+1)
+		paint(centerX-reach, lowY, highX, highY)
 	}
 	if cell.right != 0 {
-		paint(centerX-halfWidth, centerY-halfWidth, centerX+reach+1, centerY+halfWidth+1)
+		paint(lowX, lowY, centerX+reach+1, highY)
 	}
 	if cell.top != 0 {
-		paint(centerX-halfWidth, centerY-reach, centerX+halfWidth+1, centerY+1)
+		paint(lowX, centerY-reach, highX, highY)
 	}
 	if cell.bottom != 0 {
-		paint(centerX-halfWidth, centerY-halfWidth, centerX+halfWidth+1, centerY+reach+1)
+		paint(lowX, lowY, highX, centerY+reach+1)
 	}
 }
 
