@@ -338,7 +338,22 @@ type previewProcessUsage struct {
 
 func renderFactorioPreviewPNG(t *testing.T, factorioBin, mapGenPath string, size int, seed string) []byte {
 	t.Helper()
-	body, _ := renderFactorioPreviewPNGWithUsage(t, factorioBin, mapGenPath, size, seed)
+	body, _ := renderFactorioPlanetPreviewPNGWithUsage(
+		t, factorioBin, mapGenPath, size, seed, fastPreviewPlanetNauvis,
+	)
+	return body
+}
+
+func renderFactorioPlanetPreviewPNG(
+	t *testing.T,
+	factorioBin, mapGenPath string,
+	size int,
+	seed, planet string,
+) []byte {
+	t.Helper()
+	body, _ := renderFactorioPlanetPreviewPNGWithUsage(
+		t, factorioBin, mapGenPath, size, seed, planet,
+	)
 	return body
 }
 
@@ -346,12 +361,24 @@ func renderFactorioPreviewPNGWithUsage(
 	t *testing.T, factorioBin, mapGenPath string, size int, seed string,
 ) ([]byte, previewProcessUsage) {
 	t.Helper()
+	return renderFactorioPlanetPreviewPNGWithUsage(
+		t, factorioBin, mapGenPath, size, seed, fastPreviewPlanetNauvis,
+	)
+}
+
+func renderFactorioPlanetPreviewPNGWithUsage(
+	t *testing.T,
+	factorioBin, mapGenPath string,
+	size int,
+	seed, planet string,
+) ([]byte, previewProcessUsage) {
+	t.Helper()
 	outPath := filepath.Join(t.TempDir(), "factorio-preview.png")
 	args := []string{
 		"--generate-map-preview", outPath,
 		"--map-gen-settings", mapGenPath,
 		"--map-preview-size", fmt.Sprint(size),
-		"--map-preview-planet", "nauvis",
+		"--map-preview-planet", planet,
 		"--map-gen-seed", seed,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)

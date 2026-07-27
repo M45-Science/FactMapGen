@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"math"
@@ -230,6 +231,7 @@ func parseFastPreviewSettingsForPlanet(
 	if err != nil {
 		return fastPreviewSettings{}, err
 	}
+	mapSeed := fastPreviewSeed(root, seedOverride)
 	props := fastMap(root["property_expression_names"])
 	cliffSettings := fastMap(root["cliff_settings"])
 	cliffControl := fastPlanetCliffControl(normalizedPlanet)
@@ -246,7 +248,7 @@ func parseFastPreviewSettingsForPlanet(
 		return fastPreviewSettings{}, err
 	}
 	settings := fastPreviewSettings{
-		seed:                          fastPreviewSeed(root, seedOverride),
+		seed:                          fastPreviewSurfaceSeed(mapSeed, normalizedPlanet),
 		planet:                        normalizedPlanet,
 		mapType:                       normalizedPlanet,
 		width:                         fastNumber(root["width"], 0),
@@ -314,6 +316,13 @@ func fastPreviewSeed(root map[string]any, override string) uint32 {
 		return n
 	}
 	return 1
+}
+
+func fastPreviewSurfaceSeed(mapSeed uint32, planet string) uint32 {
+	if planet == fastPreviewPlanetNauvis {
+		return mapSeed
+	}
+	return mapSeed + crc32.ChecksumIEEE([]byte(planet))
 }
 
 func fastUnsignedSeed(value any) (uint32, bool) {

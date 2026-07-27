@@ -182,6 +182,130 @@ func TestRenderFactorioCliffsPaintsChartColorAndSkipsWater(t *testing.T) {
 	}
 }
 
+func TestRenderFactorioCliffsPaintsSquareFootprintCorners(t *testing.T) {
+	settings := defaultFactorioNaturalSettings(123456)
+	evaluator := newFactorioCliffEvaluator(settings, newFactorioNauvisEvaluator(settings))
+	cells, err := evaluator.placedCells(context.Background(), 512, 512, 1024, 1024)
+	if err != nil {
+		t.Fatalf("place cliffs: %v", err)
+	}
+	if len(cells) == 0 {
+		t.Fatal("expected at least one cliff cell")
+	}
+
+	centerX := math.Floor(cells[0].x)
+	centerY := math.Floor(cells[0].y)
+	originX := centerX - 4
+	originY := centerY - 4
+	img := solidFactorioCliffTestImage(9, 9, color.RGBA{R: 90, G: 90, B: 90, A: 255})
+	if err := renderFactorioCliffs(
+		context.Background(),
+		img,
+		settings,
+		evaluator,
+		originX,
+		originY,
+		1,
+	); err != nil {
+		t.Fatalf("render cliffs: %v", err)
+	}
+
+	centerPixelX := int(centerX - originX)
+	centerPixelY := int(centerY - originY)
+	for _, corner := range []image.Point{
+		{X: -factorioCliffMarkRadius, Y: -factorioCliffMarkRadius},
+		{X: factorioCliffMarkRadius, Y: -factorioCliffMarkRadius},
+		{X: -factorioCliffMarkRadius, Y: factorioCliffMarkRadius},
+		{X: factorioCliffMarkRadius, Y: factorioCliffMarkRadius},
+	} {
+		x := centerPixelX + corner.X
+		y := centerPixelY + corner.Y
+		if got := img.RGBAAt(x, y); got != factorioCliffMapColor {
+			t.Errorf("square footprint corner (%d,%d) = %#v, want %#v", x, y, got, factorioCliffMapColor)
+		}
+	}
+}
+
+func TestRenderFactorioCliffsStitchesExactlyAcrossSeam(t *testing.T) {
+	settings := defaultFactorioNaturalSettings(123456)
+	evaluator := newFactorioCliffEvaluator(settings, newFactorioNauvisEvaluator(settings))
+	cells, err := evaluator.placedCells(context.Background(), 512, 512, 1024, 1024)
+	if err != nil {
+		t.Fatalf("place cliffs: %v", err)
+	}
+	if len(cells) == 0 {
+		t.Fatal("expected at least one cliff cell")
+	}
+
+	centerX := math.Floor(cells[0].x)
+	centerY := math.Floor(cells[0].y)
+	originX := centerX - 16
+	originY := centerY - 16
+	const (
+		fullWidth  = 32
+		fullHeight = 32
+	)
+	seamX := centerX + 1
+	leftWidth := int(seamX - originX)
+	rightWidth := fullWidth - leftWidth
+	landColor := color.RGBA{R: 90, G: 90, B: 90, A: 255}
+
+	whole := solidFactorioCliffTestImage(fullWidth, fullHeight, landColor)
+	if err := renderFactorioCliffs(
+		context.Background(),
+		whole,
+		settings,
+		evaluator,
+		originX,
+		originY,
+		1,
+	); err != nil {
+		t.Fatalf("render whole cliffs: %v", err)
+	}
+	left := solidFactorioCliffTestImage(leftWidth, fullHeight, landColor)
+	if err := renderFactorioCliffs(
+		context.Background(),
+		left,
+		settings,
+		evaluator,
+		originX,
+		originY,
+		1,
+	); err != nil {
+		t.Fatalf("render left cliffs: %v", err)
+	}
+	right := solidFactorioCliffTestImage(rightWidth, fullHeight, landColor)
+	if err := renderFactorioCliffs(
+		context.Background(),
+		right,
+		settings,
+		evaluator,
+		seamX,
+		originY,
+		1,
+	); err != nil {
+		t.Fatalf("render right cliffs: %v", err)
+	}
+
+	centerPixelY := int(centerY - originY)
+	if got := right.RGBAAt(0, centerPixelY); got != factorioCliffMapColor {
+		t.Fatalf("cliff centered just left of seam did not paint across it: %#v", got)
+	}
+	for y := 0; y < fullHeight; y++ {
+		for x := 0; x < fullWidth; x++ {
+			var got color.RGBA
+			if x < leftWidth {
+				got = left.RGBAAt(x, y)
+			} else {
+				got = right.RGBAAt(x-leftWidth, y)
+			}
+			if want := whole.RGBAAt(x, y); got != want {
+				t.Fatalf("stitched cliff pixel (%d,%d) = %#v, want %#v", x, y, got, want)
+			}
+		}
+	}
+}
+
 func TestFactorioCliffsDisableWithContinuityOrRichness(t *testing.T) {
 	for _, mutate := range []func(*fastPreviewSettings){
 		func(settings *fastPreviewSettings) {
@@ -237,4 +361,14 @@ func TestFactorioCliffsAllowSolidContinuity(t *testing.T) {
 
 func positiveMod(value, divisor float64) float64 {
 	return math.Mod(math.Mod(value, divisor)+divisor, divisor)
+}
+
+func solidFactorioCliffTestImage(width, height int, fill color.RGBA) *image.RGBA {
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			img.SetRGBA(x, y, fill)
+		}
+	}
+	return img
 }

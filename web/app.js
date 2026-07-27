@@ -2338,13 +2338,25 @@ function renderPreviewEngineControls() {
   const fastOption = Array.from(els.previewEngine.options).find((option) => option.value === "fast");
   const exactAllowed = Boolean(state.session);
   const exactAvailable = exactAllowed && factorioPreviewAvailable();
-  if (fastOption) fastOption.disabled = !fastPreviewAvailable();
+  const fastAvailable = fastPreviewAvailable();
+  const planet = previewPlanetForCurrentProfile();
+  const spaceAgeUsesExact = planet !== "nauvis" && exactAvailable;
+  els.previewEngine.value = previewSource.preferredPreviewEngine(
+    els.previewEngine.value,
+    planet,
+    exactAvailable,
+    fastAvailable,
+  );
+  if (fastOption) {
+    fastOption.disabled = !fastAvailable || spaceAgeUsesExact;
+    fastOption.title = spaceAgeUsesExact
+      ? "Space Age planets use Factorio Exact rendering for authoritative terrain and resources."
+      : "Fast uses the built-in Go renderer.";
+  }
   if (exactOption) {
     exactOption.hidden = !exactAllowed;
     exactOption.disabled = !exactAvailable;
   }
-  if (currentPreviewEngine() === "factorio" && !exactAvailable) els.previewEngine.value = "fast";
-  if (currentPreviewEngine() === "fast" && !fastPreviewAvailable() && exactAvailable) els.previewEngine.value = "factorio";
   els.previewEngine.hidden = !exactAllowed;
   els.previewEngine.disabled = !state.selected || !state.config.previewEnabled;
 
@@ -2352,8 +2364,10 @@ function renderPreviewEngineControls() {
   els.previewSize.hidden = fast;
   for (const option of els.previewPlanet.options) option.disabled = false;
   els.previewPlanet.title = fast
-    ? "Fast preview surface. Uses the built-in seeded approximation for Nauvis and all Space Age planets."
-    : "Preview surface. Space Age planets require a Space Age-capable Factorio install.";
+    ? "Fast preview surface. Nauvis uses the built-in seeded renderer."
+    : spaceAgeUsesExact
+      ? "Space Age planets automatically use authoritative Factorio Exact rendering."
+      : "Preview surface. Space Age planets require a Space Age-capable Factorio install.";
 }
 
 function clearVisualControls() {
@@ -3725,6 +3739,8 @@ function setPreviewPlanet(planetKey) {
   els.previewPlanet.value = planetKey;
   if (state.selected) state.previewPlanets[state.selected] = planetKey;
   if (previous === planetKey) return false;
+  renderPreviewEngineControls();
+  renderPreviewScaleControl(Boolean(state.selected));
   invalidatePreviewForPlanetChange();
   return true;
 }

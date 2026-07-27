@@ -34,10 +34,20 @@
     });
   }
 
+  function preferredPreviewEngine(requested, planet, exactAvailable, fastAvailable = true) {
+    const normalizedPlanet = knownPlanetName(planet);
+    if (normalizedPlanet !== "nauvis" && exactAvailable) return "factorio";
+    if (requested === "factorio" && exactAvailable) return "factorio";
+    if (fastAvailable) return "fast";
+    if (exactAvailable) return "factorio";
+    return requested === "factorio" ? "factorio" : "fast";
+  }
+
   return {
     fastTileSourceKey,
     inferPreviewPlanet,
     knownPlanetName,
     knownPlanets,
+    preferredPreviewEngine,
   };
 });

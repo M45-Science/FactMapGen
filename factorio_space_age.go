@@ -11,6 +11,7 @@ type factorioSpaceAgeEvaluator struct {
 	settings fastPreviewSettings
 	terrain  [8]func(float64, float64) float64
 	resource map[string]func(float64, float64) float64
+	vulcanus *factorioVulcanusEvaluator
 }
 
 type factorioSpaceAgeSample struct {
@@ -21,17 +22,6 @@ type factorioSpaceAgeSample struct {
 	land      bool
 	strength  float64
 	code      float64
-}
-
-var fastVulcanusTerrainColors = [...]color.RGBA{
-	{R: 43, G: 43, B: 43, A: 255},
-	{R: 48, G: 51, B: 43, A: 255},
-	{R: 53, G: 53, B: 53, A: 255},
-	{R: 58, G: 48, B: 43, A: 255},
-	{R: 129, G: 105, B: 78, A: 255},
-	{R: 144, G: 119, B: 87, A: 255},
-	{R: 50, G: 50, B: 58, A: 255},
-	{R: 67, G: 67, B: 67, A: 255},
 }
 
 var fastGlebaTerrainColors = [...]color.RGBA{
@@ -66,6 +56,9 @@ func newFactorioSpaceAgeEvaluator(settings fastPreviewSettings) *factorioSpaceAg
 	evaluator := &factorioSpaceAgeEvaluator{
 		settings: settings,
 		resource: make(map[string]func(float64, float64) float64),
+	}
+	if settings.planet == fastPreviewPlanetVulcanus {
+		evaluator.vulcanus = newFactorioVulcanusEvaluator(settings)
 	}
 	scales := [8]float64{220, 180, 145, 58, 34, 52, 40, 24}
 	switch settings.planet {
@@ -189,69 +182,23 @@ func (e *factorioSpaceAgeEvaluator) colorAt(x, y, tilesPerPixel float64) color.R
 }
 
 func (e *factorioSpaceAgeEvaluator) vulcanusTerrain(x, y float64) (color.RGBA, factorioSpaceAgeSample) {
-	mountains := e.terrain[0](x, y)
-	ashlands := e.terrain[1](x, y)
-	basalts := e.terrain[2](x, y)
-	start := e.startingPoint()
-	startAngle := fastSpaceAgeSeedAngle(e.settings.seed)
-	startScale := 0.7 * positiveOr(e.settings.startingArea, 1)
-	mountains += 2.2 * fastSpaceAgeAngledSpot(x, y, start, startAngle+2*math.Pi/3, 230*startScale, 420*startScale)
-	ashlands += 2.6 * fastSpaceAgeAngledSpot(x, y, start, startAngle, 150*startScale, 330*startScale)
-	basalts += 2.2 * fastSpaceAgeAngledSpot(x, y, start, startAngle+4*math.Pi/3, 230*startScale, 430*startScale)
+	exact := e.vulcanus.sample(x, y)
 	zone := 0
-	if ashlands > mountains && ashlands > basalts {
+	if exact.ashlandsBiome > exact.mountainsBiome && exact.ashlandsBiome > exact.basaltsBiome {
 		zone = 1
-	} else if mountains > basalts {
+	} else if exact.mountainsBiome > exact.basaltsBiome {
 		zone = 2
 	}
-
-	detail := e.terrain[3](x, y)
-	plasma := math.Abs(e.terrain[4](x, y) - e.terrain[5](x, y))
-	volcanism := fastSpaceAgeControl(e.settings, "vulcanus_volcanism")
-	volcano, code := fastSpaceAgeSpotField(
-		e.settings.seed, 0x564f4c43, x, y,
-		780/positiveOr(volcanism.frequency, 1),
-		0.55, 100*positiveOr(volcanism.size, 1), 210*positiveOr(volcanism.size, 1),
-	)
-	startVolcano := fastSpaceAgeAngledSpot(x, y, start, startAngle+2*math.Pi/3, 420*startScale, 190*positiveOr(volcanism.size, 1))
-	volcano = max(volcano, startVolcano)
-	distanceFromStart := math.Hypot(x-start.x, y-start.y)
-	lava := zone == 0 && plasma < 0.18+0.05*clampFloat(volcanism.size-1, -0.8, 2)
-	lava = lava || zone == 2 && volcano > 0.62 && volcano < 0.93
-	if distanceFromStart < 76*startScale {
-		lava = false
-	}
-
+	land := exact.tile.name != "lava" && exact.tile.name != "lava-hot"
 	sample := factorioSpaceAgeSample{
-		elevation: 80 + 90*detail,
-		moisture:  clampFloat(0.7-0.6*math.Abs(e.terrain[6](x, y)), 0, 1),
-		aux:       clampFloat(0.5+0.5*e.terrain[7](x, y), 0, 1),
+		elevation: exact.elevation,
+		moisture:  exact.moisture,
+		aux:       exact.aux,
 		zone:      zone,
-		land:      !lava,
-		strength:  volcano,
-		code:      code,
+		land:      land,
+		strength:  exact.mountainVolcanoSpots,
 	}
-	if zone == 2 {
-		sample.elevation = 160 + 380*math.Abs(detail) + 260*volcano
-	} else if zone == 1 {
-		sample.elevation = 55 + 35*detail
-	}
-	if lava {
-		if plasma < 0.09 || volcano > 0.72 {
-			return color.RGBA{R: 255, G: 138, B: 57, A: 255}, sample
-		}
-		return color.RGBA{R: 150, G: 49, B: 30, A: 255}, sample
-	}
-
-	variant := fastSpaceAgeVariant(detail, 3)
-	switch zone {
-	case 1:
-		return fastVulcanusTerrainColors[3+variant], sample
-	case 2:
-		return fastVulcanusTerrainColors[6+min(variant, 1)], sample
-	default:
-		return fastVulcanusTerrainColors[min(variant, 2)], sample
-	}
+	return exact.tile.color, sample
 }
 
 func (e *factorioSpaceAgeEvaluator) vulcanusFeatures(

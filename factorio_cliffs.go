@@ -268,8 +268,6 @@ func renderFactorioCliffs(
 		return err
 	}
 	for _, cell := range cells {
-		centerWorldX := math.Floor(cell.x)
-		centerWorldY := math.Floor(cell.y)
 		minPixelX, maxPixelX := factorioCliffPixelSpan(cell.x, originX, tilesPerPixel)
 		minPixelY, maxPixelY := factorioCliffPixelSpan(cell.y, originY, tilesPerPixel)
 		for pixelY := minPixelY; pixelY <= maxPixelY; pixelY++ {
@@ -282,9 +280,6 @@ func renderFactorioCliffs(
 					continue
 				}
 				worldX := math.Floor(originX + float64(pixelX)*tilesPerPixel)
-				if math.Abs(worldX-centerWorldX)+math.Abs(worldY-centerWorldY) > factorioCliffMarkRadius {
-					continue
-				}
 				if fastOutOfMapBounds(settings, worldX, worldY) {
 					continue
 				}

@@ -120,7 +120,7 @@ func TestFastPreviewPixelGolden(t *testing.T) {
 		want          string
 	}{
 		{name: "one-tile-per-pixel", tilesPerPixel: 1, want: "c38cafeedbebe60daa2cdbb898568dfc72122390931e278d86cae277a1d5da89"},
-		{name: "two-tiles-per-pixel", tilesPerPixel: 2, want: "2d6b5604576b0e8e7267258ec21c62c734e7a97fa53684a1da55b83f958522d3"},
+		{name: "two-tiles-per-pixel", tilesPerPixel: 2, want: "c302ca28cf14f7460c8a7d5f4cfce2c349c683ba339758ff8a4a74c57820993a"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			img, _, err := renderFastMapPreview(
