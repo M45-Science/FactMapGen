@@ -836,7 +836,7 @@ cp %q "$output"
 	}
 }
 
-func TestEncodePNGPreviewImageUsesBestSpeed(t *testing.T) {
+func TestEncodePNGPreviewImageUsesOpaqueTruecolor(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
 	for y := 0; y < 32; y++ {
 		for x := 0; x < 32; x++ {
@@ -847,16 +847,19 @@ func TestEncodePNGPreviewImageUsesBestSpeed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encodePNGPreviewImage: %v", err)
 	}
-	var want bytes.Buffer
-	encoder := png.Encoder{CompressionLevel: png.BestSpeed}
-	if err := encoder.Encode(&want, img); err != nil {
-		t.Fatalf("encode expected BestSpeed PNG: %v", err)
-	}
 	if contentType != "image/png" || ext != ".png" {
 		t.Fatalf("PNG metadata = (%q, %q)", contentType, ext)
 	}
-	if !bytes.Equal(got, want.Bytes()) {
-		t.Fatal("PNG preview did not use the BestSpeed encoder")
+	decoded, err := png.Decode(bytes.NewReader(got))
+	if err != nil {
+		t.Fatalf("decode encoded preview: %v", err)
+	}
+	for y := 0; y < 32; y++ {
+		for x := 0; x < 32; x++ {
+			if decoded.At(x, y) != img.At(x, y) {
+				t.Fatalf("pixel (%d,%d) changed", x, y)
+			}
+		}
 	}
 }
 

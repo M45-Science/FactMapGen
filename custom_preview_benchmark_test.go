@@ -130,6 +130,9 @@ func TestFastPreviewPixelGolden(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if !img.Opaque() {
+				t.Fatal("fast preview contains non-opaque pixels")
+			}
 			sum := sha256.Sum256(img.Pix)
 			got := hex.EncodeToString(sum[:])
 			if got != test.want {

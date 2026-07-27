@@ -158,6 +158,28 @@ func makeFactorioMultioctaveNoise(params factorioMultioctaveParams) func(float64
 		scale *= 0.5
 		amplitude /= params.persistence
 	}
+	if params.octaves == 3 {
+		scale0, scale1, scale2 := scales[0], scales[1], scales[2]
+		amplitude0, amplitude1, amplitude2 := amplitudes[0], amplitudes[1], amplitudes[2]
+		return func(x, y float64) float64 {
+			sum := amplitude0 * factorioBasisNoise(x*scale0, y*scale0, &tables)
+			sum += amplitude1 * factorioBasisNoise(x*scale1-1774.83, y*scale1, &tables)
+			sum += amplitude2 * factorioBasisNoise(x*scale2-3549.66, y*scale2, &tables)
+			return params.outputScale * sum
+		}
+	}
+	if params.octaves == 4 {
+		scale0, scale1, scale2, scale3 := scales[0], scales[1], scales[2], scales[3]
+		amplitude0, amplitude1 := amplitudes[0], amplitudes[1]
+		amplitude2, amplitude3 := amplitudes[2], amplitudes[3]
+		return func(x, y float64) float64 {
+			sum := amplitude0 * factorioBasisNoise(x*scale0, y*scale0, &tables)
+			sum += amplitude1 * factorioBasisNoise(x*scale1-1774.83, y*scale1, &tables)
+			sum += amplitude2 * factorioBasisNoise(x*scale2-3549.66, y*scale2, &tables)
+			sum += amplitude3 * factorioBasisNoise(x*scale3-5324.49, y*scale3, &tables)
+			return params.outputScale * sum
+		}
+	}
 	return func(x, y float64) float64 {
 		sum := 0.0
 		for octave := range scales {
@@ -205,6 +227,20 @@ func makeFactorioQuickMultioctaveNoise(params factorioQuickMultioctaveParams) fu
 		amplitudes[octave] = amplitude
 		scale *= params.octaveInputScaleMultiplier
 		amplitude *= params.octaveOutputScaleMultiplier
+	}
+	if params.octaves == 4 {
+		table0, table1, table2, table3 := &tables[0], &tables[1], &tables[2], &tables[3]
+		scale0, scale1, scale2, scale3 := scales[0], scales[1], scales[2], scales[3]
+		amplitude0, amplitude1 := amplitudes[0], amplitudes[1]
+		amplitude2, amplitude3 := amplitudes[2], amplitudes[3]
+		return func(x, y float64) float64 {
+			x += params.offsetX
+			sum := amplitude0 * factorioBasisNoise(x*scale0, y*scale0, table0)
+			sum += amplitude1 * factorioBasisNoise(x*scale1, y*scale1, table1)
+			sum += amplitude2 * factorioBasisNoise(x*scale2, y*scale2, table2)
+			sum += amplitude3 * factorioBasisNoise(x*scale3, y*scale3, table3)
+			return sum
+		}
 	}
 	return func(x, y float64) float64 {
 		sum := 0.0

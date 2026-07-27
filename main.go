@@ -10,7 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"image"
-	"image/png"
+	_ "image/png"
 	"io"
 	"io/fs"
 	"log"
@@ -1709,12 +1709,15 @@ func previewImageBytes(srcPath string, zoom previewZoom, outputSize int) ([]byte
 }
 
 func encodePNGPreviewImage(img image.Image) ([]byte, string, string, error) {
-	var buf bytes.Buffer
-	encoder := png.Encoder{CompressionLevel: png.BestSpeed}
-	if err := encoder.Encode(&buf, img); err != nil {
+	rgba, ok := img.(*image.RGBA)
+	if !ok {
+		return nil, "", "", fmt.Errorf("preview PNG encoder requires *image.RGBA, got %T", img)
+	}
+	data, err := encodeOpaquePreviewPNG(rgba)
+	if err != nil {
 		return nil, "", "", err
 	}
-	return buf.Bytes(), "image/png", ".png", nil
+	return data, "image/png", ".png", nil
 }
 
 func transformedPreviewImage(srcPath string, zoom previewZoom, outputSize int) (image.Image, error) {

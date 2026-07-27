@@ -115,6 +115,66 @@ func BenchmarkFactorioBasisNoise(b *testing.B) {
 	}
 }
 
+func TestSpecializedMultioctaveNoiseMatchesLoopExactly(t *testing.T) {
+	coordinates := [][2]float64{{0, 0}, {-0.5, 0.5}, {123.25, -987.75}, {-13763.35546875, -6886.4921875}}
+	for _, octaves := range []int{3, 4} {
+		params := factorioMultioctaveParams{
+			seed0: 123456, seed1: 900, octaves: octaves, persistence: 0.7,
+			inputScale: 1.0 / 6, outputScale: 2.0 / 3,
+		}
+		gotNoise := makeFactorioMultioctaveNoise(params)
+		tables := factorioBasisTablesFromSeed(params.seed0, params.seed1)
+		normalization := factorioMultioctaveNormalization(params.persistence, params.octaves)
+		for _, coordinate := range coordinates {
+			scale := params.inputScale
+			amplitude := normalization
+			want := 0.0
+			for octave := 0; octave < params.octaves; octave++ {
+				want += amplitude * factorioBasisNoise(
+					coordinate[0]*scale+float64(octave)*-1774.83,
+					coordinate[1]*scale,
+					&tables,
+				)
+				scale *= 0.5
+				amplitude /= params.persistence
+			}
+			want *= params.outputScale
+			got := gotNoise(coordinate[0], coordinate[1])
+			if math.Float64bits(got) != math.Float64bits(want) {
+				t.Fatalf("%d octaves at %v bits = %016x, want %016x", octaves, coordinate, math.Float64bits(got), math.Float64bits(want))
+			}
+		}
+	}
+}
+
+func TestSpecializedQuickMultioctaveNoiseMatchesLoopExactly(t *testing.T) {
+	params := factorioQuickMultioctaveParams{
+		seed0: 123456, seed1: 7, octaves: 4,
+		inputScale: 1.0 / 2048, outputScale: 0.25, offsetX: 20000,
+		octaveOutputScaleMultiplier: 0.5, octaveInputScaleMultiplier: 3,
+	}
+	gotNoise := makeFactorioQuickMultioctaveNoise(params)
+	for _, coordinate := range [][2]float64{{0, 0}, {-0.5, 0.5}, {123.25, -987.75}} {
+		scale := params.inputScale
+		amplitude := params.outputScale
+		want := 0.0
+		for octave := 0; octave < params.octaves; octave++ {
+			tables := factorioBasisTablesFromSeed(params.seed0+uint32(octave), params.seed1)
+			want += amplitude * factorioBasisNoise(
+				(coordinate[0]+params.offsetX)*scale,
+				coordinate[1]*scale,
+				&tables,
+			)
+			scale *= params.octaveInputScaleMultiplier
+			amplitude *= params.octaveOutputScaleMultiplier
+		}
+		got := gotNoise(coordinate[0], coordinate[1])
+		if math.Float64bits(got) != math.Float64bits(want) {
+			t.Fatalf("at %v bits = %016x, want %016x", coordinate, math.Float64bits(got), math.Float64bits(want))
+		}
+	}
+}
+
 func TestFactorioBasisNoiseMatchesOracle(t *testing.T) {
 	tests := []struct {
 		seed0 uint32
