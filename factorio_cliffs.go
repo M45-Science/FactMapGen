@@ -12,7 +12,8 @@ const (
 	factorioCliffCellCenterX      = 2
 	factorioCliffCellCenterY      = 2.5
 	factorioCliffCornerOffsetY    = 0.5
-	factorioCliffMarkRadius       = 2
+	factorioCliffStrokeHalfWidth  = 1
+	factorioCliffStrokeReach      = 2
 	factorioCliffLowFrequencySeed = 86883
 	factorioNauvisOffsetXSeed     = 593691028
 	factorioNauvisOffsetYSeed     = 1415852290
@@ -23,6 +24,14 @@ var factorioCliffMapColor = color.RGBA{R: 144, G: 119, B: 87, A: 255}
 type factorioCliffCorner struct {
 	elevation  float64
 	cliffiness float64
+}
+
+type factorioCliffCell struct {
+	factorioPoint
+	left   int
+	right  int
+	top    int
+	bottom int
 }
 
 type factorioCliffEvaluator struct {
@@ -175,7 +184,7 @@ func factorioCliffCodePlaces(code int) bool {
 func (e *factorioCliffEvaluator) placedCells(
 	ctx context.Context,
 	x0, y0, x1, y1 float64,
-) ([]factorioPoint, error) {
+) ([]factorioCliffCell, error) {
 	if !e.enabled {
 		return nil, nil
 	}
@@ -210,7 +219,7 @@ func (e *factorioCliffEvaluator) placedCells(
 		)
 	}
 
-	cells := make([]factorioPoint, 0)
+	cells := make([]factorioCliffCell, 0)
 	for cy := cyMin; cy <= cyMax; cy++ {
 		if cy&31 == 0 {
 			select {
@@ -238,7 +247,10 @@ func (e *factorioCliffEvaluator) placedCells(
 			worldX := float64(cx)*factorioCliffGridSize + factorioCliffCellCenterX
 			worldY := float64(cy)*factorioCliffGridSize + factorioCliffCellCenterY
 			if worldX >= x0 && worldX < x1 && worldY >= y0 && worldY < y1 {
-				cells = append(cells, factorioPoint{x: worldX, y: worldY})
+				cells = append(cells, factorioCliffCell{
+					factorioPoint: factorioPoint{x: worldX, y: worldY},
+					left:          left, right: right, top: top, bottom: bottom,
+				})
 			}
 		}
 	}
@@ -256,7 +268,7 @@ func renderFactorioCliffs(
 		return nil
 	}
 	bounds := img.Bounds()
-	queryPadding := float64(factorioCliffMarkRadius + 1)
+	queryPadding := float64(factorioCliffStrokeReach + factorioCliffStrokeHalfWidth)
 	cells, err := evaluator.placedCells(
 		ctx,
 		originX-queryPadding,
@@ -267,9 +279,9 @@ func renderFactorioCliffs(
 	if err != nil {
 		return err
 	}
-	for _, cell := range cells {
-		minPixelX, maxPixelX := factorioCliffPixelSpan(cell.x, originX, tilesPerPixel)
-		minPixelY, maxPixelY := factorioCliffPixelSpan(cell.y, originY, tilesPerPixel)
+	paintRect := func(x0, y0, x1, y1 float64) {
+		minPixelX, maxPixelX := factorioCliffPixelSpan(x0, x1, originX, tilesPerPixel)
+		minPixelY, maxPixelY := factorioCliffPixelSpan(y0, y1, originY, tilesPerPixel)
 		for pixelY := minPixelY; pixelY <= maxPixelY; pixelY++ {
 			if pixelY < 0 || pixelY >= bounds.Dy() {
 				continue
@@ -294,13 +306,38 @@ func renderFactorioCliffs(
 			}
 		}
 	}
+	for _, cell := range cells {
+		factorioCliffStrokeRects(cell, paintRect)
+	}
 	return nil
 }
 
-func factorioCliffPixelSpan(worldCenter, origin, tilesPerPixel float64) (int, int) {
-	center := math.Floor(worldCenter)
-	lower := center - factorioCliffMarkRadius
-	upperExclusive := center + factorioCliffMarkRadius + 1
-	return int(math.Ceil((lower - origin) / tilesPerPixel)),
-		int(math.Ceil((upperExclusive-origin)/tilesPerPixel)) - 1
+func factorioCliffStrokeRects(cell factorioCliffCell, paint func(x0, y0, x1, y1 float64)) {
+	centerX := math.Floor(cell.x)
+	centerY := math.Floor(cell.y)
+	halfWidth := float64(factorioCliffStrokeHalfWidth)
+	reach := float64(factorioCliffStrokeReach)
+	paint(centerX-halfWidth, centerY-halfWidth, centerX+halfWidth+1, centerY+halfWidth+1)
+	if cell.left != 0 {
+		paint(centerX-reach, centerY-halfWidth, centerX+1, centerY+halfWidth+1)
+	}
+	if cell.right != 0 {
+		paint(centerX-halfWidth, centerY-halfWidth, centerX+reach+1, centerY+halfWidth+1)
+	}
+	if cell.top != 0 {
+		paint(centerX-halfWidth, centerY-reach, centerX+halfWidth+1, centerY+1)
+	}
+	if cell.bottom != 0 {
+		paint(centerX-halfWidth, centerY-halfWidth, centerX+halfWidth+1, centerY+reach+1)
+	}
+}
+
+func factorioCliffPixelSpan(lower, upperExclusive, origin, tilesPerPixel float64) (int, int) {
+	minPixel := int(math.Ceil((lower - origin) / tilesPerPixel))
+	maxPixel := int(math.Ceil((upperExclusive-origin)/tilesPerPixel)) - 1
+	if minPixel > maxPixel {
+		centerPixel := int(math.Floor(((lower+upperExclusive)/2 - origin) / tilesPerPixel))
+		return centerPixel, centerPixel
+	}
+	return minPixel, maxPixel
 }

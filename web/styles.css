@@ -336,7 +336,9 @@ input[type="range"] {
 
 .preview-reset-button {
   min-height: 30px;
-  padding: 0 9px;
+  padding: 0 6px;
+  font-size: 12px;
+  line-height: 1;
   white-space: nowrap;
 }
 

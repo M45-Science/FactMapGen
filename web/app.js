@@ -1748,6 +1748,7 @@ async function generatePreview(options = {}) {
     if (!automatic) showToast("Preview generated.");
   } catch (error) {
     if (!previewRequestIsCurrent(previewProfile, requestRevision)) return true;
+    clearPreviewPanTransform();
     settlePreviewUpdating();
     els.previewStatus.classList.add("error");
     els.previewStatus.textContent = clippedClientMessage(error.message, 1200);
@@ -2137,8 +2138,10 @@ function finishPreviewPan(event) {
   const gesture = previewPanGesture;
   if (!gesture || gesture.pointerID !== event.pointerId) return;
   const moved = Math.hypot(gesture.dx, gesture.dy) >= 2;
+  const retainExactTranslation = moved && !fastTileViewerActive() && canAutoRefreshPreview();
   previewPanGesture = null;
-  clearPreviewPanTransform();
+  els.previewFrame.classList.remove("preview-panning");
+  if (!retainExactTranslation) els.previewImage.style.removeProperty("transform");
   if (els.previewFrame.hasPointerCapture(event.pointerId)) {
     els.previewFrame.releasePointerCapture(event.pointerId);
   }
@@ -2977,6 +2980,7 @@ function showPreviewImage(url, metadata = {}, options = {}) {
       hidePreview("No preview image");
       return;
     }
+    clearPreviewPanTransform();
     displayedPreview = { ...nextPreview, loadID };
     previewPointerView = null;
     els.previewImage.style.display = "block";
@@ -2994,6 +2998,7 @@ function showPreviewImage(url, metadata = {}, options = {}) {
   };
   els.previewImage.onerror = () => {
     if (loadID !== previewImageLoadID) return;
+    clearPreviewPanTransform();
     if (nextPreview.profile !== state.selected) {
       hidePreview("No preview image");
       return;

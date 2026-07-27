@@ -84,7 +84,8 @@ func TestFactorioCliffPlacementMatchesEntityOracle(t *testing.T) {
 			t.Fatalf("place cliffs for seed %d: %v", testCase.Seed, err)
 		}
 		predicted := make(map[factorioPoint]bool, len(placed))
-		for _, point := range placed {
+		for _, cell := range placed {
+			point := cell.factorioPoint
 			predicted[point] = true
 			if positiveMod(point.x, factorioCliffGridSize) != factorioCliffCellCenterX ||
 				positiveMod(point.y, factorioCliffGridSize) != factorioCliffCellCenterY {
@@ -182,46 +183,28 @@ func TestRenderFactorioCliffsPaintsChartColorAndSkipsWater(t *testing.T) {
 	}
 }
 
-func TestRenderFactorioCliffsPaintsSquareFootprintCorners(t *testing.T) {
-	settings := defaultFactorioNaturalSettings(123456)
-	evaluator := newFactorioCliffEvaluator(settings, newFactorioNauvisEvaluator(settings))
-	cells, err := evaluator.placedCells(context.Background(), 512, 512, 1024, 1024)
-	if err != nil {
-		t.Fatalf("place cliffs: %v", err)
+func TestFactorioCliffStrokeFollowsCrossingOrientation(t *testing.T) {
+	cell := factorioCliffCell{
+		factorioPoint: factorioPoint{x: 10, y: 10.5},
+		left:          1,
+		right:         -1,
 	}
-	if len(cells) == 0 {
-		t.Fatal("expected at least one cliff cell")
+	painted := map[image.Point]bool{}
+	factorioCliffStrokeRects(cell, func(x0, y0, x1, y1 float64) {
+		for y := int(y0); y < int(y1); y++ {
+			for x := int(x0); x < int(x1); x++ {
+				painted[image.Pt(x, y)] = true
+			}
+		}
+	})
+	for _, point := range []image.Point{image.Pt(8, 10), image.Pt(10, 10), image.Pt(12, 10)} {
+		if !painted[point] {
+			t.Errorf("horizontal cliff stroke did not paint %v", point)
+		}
 	}
-
-	centerX := math.Floor(cells[0].x)
-	centerY := math.Floor(cells[0].y)
-	originX := centerX - 4
-	originY := centerY - 4
-	img := solidFactorioCliffTestImage(9, 9, color.RGBA{R: 90, G: 90, B: 90, A: 255})
-	if err := renderFactorioCliffs(
-		context.Background(),
-		img,
-		settings,
-		evaluator,
-		originX,
-		originY,
-		1,
-	); err != nil {
-		t.Fatalf("render cliffs: %v", err)
-	}
-
-	centerPixelX := int(centerX - originX)
-	centerPixelY := int(centerY - originY)
-	for _, corner := range []image.Point{
-		{X: -factorioCliffMarkRadius, Y: -factorioCliffMarkRadius},
-		{X: factorioCliffMarkRadius, Y: -factorioCliffMarkRadius},
-		{X: -factorioCliffMarkRadius, Y: factorioCliffMarkRadius},
-		{X: factorioCliffMarkRadius, Y: factorioCliffMarkRadius},
-	} {
-		x := centerPixelX + corner.X
-		y := centerPixelY + corner.Y
-		if got := img.RGBAAt(x, y); got != factorioCliffMapColor {
-			t.Errorf("square footprint corner (%d,%d) = %#v, want %#v", x, y, got, factorioCliffMapColor)
+	for _, point := range []image.Point{image.Pt(8, 8), image.Pt(12, 8), image.Pt(8, 12), image.Pt(12, 12)} {
+		if painted[point] {
+			t.Errorf("horizontal cliff stroke painted chunky outer corner %v", point)
 		}
 	}
 }
@@ -333,14 +316,14 @@ func TestFactorioCliffPixelSpanScalesInWorldTiles(t *testing.T) {
 		wantMin       int
 		wantMax       int
 	}{
-		{tilesPerPixel: 0.4, wantMin: 20, wantMax: 32},
-		{tilesPerPixel: 1, wantMin: 8, wantMax: 12},
-		{tilesPerPixel: 2, wantMin: 4, wantMax: 6},
-		{tilesPerPixel: 2.5, wantMin: 4, wantMax: 5},
-		{tilesPerPixel: 4, wantMin: 2, wantMax: 3},
+		{tilesPerPixel: 0.4, wantMin: 23, wantMax: 29},
+		{tilesPerPixel: 1, wantMin: 9, wantMax: 11},
+		{tilesPerPixel: 2, wantMin: 5, wantMax: 5},
+		{tilesPerPixel: 2.5, wantMin: 4, wantMax: 4},
+		{tilesPerPixel: 4, wantMin: 2, wantMax: 2},
 	}
 	for _, test := range tests {
-		minPixel, maxPixel := factorioCliffPixelSpan(10.5, 0, test.tilesPerPixel)
+		minPixel, maxPixel := factorioCliffPixelSpan(9, 12, 0, test.tilesPerPixel)
 		if minPixel != test.wantMin || maxPixel != test.wantMax {
 			t.Errorf("span at %g tiles/pixel = [%d,%d], want [%d,%d]", test.tilesPerPixel, minPixel, maxPixel, test.wantMin, test.wantMax)
 		}
