@@ -4,6 +4,8 @@ FactMapGen is a small Go web tool for creating and editing Factorio `map-gen-set
 
 ![FactMapGen fast Nauvis preview with terrain, resources, trees, and cliffs at an arbitrary 2.75 meters per pixel](docs/preview.png)
 
+Demo videos: [Video 1](https://youtube.com/shorts/kI67a37VIvE?feature=share) · [Video 2](https://youtube.com/shorts/7DkeSczQjD4)
+
 ## Run
 
 ```sh
