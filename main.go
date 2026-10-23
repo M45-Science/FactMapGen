@@ -959,7 +959,7 @@ func (s *store) readProfile(identifier string) (profileDocument, error) {
 	if err != nil {
 		return profileDocument{}, fmt.Errorf("%s: %w", mapGenFile, err)
 	}
-	mapSettings, err := readNormalizedJSON(filepath.Join(dir, mapSettingsFile))
+	mapSettings, err := readNormalizedMapSettingsJSON(filepath.Join(dir, mapSettingsFile))
 	if err != nil {
 		return profileDocument{}, fmt.Errorf("%s: %w", mapSettingsFile, err)
 	}
@@ -993,7 +993,7 @@ func (s *store) saveProfile(identifier string, mapGen, mapSettings json.RawMessa
 	if err != nil {
 		return profileDocument{}, fmt.Errorf("%s is invalid JSON: %w", mapGenFile, err)
 	}
-	normalizedMapSettings, err := normalizeJSON(mapSettings)
+	normalizedMapSettings, err := normalizeMapSettingsJSON(mapSettings)
 	if err != nil {
 		return profileDocument{}, fmt.Errorf("%s is invalid JSON: %w", mapSettingsFile, err)
 	}
@@ -1031,7 +1031,7 @@ func writeProfileZip(w http.ResponseWriter, profileName string, mapGen, mapSetti
 	if err != nil {
 		return fmt.Errorf("%s is invalid JSON: %w", mapGenFile, err)
 	}
-	normalizedMapSettings, err := normalizeJSON(mapSettings)
+	normalizedMapSettings, err := normalizeMapSettingsJSON(mapSettings)
 	if err != nil {
 		return fmt.Errorf("%s is invalid JSON: %w", mapSettingsFile, err)
 	}
@@ -1109,7 +1109,7 @@ func exchangeStringFromRequest(req exchangeStringRequest) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%s is invalid JSON: %w", mapGenFile, err)
 	}
-	mapSettings, err := normalizeJSON(req.MapSettings)
+	mapSettings, err := normalizeMapSettingsJSON(req.MapSettings)
 	if err != nil {
 		return "", fmt.Errorf("%s is invalid JSON: %w", mapSettingsFile, err)
 	}
@@ -1134,7 +1134,7 @@ func decodeExchangeString(value string) ([]byte, []byte, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s is invalid JSON: %w", mapGenFile, err)
 	}
-	mapSettings, err := normalizeJSON(mapSettingsRaw)
+	mapSettings, err := normalizeMapSettingsJSON(mapSettingsRaw)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s is invalid JSON: %w", mapSettingsFile, err)
 	}
@@ -2069,6 +2069,50 @@ func normalizeJSON(raw json.RawMessage) ([]byte, error) {
 		return nil, errors.New("top-level JSON value must be an object")
 	}
 	return json.MarshalIndent(value, "", "  ")
+}
+
+// normalizeMapSettingsJSON upgrades older/partial documents for Factorio 2.1.
+// Fill omitted values from the bundled template without replacing user tuning.
+func normalizeMapSettingsJSON(raw json.RawMessage) ([]byte, error) {
+	normalized, err := normalizeJSON(raw)
+	if err != nil {
+		return nil, err
+	}
+	var settings map[string]any
+	if err := decodeObject(normalized, &settings); err != nil {
+		return nil, err
+	}
+	template, err := defaultTemplate("map-settings.example.json")
+	if err != nil {
+		return nil, err
+	}
+	var defaults map[string]any
+	if err := decodeObject(template, &defaults); err != nil {
+		return nil, err
+	}
+	fillMissingMapSettings(settings, defaults)
+	return json.MarshalIndent(settings, "", "  ")
+}
+
+func fillMissingMapSettings(settings, defaults map[string]any) {
+	for key, value := range defaults {
+		existing, present := settings[key]
+		if !present || existing == nil {
+			settings[key] = value
+		} else if nested, ok := existing.(map[string]any); ok {
+			if nestedDefaults, ok := value.(map[string]any); ok {
+				fillMissingMapSettings(nested, nestedDefaults)
+			}
+		}
+	}
+}
+
+func readNormalizedMapSettingsJSON(path string) ([]byte, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeMapSettingsJSON(body)
 }
 
 func normalizeMapGenJSON(raw json.RawMessage) ([]byte, error) {

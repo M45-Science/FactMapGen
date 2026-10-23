@@ -52,6 +52,12 @@ The UI focuses on the visual map generator. Frequently tuned settings use slider
 
 In `map-gen-settings.json`, `seed: null` follows Factorio's public example file and is the default. It tells Factorio to choose a unique randomized map seed each time a new map is generated. The editor also treats older `seed: 0` presets as random. Use a positive seed value only when you want repeatable generation.
 
+Map settings target Factorio 2.1. New presets include the required expansion
+settings. Reading, importing, saving, and ZIP-exporting older or partial profiles
+fills missing settings from the bundled template while preserving explicit values
+and custom keys. This includes `min_expansion_distance`,
+`evolution_group_size_factor`, and `build_base_unit_dispatch_cooldown`.
+
 ## Map Previews
 
 FactMapGen includes a fast built-in Go preview renderer for Nauvis and the Space Age planets Vulcanus, Gleba, Fulgora, and Aquilo. Its default Nauvis path ports Factorio-compatible seeded noise, elevation, climate fields, and all 21 terrain-tile probability expressions. Forest regions use the 15 Nauvis tree-species probability expressions with seed-stable discrete placement and Factorio's quantized chart blending; they reproduce the forest texture without claiming exact per-tree entity rolls. Cliffs use the deterministic Nauvis cliff fields, four-tile placement lattice, and crossing rules. Iron, copper, coal, stone, and uranium use Factorio's resource candidate stream, patch selection, starting-area placement, blob noise, and control levers. Crude oil uses the same validated patch field, Factorio's chunk-ordered random-penalty stream, and the oil well's chart footprint; only the final entity-autoplace roll remains approximated because it shares state with other entity autoplacers. Rocks use the Nauvis rock-density and climate expressions. Enemy bases use Factorio's distance-scaled spot quantities, 512-tile candidate regions, three seeded blob-noise scales, starting-area exclusion, spawner and worm distance tiers, and chunk-ordered random penalties. Their final entity collision order is represented with global deterministic spacing cells, preserving nest regions and chart texture without claiming exact individual entities. Ore and rock chart pixels use a stable world-position dither because Factorio's exact per-entity placement roll shares a chunk RNG stream with every other entity autoplacer.
