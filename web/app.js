@@ -488,7 +488,8 @@ async function init() {
     updateSharedPreviewLink();
     hideToast();
   });
-  els.exportStringDialog.addEventListener("click", (event) => {
+  // Dismiss only when the press starts outside, not when a resize ends there.
+  els.exportStringDialog.addEventListener("pointerdown", (event) => {
     if (event.target === els.exportStringDialog) closeExportStringDialog();
   });
   els.closeCreateBtn.addEventListener("click", closeCreateDialog);
@@ -1626,6 +1627,10 @@ async function openSharedPreview() {
 }
 
 function showExportString(exchangeString, share = false) {
+  els.exportStringDialog.querySelector(".export-dialog").dataset.mode = share ? "share" : "export";
+  // Native textarea resizing writes inline dimensions; each opening starts fresh.
+  els.exportStringOutput.style.removeProperty("width");
+  els.exportStringOutput.style.removeProperty("height");
   els.shareViewOptions.hidden = !share;
   if (!share) sharedPreview = null;
   els.exportStringTitle.textContent = share ? "Share" : "Export string";

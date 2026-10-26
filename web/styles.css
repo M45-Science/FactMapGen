@@ -1171,18 +1171,34 @@ input[type="range"] {
 
 .export-dialog {
   width: min(100%, 860px);
+  min-width: 0;
   max-height: calc(100dvh - 44px);
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
   overflow: auto;
 }
 
+.export-dialog > label {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+
 #exportStringOutput {
-  height: clamp(180px, 40vh, 380px);
+  min-width: 0;
+  max-width: 100%;
+  min-height: 100px;
+  height: clamp(180px, 40dvh, 380px);
+  max-height: max(100px, calc(100dvh - 240px));
   padding: 8px;
   resize: vertical;
   font-family: ui-monospace, monospace;
   font-size: 13px;
   font-weight: 400;
   line-height: 1.45;
+}
+
+.export-dialog[data-mode="share"] #exportStringOutput {
+  height: clamp(100px, 20dvh, 180px);
 }
 
 .auth-dialog h1,
