@@ -93,6 +93,7 @@ type previewImage struct {
 }
 
 type appConfig struct {
+	GuestLimits         guestLimits      `json:"guestLimits"`
 	PresetDir           string           `json:"presetDir"`
 	DefaultPresetDir    string           `json:"defaultPresetDir"`
 	CustomPresetDir     string           `json:"customPresetDir"`
@@ -299,6 +300,7 @@ func main() {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/config", srv.handleConfig)
+	mux.HandleFunc("/api/admin/guest-limits", srv.handleGuestLimits)
 	mux.HandleFunc("/api/session", srv.handleSession)
 	mux.HandleFunc("/api/session/password", srv.handlePassword)
 	mux.HandleFunc("/api/users", srv.handleUsers)
@@ -437,6 +439,12 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg := s.config
+	limits, err := s.loadGuestLimits()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	cfg.GuestLimits = limits
 	cfg.FastPreviewEnabled = true
 	if s.factorio != nil {
 		cfg.Factorio = s.factorio.status(r.Context(), true)
@@ -587,7 +595,12 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		req.Engine = s.previewEngineForPlanet(req.Engine, req.Planet)
-		if user == nil && exactPreviewRequested(req.Engine) {
+		limits, err := s.loadGuestLimits()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if user == nil && !limits.AllowExact && exactPreviewRequested(req.Engine) {
 			writeError(w, http.StatusForbidden, "exact previews require sign-in")
 			return
 		}
@@ -595,7 +608,7 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "preview format must be avif or png")
 			return
 		}
-		req = previewRequestForUser(req, user)
+		req = previewRequestWithLimits(req, user, limits)
 		if parts[1] == "preview-image" {
 			if req.Engine != previewEngineFast {
 				writeError(w, http.StatusBadRequest, "direct image requests require the Fast renderer")
@@ -1374,14 +1387,22 @@ func (s *server) warmDefaultPreview(ctx context.Context) {
 }
 
 func previewRequestForUser(req previewRequest, user *authUser) previewRequest {
-	if req.Format == "" || user == nil {
+	return previewRequestWithLimits(req, user, defaultGuestLimits())
+}
+
+func previewRequestWithLimits(req previewRequest, user *authUser, limits guestLimits) previewRequest {
+	if req.Format == "" || (user == nil && !limits.AllowPNG) {
 		req.Format = "avif"
 	}
 	if user == nil {
-		req.Engine = previewEngineFast
-		req.Zoom = "1"
-		if req.Size == 0 || req.Size > guestMaxPreviewSize {
-			req.Size = guestMaxPreviewSize
+		if !limits.AllowExact {
+			req.Engine = previewEngineFast
+		}
+		if !limits.AllowZoom {
+			req.Zoom = "1"
+		}
+		if req.Size == 0 || req.Size > limits.MaxPreviewSize {
+			req.Size = limits.MaxPreviewSize
 		}
 	}
 	return req

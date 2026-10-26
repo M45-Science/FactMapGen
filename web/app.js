@@ -433,6 +433,11 @@ const els = {
   confirmSelfPassword: $("#confirmSelfPassword"),
   passwordError: $("#passwordError"),
   adminPanel: $("#adminPanel"),
+  guestLimitsForm: $("#guestLimitsForm"),
+  guestPreviewSize: $("#guestPreviewSize"),
+  guestAllowZoom: $("#guestAllowZoom"),
+  guestAllowExact: $("#guestAllowExact"),
+  guestAllowPNG: $("#guestAllowPNG"),
   closeAdminBtn: $("#closeAdminBtn"),
   userCreateForm: $("#userCreateForm"),
   newUsername: $("#newUsername"),
@@ -463,6 +468,7 @@ async function init() {
   els.logoutBtn.addEventListener("click", logout);
   els.passwordBtn.addEventListener("click", openPasswordDialog);
   els.adminBtn.addEventListener("click", openAdminPanel);
+  els.guestLimitsForm.addEventListener("submit", saveGuestLimits);
   els.closeAdminBtn.addEventListener("click", closeAdminPanel);
   els.closePasswordBtn.addEventListener("click", closePasswordDialog);
   els.cancelPasswordBtn.addEventListener("click", closePasswordDialog);
@@ -959,17 +965,50 @@ async function importPreset(event) {
 
 async function refreshAdminPanel() {
   try {
-    const [usersBody, auditBody, factorioStatus] = await Promise.all([
+    const [usersBody, auditBody, factorioStatus, limits] = await Promise.all([
       api("/api/users"),
       api("/api/audit?limit=200"),
       api("/api/factorio"),
+      api("/api/admin/guest-limits"),
     ]);
+    state.config.guestLimits = limits;
+    els.guestPreviewSize.value = limits.maxPreviewSize;
+    els.guestAllowZoom.checked = limits.allowZoom;
+    els.guestAllowExact.checked = limits.allowExact;
+    els.guestAllowPNG.checked = limits.allowPNG;
     applyFactorioStatus(factorioStatus);
     renderUsers(usersBody.users || []);
     renderAudit(auditBody.audit || []);
   } catch (error) {
     showToast(error.message, true);
   }
+}
+
+async function saveGuestLimits(event) {
+  event.preventDefault();
+  const button = els.guestLimitsForm.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    state.config.guestLimits = await api("/api/admin/guest-limits", {
+      method: "PUT",
+      body: JSON.stringify({
+        maxPreviewSize: Number(els.guestPreviewSize.value),
+        allowZoom: els.guestAllowZoom.checked,
+        allowExact: els.guestAllowExact.checked,
+        allowPNG: els.guestAllowPNG.checked,
+      }),
+    });
+    showToast("Guest limitations saved.");
+    await refreshAdminPanel();
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function guestsCan(option) {
+  return Boolean(state.session || state.config.guestLimits?.[option]);
 }
 
 async function createUser(event) {
@@ -1683,7 +1722,7 @@ async function copyTextToClipboard(text) {
 
 function selectedPreviewAvailable() {
   return state.config.previewEnabled && (currentPreviewEngine() === "fast"
-    ? fastPreviewAvailable() : Boolean(state.session) && factorioPreviewAvailable());
+    ? fastPreviewAvailable() : guestsCan("allowExact") && factorioPreviewAvailable());
 }
 
 function canAutoRefreshPreview() {
@@ -1758,7 +1797,7 @@ async function generatePreview(options = {}) {
     const view = previewViewForCurrentProfile();
     const payload = {
       engine: currentPreviewEngine(),
-      format: state.session ? els.previewFormat.value : "avif",
+      format: guestsCan("allowPNG") ? els.previewFormat.value : "avif",
       size,
       planet,
       zoom: canUsePreviewZoom() ? currentPreviewScale() : "1",
@@ -1968,7 +2007,7 @@ function canDuplicateSelectedProfile() {
 }
 
 function maxPreviewSizeForSession() {
-  return state.session ? maxPreviewSizePx : guestMaxPreviewSize;
+  return state.session ? maxPreviewSizePx : (state.config.guestLimits?.maxPreviewSize ?? guestMaxPreviewSize);
 }
 
 function factorioPreviewAvailable() {
@@ -1992,7 +2031,7 @@ function fastTileSourceKey(profile, payload) {
 }
 
 function canUsePreviewZoom() {
-  return Boolean(state.session);
+  return guestsCan("allowZoom");
 }
 
 function currentPreviewScale() {
@@ -2373,6 +2412,14 @@ function setControlsEnabled(enabled) {
   renderPreviewButtonState();
   renderPreviewEngineControls();
   const maxPreviewSize = maxPreviewSizeForSession();
+  const previousSize = els.previewSize.value;
+  for (const option of els.previewSize.querySelectorAll('[data-guest-limit]')) option.remove();
+  if (!Array.from(els.previewSize.options).some((option) => Number(option.value) === maxPreviewSize)) {
+    const option = new Option(String(maxPreviewSize), String(maxPreviewSize));
+    option.dataset.guestLimit = "true";
+    els.previewSize.add(option);
+  }
+  if (Array.from(els.previewSize.options).some((option) => option.value === previousSize)) els.previewSize.value = previousSize;
   for (const option of els.previewSize.options) {
     const optionSize = Number(option.value);
     option.disabled = Number.isFinite(optionSize) && optionSize > maxPreviewSize;
@@ -2391,9 +2438,9 @@ function renderPreviewEngineControls() {
   if (!els.previewEngine) return;
   const exactOption = Array.from(els.previewEngine.options).find((option) => option.value === "factorio");
   const fastOption = Array.from(els.previewEngine.options).find((option) => option.value === "fast");
-  const exactAllowed = Boolean(state.session);
-  els.previewFormat.hidden = !exactAllowed;
-  if (!exactAllowed) els.previewFormat.value = "avif";
+  const exactAllowed = guestsCan("allowExact");
+  els.previewFormat.hidden = !guestsCan("allowPNG");
+  if (!guestsCan("allowPNG")) els.previewFormat.value = "avif";
   const exactAvailable = exactAllowed && factorioPreviewAvailable();
   const fastAvailable = fastPreviewAvailable();
   const planet = previewPlanetForCurrentProfile();

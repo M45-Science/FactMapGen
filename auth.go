@@ -107,6 +107,7 @@ func (a *authStore) close() error {
 func (a *authStore) migrate() error {
 	statements := []string{
 		`PRAGMA foreign_keys = ON`,
+		`CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS users (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			username TEXT NOT NULL UNIQUE,

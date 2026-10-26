@@ -360,6 +360,19 @@
             <button id="installFactorioBtn" type="button" class="danger">Delete and reinstall experimental</button>
           </div>
         </section>
+        <section class="admin-section" aria-label="Guest limitations">
+          <h3>Guest limitations</h3>
+          <form id="guestLimitsForm">
+            <label>Maximum preview size (pixels)
+              <input id="guestPreviewSize" type="number" min="512" max="4096" step="1" required value="512" />
+            </label>
+            <label class="check-field"><input id="guestAllowZoom" type="checkbox" /><span>Allow zoom</span></label>
+            <label class="check-field"><input id="guestAllowExact" type="checkbox" /><span>Allow Exact Factorio previews</span></label>
+            <label class="check-field"><input id="guestAllowPNG" type="checkbox" /><span>Allow lossless PNG output</span></label>
+            <p>Applies to guest preview requests immediately. Open browsers pick up changes when reloaded. Server preset changes still require sign-in.</p>
+            <button type="submit">Save guest limitations</button>
+          </form>
+        </section>
         <h3>Accounts</h3>
         <form id="userCreateForm" class="admin-create">
           <input id="newUsername" placeholder="Username" autocomplete="off" />

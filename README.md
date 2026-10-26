@@ -35,6 +35,9 @@ go build -o factmapgen .
 
 Guests can browse presets, create or import a transient working preset, edit settings, generate Fast previews, share preview links and export exchange strings without logging in. Exact Factorio previews require sign-in. Guest work never writes preset folders on disk. Persisting server presets by creating, importing, saving, duplicating, renaming, or deleting generators requires a logged-in user. Admin users can add, edit, and delete accounts from the Admin panel in the browser. Passwords are stored as PBKDF2-SHA256 hashes in SQLite, and sessions use HttpOnly cookies.
 
+Administrators can configure **Guest limitations** in the Admin panel: maximum preview image size (512–4096 pixels), zoom access, Exact Factorio preview access, and lossless PNG output. Defaults preserve the existing restrictions (512 pixels, locked zoom, Fast only, AVIF only). Settings are stored in the authentication SQLite database, survive restarts, and are recorded in the audit log. The server applies changes to new requests immediately; guests should reload open browsers to update their controls. The size cap applies per image, including Fast source tiles; the tiled viewer can display a larger area. Saving server presets continues to require sign-in. The guest restrictions described below refer to these defaults.
+
+
 Preset create, import, update, duplicate, rename, and delete actions write audit log entries with the acting user, action, target, detail, and timestamp. Account changes are audited too.
 
 ## Server Files
@@ -219,6 +222,7 @@ The bundled default templates are based on Wube's public `factorio-data` example
 - `PUT /api/users/{id}` admin only
 - `DELETE /api/users/{id}` admin only
 - `GET /api/audit?limit=200` admin only
+- `GET /api/admin/guest-limits` and `PUT /api/admin/guest-limits` admin only; read or replace `{ "maxPreviewSize": 512, "allowZoom": false, "allowExact": false, "allowPNG": false }`
 - `GET /api/factorio` admin only; returns the configured release channel, cached Factorio binary and version, latest channel release, and install status
 - `POST /api/factorio/install` admin only; deletes and reinstalls the managed `-factorio-dir` headless install
 - `GET /api/profiles`; public
