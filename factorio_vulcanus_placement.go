@@ -6,14 +6,12 @@ import (
 	"image/color"
 	"math"
 	"strings"
-	"sync"
 )
 
 type factorioVulcanusChart struct {
 	world    *factorioSpaceAgeEvaluator
 	knockout func(float32, float32) float32
-	mu       sync.Mutex
-	chunks   map[[2]int][]factorioChartEntity
+	chunks   factorioChartChunkCache
 }
 
 var vulcanusChartBoxes = [...][4]float64{
@@ -57,9 +55,7 @@ func (g *factorioVulcanusChart) probabilities(s factorioVulcanusSample, x, y flo
 }
 func (g *factorioVulcanusChart) chunk(ctx context.Context, cx, cy int) ([]factorioChartEntity, error) {
 	key := [2]int{cx, cy}
-	g.mu.Lock()
-	cached, ok := g.chunks[key]
-	g.mu.Unlock()
+	cached, ok := g.chunks.get(key)
 	if ok {
 		return cached, nil
 	}
@@ -127,37 +123,25 @@ func (g *factorioVulcanusChart) chunk(ctx context.Context, cx, cy int) ([]factor
 			}
 		}
 	}
-	g.mu.Lock()
-	if g.chunks == nil || len(g.chunks) >= factorioChartChunkCacheLimit {
-		g.chunks = make(map[[2]int][]factorioChartEntity)
-	}
-	g.chunks[key] = entities
-	g.mu.Unlock()
+	g.chunks.store(key, entities)
 	return entities, nil
 }
 func (g *factorioVulcanusChart) render(ctx context.Context, img *image.RGBA, x0, y0, tpp float64) error {
-	for cy := int(math.Floor(y0 / 32)); cy < int(math.Ceil((y0+float64(img.Bounds().Dy())*tpp)/32)); cy++ {
-		for cx := int(math.Floor(x0 / 32)); cx < int(math.Ceil((x0+float64(img.Bounds().Dx())*tpp)/32)); cx++ {
-			entities, err := g.chunk(ctx, cx, cy)
-			if err != nil {
-				return err
-			}
-			for i := len(entities) - 1; i >= 0; i-- {
-				ent := entities[i]
-				ink := factorioRockMapColor
-				if ent.kind >= 7 && ent.kind <= 9 {
-					if !factorioPreviewEntityDither(ent.x, ent.y, 1) {
-						continue
-					}
-					ink = [3]color.RGBA{{97, 85, 149, 255}, {0, 0, 0, 255}, {204, 178, 178, 255}}[ent.kind-7]
-				} else if ent.kind == 10 || ent.kind == 11 {
-					ink = color.RGBA{48, 99, 48, 102}
-				} else if ent.kind == 12 {
-					ink = color.RGBA{198, 198, 25, 255}
+	return renderFactorioChartChunks(ctx, img, x0, y0, tpp, g.chunk, func(entities []factorioChartEntity) {
+		for i := len(entities) - 1; i >= 0; i-- {
+			ent := entities[i]
+			ink := factorioRockMapColor
+			if ent.kind >= 7 && ent.kind <= 9 {
+				if !factorioPreviewEntityDither(ent.x, ent.y, 1) {
+					continue
 				}
-				paintFactorioChartEntity(img, g.world.settings, ent.x, ent.y, vulcanusChartBoxes[ent.kind], ink, x0, y0, tpp)
+				ink = [3]color.RGBA{{97, 85, 149, 255}, {0, 0, 0, 255}, {204, 178, 178, 255}}[ent.kind-7]
+			} else if ent.kind == 10 || ent.kind == 11 {
+				ink = color.RGBA{48, 99, 48, 102}
+			} else if ent.kind == 12 {
+				ink = color.RGBA{198, 198, 25, 255}
 			}
+			paintFactorioChartEntity(img, g.world.settings, ent.x, ent.y, vulcanusChartBoxes[ent.kind], ink, x0, y0, tpp)
 		}
-	}
-	return nil
+	})
 }

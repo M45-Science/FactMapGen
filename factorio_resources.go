@@ -277,14 +277,7 @@ func (e *factorioResourceEvaluator) resourceAt(x, y float64) (factorioResourcePa
 	if first == nil {
 		return factorioResourceParams{}, false
 	}
-	startingBlobs := factorioBasisNoise(x/8, y/8, &first.tables) +
-		factorioBasisNoise(x/24, y/24, &first.tables)
-	shared := factorioResourceSharedPoint{
-		startingBlobs: startingBlobs,
-		regularBlobs: startingBlobs +
-			1.5*factorioBasisNoise(x/64, y/64, &first.tables),
-		distance: factorioDistanceFromNearestPoint(x, y, first.starts, math.Inf(1)),
-	}
+	shared := first.sharedPointAt(x, y)
 	for index := range e.fields {
 		field := &e.fields[index]
 		if field.params.randomProbability < 1 {
@@ -571,6 +564,19 @@ func (f *factorioResourceField) fieldAtShared(
 		value = max(value, starting)
 	}
 	return value
+}
+
+// The resource catalog uses the same noise seed and starting positions for
+// every field. Evaluate these terms once per position and reuse them for each
+// ore and oil field, retaining each field's own spots and control amplitudes.
+func (f *factorioRegularResourceField) sharedPointAt(x, y float64) factorioResourceSharedPoint {
+	startingBlobs := factorioBasisNoise(x/8, y/8, &f.tables) +
+		factorioBasisNoise(x/24, y/24, &f.tables)
+	return factorioResourceSharedPoint{
+		startingBlobs: startingBlobs,
+		regularBlobs:  startingBlobs + 1.5*factorioBasisNoise(x/64, y/64, &f.tables),
+		distance:      factorioDistanceFromNearestPoint(x, y, f.starts, math.Inf(1)),
+	}
 }
 
 func (f *factorioRegularResourceField) fieldAt(x, y float64) float64 {

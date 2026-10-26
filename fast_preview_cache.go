@@ -57,9 +57,10 @@ type fastPreviewCache struct {
 	mu         sync.Mutex
 	renderGate chan struct{}
 
-	maxBytes  int64
-	maxWorlds int
-	usedBytes int64
+	maxBytes         int64
+	entityCacheBytes int64
+	maxWorlds        int
+	usedBytes        int64
 
 	worlds   map[fastPreviewWorldKey]*fastPreviewWorldCache
 	worldLRU list.List
@@ -88,11 +89,12 @@ func newFastPreviewCache(maxBytes int64, maxWorlds int) *fastPreviewCache {
 		maxWorlds = 1
 	}
 	return &fastPreviewCache{
-		renderGate: make(chan struct{}, fastPreviewRenderConcurrency()),
-		maxBytes:   maxBytes,
-		maxWorlds:  maxWorlds,
-		worlds:     make(map[fastPreviewWorldKey]*fastPreviewWorldCache),
-		tiles:      make(map[fastPreviewTileKey]*fastPreviewTile),
+		renderGate:       make(chan struct{}, fastPreviewRenderConcurrency()),
+		maxBytes:         maxBytes,
+		entityCacheBytes: defaultFastPreviewEntityCacheBytes,
+		maxWorlds:        maxWorlds,
+		worlds:           make(map[fastPreviewWorldKey]*fastPreviewWorldCache),
+		tiles:            make(map[fastPreviewTileKey]*fastPreviewTile),
 	}
 }
 
@@ -445,12 +447,12 @@ func (c *fastPreviewCache) acquireWorld(
 	for len(c.worlds) >= c.maxWorlds {
 		victim := c.unreferencedWorldLocked()
 		if victim == nil {
-			return newFastPreviewWorldCache(key, settings, false)
+			return newFastPreviewWorldCache(key, settings, false, c.entityCacheBytes)
 		}
 		c.removeWorldLocked(victim)
 	}
 
-	entry := newFastPreviewWorldCache(key, settings, true)
+	entry := newFastPreviewWorldCache(key, settings, true, c.entityCacheBytes)
 	entry.element = c.worldLRU.PushFront(entry)
 	c.worlds[key] = entry
 	return entry
@@ -469,10 +471,13 @@ func newFastPreviewWorldCache(
 	key fastPreviewWorldKey,
 	settings fastPreviewSettings,
 	retained bool,
+	entityCacheBytes int64,
 ) *fastPreviewWorldCache {
+	world := newFastPreviewWorld(settings)
+	world.setEntityCacheBudget(entityCacheBytes)
 	return &fastPreviewWorldCache{
 		key:        key,
-		world:      newFastPreviewWorld(settings),
+		world:      world,
 		renderGate: make(chan struct{}, 1),
 		retained:   retained,
 		references: 1,

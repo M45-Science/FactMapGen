@@ -69,16 +69,17 @@ type store struct {
 }
 
 type previewer struct {
-	mu                    sync.RWMutex
-	factorioBin           string
-	timeout               time.Duration
-	images                map[string]previewImage
-	imageBytes            int64
-	imageByteLimit        int64
-	defaultPreview        *previewResponse
-	fastCacheOnce         sync.Once
-	fastPreviewCacheBytes int64
-	fastPreviewCache      *fastPreviewCache
+	mu                          sync.RWMutex
+	factorioBin                 string
+	timeout                     time.Duration
+	images                      map[string]previewImage
+	imageBytes                  int64
+	imageByteLimit              int64
+	defaultPreview              *previewResponse
+	fastCacheOnce               sync.Once
+	fastPreviewCacheBytes       int64
+	fastPreviewEntityCacheBytes int64
+	fastPreviewCache            *fastPreviewCache
 }
 
 type previewImage struct {
@@ -216,6 +217,7 @@ func main() {
 	previewTimeout := flag.Duration("preview-timeout", 60*time.Second, "maximum time allowed for one map preview render")
 	previewQueueSize := flag.Int("preview-queue", 8, "maximum number of queued map preview jobs")
 	fastPreviewCacheMiB := flag.Int64("fast-preview-cache-mib", defaultFastPreviewCacheBytes>>20, "Fast preview tile-cache budget in MiB")
+	fastPreviewEntityCacheMiB := flag.Int64("fast-preview-entity-cache-mib", defaultFastPreviewEntityCacheBytes>>20, "Fast preview entity-chunk cache budget per world in MiB (up to five retained worlds)")
 	authDB := flag.String("auth-db", "factmapgen-auth.db", "SQLite database path for users, sessions, and audit logs")
 	flag.Parse()
 	factorioChannel, err := parseFactorioReleaseChannel(*factorioChannelFlag)
@@ -225,6 +227,10 @@ func main() {
 	fastPreviewCacheBytes, err := fastPreviewCacheBytesForMiB(*fastPreviewCacheMiB)
 	if err != nil {
 		log.Fatalf("invalid -fast-preview-cache-mib: %v", err)
+	}
+	fastPreviewEntityCacheBytes, err := fastPreviewCacheBytesForMiB(*fastPreviewEntityCacheMiB)
+	if err != nil {
+		log.Fatalf("invalid -fast-preview-entity-cache-mib: %v", err)
 	}
 
 	if *factorioBin == "" {
@@ -258,9 +264,10 @@ func main() {
 	}
 
 	p := &previewer{
-		factorioBin:           *factorioBin,
-		timeout:               *previewTimeout,
-		fastPreviewCacheBytes: fastPreviewCacheBytes,
+		factorioBin:                 *factorioBin,
+		timeout:                     *previewTimeout,
+		fastPreviewCacheBytes:       fastPreviewCacheBytes,
+		fastPreviewEntityCacheBytes: fastPreviewEntityCacheBytes,
 	}
 	factorio := newFactorioManager(*factorioDir, p, factorioInstallIsManaged(*factorioDir, *factorioBin), factorioChannel)
 
@@ -310,6 +317,7 @@ func main() {
 	log.Printf("Default preset directory: %s", st.defaultRoot)
 	log.Printf("Custom preset directory: %s", st.customRoot)
 	log.Printf("Fast preview tile-cache budget: %d MiB", fastPreviewCacheBytes>>20)
+	log.Printf("Fast preview entity-chunk cache budget: %d MiB per world (up to %d retained worlds)", fastPreviewEntityCacheBytes>>20, defaultFastPreviewCacheWorlds)
 	log.Printf("Factorio managed-install release channel: %s", factorioChannel)
 	log.Printf("Auth database: %s", *authDB)
 	if initialAdminPassword != "" {

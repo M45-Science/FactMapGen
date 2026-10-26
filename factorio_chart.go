@@ -1,18 +1,133 @@
 package main
 
 import (
+	"container/list"
+	"context"
 	"image"
 	"image/color"
 	"math"
+	"runtime"
+	"sync"
+	"unsafe"
 )
 
 // Each entry contains candidates only; tile pixels remain in the main cache.
 // Bound this separately from the much larger resource-region field caches.
-const factorioChartChunkCacheLimit = 1024
+const defaultFastPreviewEntityCacheBytes = 256 << 20
 
 type factorioChartEntity struct {
 	x, y float64
 	kind int
+}
+
+// Keep neighboring views reusable when the cache fills, instead of dropping
+// every chunk at once. Published entity slices are immutable.
+type factorioChartChunkCache struct {
+	mu        sync.Mutex
+	entries   map[[2]int]*list.Element
+	lru       list.List
+	maxBytes  int64
+	usedBytes int64
+}
+
+type factorioChartChunkEntry struct {
+	key      [2]int
+	entities []factorioChartEntity
+	bytes    int64
+}
+
+func (c *factorioChartChunkCache) get(key [2]int) ([]factorioChartEntity, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, ok := c.entries[key]
+	if !ok {
+		return nil, false
+	}
+	c.lru.MoveToFront(entry)
+	return entry.Value.(factorioChartChunkEntry).entities, true
+}
+
+func (c *factorioChartChunkCache) store(key [2]int, entities []factorioChartEntity) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if entry, ok := c.entries[key]; ok {
+		c.lru.MoveToFront(entry)
+		return
+	}
+	// Charge the backing array, plus an allowance for the key, LRU node and
+	// map entry. Empty chunks also consume budget; this is not a process RSS cap.
+	bytes := int64(cap(entities))*int64(unsafe.Sizeof(factorioChartEntity{})) + 128
+	budget := c.maxBytes
+	if budget <= 0 {
+		budget = defaultFastPreviewEntityCacheBytes
+	}
+	if bytes > budget {
+		return
+	}
+	if c.entries == nil {
+		c.entries = make(map[[2]int]*list.Element)
+	}
+	c.entries[key] = c.lru.PushFront(factorioChartChunkEntry{key, entities, bytes})
+	c.usedBytes += bytes
+	for c.usedBytes > budget {
+		oldest := c.lru.Back()
+		entry := oldest.Value.(factorioChartChunkEntry)
+		delete(c.entries, entry.key)
+		c.usedBytes -= entry.bytes
+		c.lru.Remove(oldest)
+	}
+}
+
+// Generate independent chunks concurrently, then draw in the original order.
+// Batches bound temporary entity storage even for large, zoomed-out previews.
+func renderFactorioChartChunks(
+	ctx context.Context, img *image.RGBA, x0, y0, tpp float64,
+	chunk func(context.Context, int, int) ([]factorioChartEntity, error),
+	draw func([]factorioChartEntity),
+) error {
+	minX, minY := int(math.Floor(x0/32)), int(math.Floor(y0/32))
+	maxX := int(math.Ceil((x0 + float64(img.Bounds().Dx())*tpp) / 32))
+	maxY := int(math.Ceil((y0 + float64(img.Bounds().Dy())*tpp) / 32))
+	width := maxX - minX
+	count := width * (maxY - minY)
+	const batchSize = 64
+	type result struct {
+		entities []factorioChartEntity
+		err      error
+	}
+	results := make([]result, min(batchSize, count))
+	for first := 0; first < count; first += batchSize {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		batch := results[:min(batchSize, count-first)]
+		workerCount := min(runtime.GOMAXPROCS(0), len(batch), fastPreviewMaxWorkers)
+		var workers sync.WaitGroup
+		for worker := range workerCount {
+			workers.Go(func() {
+				for index := worker; index < len(batch); index += workerCount {
+					if err := ctx.Err(); err != nil {
+						batch[index] = result{err: err}
+						return
+					}
+					position := first + index
+					entities, err := chunk(ctx, minX+position%width, minY+position/width)
+					batch[index] = result{entities, err}
+				}
+			})
+		}
+		workers.Wait()
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		for _, result := range batch {
+			if result.err != nil {
+				return result.err
+			}
+			draw(result.entities)
+		}
+	}
+	return ctx.Err()
 }
 
 func factorioPlaceEveryN(x, y, spacingX, spacingY, offsetX, offsetY float32) float32 {

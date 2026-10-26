@@ -212,6 +212,9 @@ func (p *previewer) fastCache() *fastPreviewCache {
 				cacheBytes = defaultFastPreviewCacheBytes
 			}
 			p.fastPreviewCache = newFastPreviewCache(cacheBytes, defaultFastPreviewCacheWorlds)
+			if p.fastPreviewEntityCacheBytes > 0 {
+				p.fastPreviewCache.entityCacheBytes = p.fastPreviewEntityCacheBytes
+			}
 		}
 	})
 	return p.fastPreviewCache
@@ -467,6 +470,25 @@ func (w *fastPreviewWorld) trimSpatialCaches() {
 	}
 }
 
+// Called before publishing the world to rendering workers. Each world has
+// at most one entity-chunk cache, selected by its planet.
+func (w *fastPreviewWorld) setEntityCacheBudget(bytes int64) {
+	if w.natural != nil {
+		w.natural.chunks.maxBytes = bytes
+	}
+	if w.spaceAge != nil {
+		if w.spaceAge.glebaChart != nil {
+			w.spaceAge.glebaChart.chunks.maxBytes = bytes
+		}
+		if w.spaceAge.fulgoraChart != nil {
+			w.spaceAge.fulgoraChart.chunks.maxBytes = bytes
+		}
+		if w.spaceAge.vulcanusChart != nil {
+			w.spaceAge.vulcanusChart.chunks.maxBytes = bytes
+		}
+	}
+}
+
 func (w *fastPreviewWorld) render(
 	ctx context.Context,
 	size int,
@@ -634,10 +656,7 @@ func (w *fastPreviewWorld) renderOverlays(
 	}
 	if charts {
 		if w.natural != nil {
-			if err := w.natural.render(ctx, img, originX, originY, tpp); err != nil {
-				return err
-			}
-			return w.natural.renderEnemies(ctx, img, originX, originY, tpp)
+			return w.natural.render(ctx, img, originX, originY, tpp)
 		}
 		return nil
 	}

@@ -22,8 +22,7 @@ type factorioNauvisNaturalEvaluator struct {
 	enemyMu    sync.Mutex
 	resources  *factorioResourceEvaluator
 	resourceMu sync.Mutex
-	mu         sync.Mutex
-	chunks     map[[2]int][]factorioChartEntity
+	chunks     factorioChartChunkCache
 }
 
 var factorioNauvisNaturalBoxes = [...][4]float64{
@@ -96,9 +95,7 @@ func (e *factorioTreeEvaluator) probabilitiesAtSample(x, y float64, s factorioNa
 
 func (e *factorioNauvisNaturalEvaluator) chunk(ctx context.Context, cx, cy int) ([]factorioChartEntity, error) {
 	key := [2]int{cx, cy}
-	e.mu.Lock()
-	cached, ok := e.chunks[key]
-	e.mu.Unlock()
+	cached, ok := e.chunks.get(key)
 	if ok {
 		return cached, nil
 	}
@@ -141,8 +138,20 @@ func (e *factorioNauvisNaturalEvaluator) chunk(ctx context.Context, cx, cy int) 
 	}
 	if e.enemies != nil {
 		e.enemyMu.Lock()
+		// Spawners and worms share the expensive base field. Only their
+		// distance factors and random-penalty seeds differ.
+		var base, distance [1024]float64
+		for i, p := range positions {
+			base[i], distance[i] = e.enemies.baseProbabilityAndDistanceAt(p.x, p.y)
+		}
 		for kind, prototype := range factorioEnemyOverviewPrototypes {
-			values := e.enemies.prototypeValues(positions[:], prototype)
+			var sources [1024]float64
+			var translated [1024]factorioSpotCandidate
+			for i, p := range positions {
+				sources[i] = e.enemies.autoplaceSourceAtPoint(base[i], distance[i], prototype.distanceFactor)
+				translated[i] = factorioSpotCandidate{x: p.x + float64(prototype.seed), y: p.y}
+			}
+			values := factorioRandomPenaltyBatch(translated[:], sources[:], 1, .1)
 			for i, v := range values {
 				probabilities[i][kind+23] = v
 			}
@@ -153,6 +162,12 @@ func (e *factorioNauvisNaturalEvaluator) chunk(ctx context.Context, cx, cy int) 
 	var solid, later []int
 	if e.resources != nil {
 		e.resourceMu.Lock()
+		var shared [1024]factorioResourceSharedPoint
+		if len(e.resources.fields) > 0 {
+			for i, p := range positions {
+				shared[i] = e.resources.fields[0].regular.sharedPointAt(p.x, p.y)
+			}
+		}
 		for j := range e.resources.fields {
 			f := &e.resources.fields[j]
 			kind := 29 + f.params.patchSetIndex
@@ -162,7 +177,7 @@ func (e *factorioNauvisNaturalEvaluator) chunk(ctx context.Context, cx, cy int) 
 				later = append(later, kind)
 			}
 			for i, p := range positions {
-				v := f.fieldAt(p.x, p.y)
+				v := f.fieldAtShared(p.x, p.y, shared[i])
 				probabilities[i][kind] = clampFloat(v, 0, 1)
 				richness[i][kind-29] = v * f.regular.control.richness
 				if kind == 33 {
@@ -238,53 +253,44 @@ func (e *factorioNauvisNaturalEvaluator) chunk(ctx context.Context, cx, cy int) 
 			}
 		}
 	}
-	e.mu.Lock()
-	if e.chunks == nil || len(e.chunks) >= factorioChartChunkCacheLimit {
-		e.chunks = make(map[[2]int][]factorioChartEntity)
-	}
-	e.chunks[key] = entities
-	e.mu.Unlock()
+	e.chunks.store(key, entities)
 	return entities, nil
 }
 
 func (e *factorioNauvisNaturalEvaluator) render(ctx context.Context, img *image.RGBA, originX, originY, tpp float64) error {
-	return e.renderLayer(ctx, img, originX, originY, tpp, false)
-}
-
-func (e *factorioNauvisNaturalEvaluator) renderEnemies(ctx context.Context, img *image.RGBA, originX, originY, tpp float64) error {
-	return e.renderLayer(ctx, img, originX, originY, tpp, true)
-}
-
-func (e *factorioNauvisNaturalEvaluator) renderLayer(ctx context.Context, img *image.RGBA, originX, originY, tpp float64, enemies bool) error {
-	for cy := int(math.Floor(originY / 32)); cy < int(math.Ceil((originY+float64(img.Bounds().Dy())*tpp)/32)); cy++ {
-		for cx := int(math.Floor(originX / 32)); cx < int(math.Ceil((originX+float64(img.Bounds().Dx())*tpp)/32)); cx++ {
-			entities, err := e.chunk(ctx, cx, cy)
-			if err != nil {
-				return err
+	// Keep only accepted enemy markers for the final layer. A second traversal
+	// would regenerate chunks when the viewport exceeds the chunk-cache limit.
+	var enemies []factorioChartEntity
+	err := renderFactorioChartChunks(ctx, img, originX, originY, tpp, e.chunk, func(entities []factorioChartEntity) {
+		var accepted [][4]float64
+		for i := len(entities) - 1; i >= 0; i-- {
+			ent := entities[i]
+			if ent.kind >= 23 && ent.kind < 29 {
+				if factorioEnemyChartAccept(&accepted, ent, factorioNauvisNaturalBox(ent.kind, true)) {
+					enemies = append(enemies, ent)
+				}
+				continue
 			}
-			var accepted [][4]float64
-			for i := len(entities) - 1; i >= 0; i-- {
-				ent := entities[i]
-				if (ent.kind >= 23 && ent.kind < 29) != enemies {
+			ink := color.RGBA{48, 99, 48, 102}
+			if ent.kind >= 29 {
+				if ent.kind != 33 && !factorioPreviewEntityDither(ent.x, ent.y, 1) {
 					continue
 				}
-				ink := color.RGBA{48, 99, 48, 102}
-				if enemies {
-					if !factorioEnemyChartAccept(&accepted, ent, factorioNauvisNaturalBox(ent.kind, true)) {
-						continue
-					}
-					ink = factorioEnemyMapColor
-				} else if ent.kind >= 29 {
-					if ent.kind != 33 && !factorioPreviewEntityDither(ent.x, ent.y, 1) {
-						continue
-					}
-					ink = factorioResourceCatalog[ent.kind-29].mapColor
-				} else if ent.kind < 3 {
-					ink = factorioRockMapColor
-				}
-				paintFactorioChartEntity(img, e.settings, ent.x, ent.y, factorioNauvisNaturalBox(ent.kind, false), ink, originX, originY, tpp)
+				ink = factorioResourceCatalog[ent.kind-29].mapColor
+			} else if ent.kind < 3 {
+				ink = factorioRockMapColor
 			}
+			paintFactorioChartEntity(img, e.settings, ent.x, ent.y, factorioNauvisNaturalBox(ent.kind, false), ink, originX, originY, tpp)
 		}
+	})
+	if err != nil {
+		return err
 	}
-	return nil
+	for _, ent := range enemies {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		paintFactorioChartEntity(img, e.settings, ent.x, ent.y, factorioNauvisNaturalBox(ent.kind, false), factorioEnemyMapColor, originX, originY, tpp)
+	}
+	return ctx.Err()
 }

@@ -12,10 +12,10 @@ Demo videos: [Video 1](https://youtube.com/shorts/kI67a37VIvE?feature=share) · 
 go run . -addr :8080 -presets presets
 ```
 
-The Fast renderer keeps up to 2 GiB of reusable tile pixels by default. Change the startup budget in MiB with, for example:
+The Fast renderer keeps up to 2 GiB of reusable tile pixels, plus 256 MiB of entity chunks per world across up to five retained worlds (1.25 GiB total), by default. These caches grow on demand. Set both startup budgets in MiB explicitly with:
 
 ```sh
-go run . -addr :8080 -presets presets -fast-preview-cache-mib 4096
+go run . -addr :8080 -presets presets -fast-preview-cache-mib 2048 -fast-preview-entity-cache-mib 256
 ```
 
 Open `http://localhost:8080`.
@@ -108,6 +108,8 @@ Generated response images are transient. Both Fast and Exact previews use lossle
 
 Fast previews also use a process-local LRU of 128x128 base-render tiles, keyed by selected planet, canonical map-generation settings, effective seed, scale, and world position. This lets repeated views, adjacent pans, and a return to a recent zoom reuse work without changing pixels. The default cache retains up to five planet/settings/seed worlds and 2 GiB of RGBA tile pixels globally; set another budget with `-fast-preview-cache-mib`. Resource-region state is trimmed to 64 regions per field. One fully cached 1024x1024 view occupies exactly 4 MiB of tile pixels, a one-pixel horizontal pan can extend that scale to 4.5 MiB, and another fully retained scale adds 4 MiB. With no overlap, the default pixel budget is enough for 512 complete 1024x1024 views. The 2 GiB value is a limit, not an upfront allocation: startup warms only the built-in Default preset at 1024x1024, 1 meter per pixel, and preview seed `123456`, retaining about 4 MiB of tile pixels. The browser uses that seed for the initial random-seed Default preview so its first request can reuse the warm tiles. The limit covers cached tile pixels, not active output images, evaluator state, temporary buffers, or the separately capped encoded-image payloads, so it is not a total process-memory limit. The cache is cleared when the server restarts.
 
+Entity placement for Nauvis, Gleba, Fulgora, and Vulcanus also retains reusable 32x32 world chunks in a per-world LRU. These chunks are shared across preview sizes and zoom levels, and between sessions using the same planet, effective seed, and settings. Missing chunks generate in bounded batches with up to `min(GOMAXPROCS, 12)` workers; drawing preserves the original chunk and entity order. Nauvis reuses shared resource-noise and enemy-base fields within each chunk, and defers enemy markers without regenerating chunks for a second draw pass. The entity cache evicts individual old chunks when its memory budget is reached instead of clearing the entire cache. `-fast-preview-entity-cache-mib` defaults to 256 MiB per world, or up to 1.25 GiB across the five retained worlds. Accounting includes entity slice capacity and a 128-byte metadata allowance per chunk; it is not an exact process-memory cap. Worlds have separate entity caches and follow the existing world LRU; active worlds cannot be evicted. Temporary worlds used when all retained worlds are active can consume additional memory while rendering. Together, the default retained tile and entity cache budgets are 3.25 GiB, separate from encoded PNGs and active render buffers.
+
 Exact previews do not use the Fast tile cache: each request runs the queued Factorio process, passes the normalized map offset, and then applies the requested zoom transform to Factorio's temporary PNG. On startup, when Exact previews are configured, the server warms a pinned 512px Nauvis preview for the built-in Default preset so signed-in users can see an immediate exact image without waiting for autosize rendering.
 
 The focused unit checks for planet selection, deterministic Space Age rendering, planet-separated cache keys, cache stitching, and browser source identity are:
@@ -141,7 +143,15 @@ FACTMAPGEN_FACTORIO_BIN=/opt/factorio/bin/x64/factorio FACTMAPGEN_RENDER_SPEED_C
 
 The speed comparison is opt-in and runs one fixed-seed 1024x1024 render per engine. It reports render and PNG wall time, total process CPU time and utilization, and peak resident memory. Use `fast-only` while tuning the Go renderer so Factorio is not launched on every run.
 
-As a representative five-sample local result on a Ryzen 9 7950X, the standard fixed-seed 1024x1024 Fast preview at 1 meter per pixel had medians of 213 ms to render, 236 ms including lossless BestSpeed PNG encoding, 1.71 CPU-seconds, and about 28.3 MiB peak RSS. At the same output size and scale, the tile-cache benchmark measured 233 ms cold, 67 ms for a warm repeat, and 96-98 ms for an adjacent pan; cache timings exclude response-image encoding and are performance snapshots rather than service guarantees.
+With the current entity-placement renderer, a three-sample local comparison on a Ryzen 9 7950X (`GOMAXPROCS=32`, fixed seed, 1024x1024, 1 meter per pixel) measured these medians before and after parallel chunk generation, shared-field reuse, and the entity LRU changes:
+
+| Render | Before | After |
+| --- | ---: | ---: |
+| Cold view | 3,369 ms | 752 ms |
+| Cached repeat | 48 ms | 48 ms |
+| Adjacent 128-pixel pan | 3,343 ms | 190 ms |
+
+These cache benchmarks exclude response PNG encoding. They are local snapshots, not service guarantees; the older 233 ms cold-render result predates the current entity-placement work and is not a current baseline.
 
 Diff artifacts are written to `test-output/preview-diffs/` as Factorio, fast-renderer, amplified-diff, and JSON-statistics files. The exact-engine parity test runs automatically when a Factorio binary is discoverable. The fast tests are opt-in and enforce overall terrain and natural-feature correctness budgets rather than requiring exact pixels.
 

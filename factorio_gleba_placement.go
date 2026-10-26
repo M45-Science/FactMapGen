@@ -6,14 +6,12 @@ import (
 	"image/color"
 	"math"
 	"strings"
-	"sync"
 )
 
 type factorioGlebaChart struct {
 	world   *factorioSpaceAgeEvaluator
 	enemies *glebaEnemyFields
-	mu      sync.Mutex
-	chunks  map[[2]int][]factorioChartEntity
+	chunks  factorioChartChunkCache
 }
 
 var glebaChartBoxes = [...][4]float64{
@@ -45,9 +43,7 @@ func glebaChartTileAllowed(kind int, tile string, restrict bool) bool {
 
 func (g *factorioGlebaChart) chunk(ctx context.Context, cx, cy int) ([]factorioChartEntity, error) {
 	key := [2]int{cx, cy}
-	g.mu.Lock()
-	cached, ok := g.chunks[key]
-	g.mu.Unlock()
+	cached, ok := g.chunks.get(key)
 	if ok {
 		return cached, nil
 	}
@@ -145,52 +141,40 @@ func (g *factorioGlebaChart) chunk(ctx context.Context, cx, cy int) ([]factorioC
 			}
 		}
 	}
-	g.mu.Lock()
-	if g.chunks == nil || len(g.chunks) >= factorioChartChunkCacheLimit {
-		g.chunks = make(map[[2]int][]factorioChartEntity)
-	}
-	g.chunks[key] = entities
-	g.mu.Unlock()
+	g.chunks.store(key, entities)
 	return entities, nil
 }
 
 func (g *factorioGlebaChart) render(ctx context.Context, img *image.RGBA, x0, y0, tpp float64) error {
-	for cy := int(math.Floor(y0 / 32)); cy < int(math.Ceil((y0+float64(img.Bounds().Dy())*tpp)/32)); cy++ {
-		for cx := int(math.Floor(x0 / 32)); cx < int(math.Ceil((x0+float64(img.Bounds().Dx())*tpp)/32)); cx++ {
-			entities, err := g.chunk(ctx, cx, cy)
-			if err != nil {
-				return err
+	return renderFactorioChartChunks(ctx, img, x0, y0, tpp, g.chunk, func(entities []factorioChartEntity) {
+		for i := len(entities) - 1; i >= 0; i-- {
+			ent := entities[i]
+			if ent.kind >= 15 {
+				continue
 			}
-			for i := len(entities) - 1; i >= 0; i-- {
-				ent := entities[i]
-				if ent.kind >= 15 {
+			ink := color.RGBA{48, 99, 48, 102}
+			switch {
+			case ent.kind < 2:
+				ink = factorioRockMapColor
+			case ent.kind < 4:
+				ink = color.RGBA{255, 255, 255, 255}
+			case ent.kind == 14:
+				if !factorioPreviewEntityDither(ent.x, ent.y, 1) {
 					continue
 				}
-				ink := color.RGBA{48, 99, 48, 102}
-				switch {
-				case ent.kind < 2:
-					ink = factorioRockMapColor
-				case ent.kind < 4:
-					ink = color.RGBA{255, 255, 255, 255}
-				case ent.kind == 14:
-					if !factorioPreviewEntityDither(ent.x, ent.y, 1) {
-						continue
-					}
-					ink = color.RGBA{175, 155, 108, 255}
-				}
-				paintFactorioChartEntity(img, g.world.settings, ent.x, ent.y, glebaChartBoxes[ent.kind], ink, x0, y0, tpp)
+				ink = color.RGBA{175, 155, 108, 255}
 			}
-			// Hostile chart rectangles are deferred until all ordinary entities
-			// have been drawn, so vegetation cannot tint the enemy markers.
-			var accepted [][4]float64
-			for i := len(entities) - 1; i >= 0; i-- {
-				ent := entities[i]
-				if ent.kind < 15 || !factorioEnemyChartAccept(&accepted, ent, glebaChartBoxes[15]) {
-					continue
-				}
-				paintFactorioChartEntity(img, g.world.settings, ent.x, ent.y, glebaChartBoxes[ent.kind], factorioEnemyMapColor, x0, y0, tpp)
-			}
+			paintFactorioChartEntity(img, g.world.settings, ent.x, ent.y, glebaChartBoxes[ent.kind], ink, x0, y0, tpp)
 		}
-	}
-	return nil
+		// Hostile chart rectangles are deferred until all ordinary entities
+		// have been drawn, so vegetation cannot tint the enemy markers.
+		var accepted [][4]float64
+		for i := len(entities) - 1; i >= 0; i-- {
+			ent := entities[i]
+			if ent.kind < 15 || !factorioEnemyChartAccept(&accepted, ent, glebaChartBoxes[15]) {
+				continue
+			}
+			paintFactorioChartEntity(img, g.world.settings, ent.x, ent.y, glebaChartBoxes[ent.kind], factorioEnemyMapColor, x0, y0, tpp)
+		}
+	})
 }
