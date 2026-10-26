@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Spot-cone arithmetic follows FactorioMapWebUI spot_field.rs; see
+// docs/upstream-rendering.md for provenance. Placement is verified separately
+// against the installed Factorio 2.1.23 binary and captured preview images.
 package main
 
 import (
@@ -8,9 +12,11 @@ import (
 )
 
 const (
-	factorioEnemyRegionSize       = int64(512)
-	factorioEnemyCandidateCount   = 100
-	factorioEnemyCandidateSpacing = 45.254833995939045
+	factorioEnemyRegionSize     = int64(512)
+	factorioEnemyCandidateCount = 100
+	// The compiler takes half sqrt(integer region_area / candidate_count),
+	// then stores the default spacing as a float. Here: float32(sqrt(2621)/2).
+	factorioEnemyCandidateSpacing = 25.597850799560547
 	factorioEnemyNoiseSeed        = uint32(123)
 	factorioEnemyCullRadius       = 128.0
 	factorioEnemySpawnerCell      = int64(20)
@@ -28,6 +34,7 @@ type factorioEnemySpot struct {
 
 type factorioEnemyEvaluator struct {
 	seed               uint32
+	grid               bool
 	control            fastControl
 	starts             []factorioPoint
 	startingAreaRadius float64
@@ -35,13 +42,14 @@ type factorioEnemyEvaluator struct {
 	regionCache        map[[2]int64][]factorioEnemySpot
 }
 
-func newFactorioEnemyEvaluator(settings fastPreviewSettings) *factorioEnemyEvaluator {
+func newFactorioEnemyEvaluator(settings fastPreviewSettings, grid ...bool) *factorioEnemyEvaluator {
 	starts := settings.startingPositions
 	if len(starts) == 0 {
 		starts = []factorioPoint{{}}
 	}
 	return &factorioEnemyEvaluator{
 		seed:               settings.seed,
+		grid:               len(grid) > 0 && grid[0],
 		control:            settings.enemyBases,
 		starts:             starts,
 		startingAreaRadius: factorioEnemyStartingAreaRadius(settings.startingArea),
@@ -81,18 +89,23 @@ func (e *factorioEnemyEvaluator) baseProbabilityAt(x, y float64) float64 {
 }
 
 func (e *factorioEnemyEvaluator) baseProbabilityAndDistanceAt(x, y float64) (float64, float64) {
-	distance := factorioDistanceFromNearestPoint(x, y, e.starts, math.Inf(1))
-	radius := e.radiusAtDistance(distance)
-	if radius <= 0 {
-		return -1000, distance
+	fx, fy := float32(x), float32(y)
+	distance := float32(math.Inf(1))
+	for _, p := range e.starts {
+		dx, dy := fx-float32(p.x), fy-float32(p.y)
+		distance = min(distance, noiseSqrt(float32(dx*dx)+float32(dy*dy)))
 	}
-	blobs := factorioBasisNoise(x/8, y/8, &e.noiseTables) +
-		factorioBasisNoise(x/24, y/24, &e.noiseTables) +
-		2*factorioBasisNoise(x/64, y/64, &e.noiseTables)
+	radius := float32(math.Sqrt(max(0, e.control.size))) * (15 + 4*(min(distance, 2400)/325))
+	if radius <= 0 {
+		return -1000, float64(distance)
+	}
+	blobs := factorioBasisNoise32(fx*(1.0/8), fy*(1.0/8), &e.noiseTables, e.grid) +
+		factorioBasisNoise32(fx*(1.0/24), fy*(1.0/24), &e.noiseTables, e.grid) +
+		2*factorioBasisNoise32(fx*(1.0/64), fy*(1.0/64), &e.noiseTables, e.grid)
 	blobTerm := (blobs - 0.5) * radius / 150 *
-		(0.1 + 0.9*clampFloat(distance/3000, 0, 1))
-	startingArea := min(0, 20/e.startingAreaRadius*distance-20)
-	return e.spotFieldAt(x, y) + blobTerm - 0.3 + startingArea, distance
+		(0.1 + 0.9*min(distance/3000, 1))
+	startingArea := min(0, float32(20/e.startingAreaRadius)*distance-20)
+	return float64(float32(e.spotFieldAt(x, y)) + blobTerm - .3 + startingArea), float64(distance)
 }
 
 func (e *factorioEnemyEvaluator) autoplaceSourceAt(x, y, distanceFactor float64) float64 {
@@ -101,11 +114,9 @@ func (e *factorioEnemyEvaluator) autoplaceSourceAt(x, y, distanceFactor float64)
 }
 
 func (e *factorioEnemyEvaluator) autoplaceSourceAtPoint(probability, distance, distanceFactor float64) float64 {
-	distanceRamp := max(
-		0,
-		1+0.002*distanceFactor*(-312*distanceFactor-e.startingAreaRadius+distance),
-	)
-	return min(probability*distanceRamp, 0.25+distanceFactor*0.05)
+	df := float32(distanceFactor)
+	distanceRamp := max(float32(0), 1+float32(.002*df)*(-312*df-float32(e.startingAreaRadius)+float32(distance)))
+	return float64(min(float32(probability)*distanceRamp, .25+df*.05))
 }
 
 func (e *factorioEnemyEvaluator) spotFieldAt(x, y float64) float64 {
@@ -117,14 +128,14 @@ func (e *factorioEnemyEvaluator) spotFieldAt(x, y float64) float64 {
 	for regionY := lowY; regionY <= highY; regionY++ {
 		for regionX := lowX; regionX <= highX; regionX++ {
 			for _, spot := range e.regionSpots(regionX, regionY) {
-				dx := x - spot.x
-				dy := y - spot.y
-				distanceSquared := dx*dx + dy*dy
-				if distanceSquared >= spot.radius*spot.radius {
+				dx := float32(x) - float32(spot.x)
+				dy := float32(y) - float32(spot.y)
+				distance := noiseSqrt(float32(dx*dx) + float32(dy*dy))
+				if distance > factorioEnemyCullRadius {
 					continue
 				}
-				cone := spot.peak * (1 - math.Sqrt(distanceSquared)/spot.radius)
-				best = max(best, cone)
+				cone := float32(spot.peak) - float32(distance*float32(float32(spot.peak)/float32(spot.radius)))
+				best = max(best, float64(cone))
 			}
 		}
 	}
@@ -159,13 +170,15 @@ func (e *factorioEnemyEvaluator) regionSpots(regionX, regionY int64) []factorioE
 	spots := make([]factorioEnemySpot, 0, len(selected))
 	for _, spot := range selected {
 		distance := factorioDistanceFromNearestPoint(spot.x, spot.y, e.starts, math.Inf(1))
-		radius := e.radiusAtDistance(distance)
+		radius := float64(float32(min(factorioEnemyCullRadius, e.radiusAtDistance(distance))))
 		if radius <= 0 {
 			continue
 		}
 		spots = append(spots, factorioEnemySpot{
 			x: spot.x, y: spot.y, radius: radius,
-			peak: 3 * spot.quantity / (math.Pi * radius * radius),
+			// The engine's spot cone uses 3.1416, distinct from Lua's pi in
+			// the quantity expression; peak and slope are then float32.
+			peak: float64(float32(3 * float64(float32(spot.quantity)) / (3.1416 * radius * radius))),
 		})
 	}
 	e.regionCache[key] = spots
@@ -211,6 +224,39 @@ type factorioEnemyPlacementCandidate struct {
 	value float64
 	x     int64
 	y     int64
+}
+
+// random_penalty is a batch operation: only positive sources consume a draw,
+// and the seed uses the first (possibly translated) position of that batch.
+func (e *factorioEnemyEvaluator) prototypeValues(positions []factorioSpotCandidate, prototype factorioEnemyPrototype) []float64 {
+	sources := make([]float64, len(positions))
+	translated := make([]factorioSpotCandidate, len(positions))
+	for i, p := range positions {
+		sources[i] = e.autoplaceSourceAt(p.x, p.y, prototype.distanceFactor)
+		translated[i] = factorioSpotCandidate{x: p.x + float64(prototype.seed), y: p.y}
+	}
+	return factorioRandomPenaltyBatch(translated, sources, 1, .1)
+}
+
+// The preview rejects overlapping enemies in reverse candidate order. These
+// bounds use map-generation boxes, whereas the painted rectangles use the
+// smaller collision boxes. Touching edges count as a collision.
+func factorioEnemyChartAccept(accepted *[][4]float64, ent factorioChartEntity, box [4]float64) bool {
+	for i := range box {
+		box[i] = math.Trunc(box[i]*256) / 256
+		if i&1 == 0 {
+			box[i] += ent.x
+		} else {
+			box[i] += ent.y
+		}
+	}
+	for _, other := range *accepted {
+		if box[0] <= other[2] && other[0] <= box[2] && box[1] <= other[3] && other[1] <= box[3] {
+			return false
+		}
+	}
+	*accepted = append(*accepted, box)
+	return true
 }
 
 func (e *factorioEnemyEvaluator) prototypeValueAt(tileX, tileY int64, prototype factorioEnemyPrototype) float64 {

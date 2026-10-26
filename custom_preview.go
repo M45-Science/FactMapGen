@@ -448,8 +448,12 @@ func newFastPreviewWorld(settings fastPreviewSettings) *fastPreviewWorld {
 	if !settings.noEnemies && settings.enemyBases.enabled {
 		world.enemies = newFactorioEnemyEvaluator(settings)
 	}
-	if world.trees != nil || world.rocks != nil {
+	if world.trees != nil || world.rocks != nil || world.enemies != nil || len(world.resources.fields) > 0 {
 		world.natural = &factorioNauvisNaturalEvaluator{settings: settings, nauvis: world.nauvis, trees: world.trees, rocks: world.rocks}
+		if world.enemies != nil {
+			world.natural.enemies = newFactorioEnemyEvaluator(settings, true)
+		}
+		world.natural.resources = newFactorioResourceEvaluator(settings, world.nauvis)
 	}
 	return world
 }
@@ -614,7 +618,7 @@ func (w *fastPreviewWorld) renderOverlays(
 			return err
 		}
 	}
-	if w.resources != nil && w.resources.hasOil() {
+	if !charts && w.resources != nil && w.resources.hasOil() {
 		oilMask, err := w.resources.oilPreviewMask(
 			ctx, w.settings, img, originX, originY, tpp,
 		)
@@ -623,34 +627,17 @@ func (w *fastPreviewWorld) renderOverlays(
 		}
 		applyFastPreviewOilMask(img, oilMask)
 	}
-	if w.enemies != nil {
+	if !charts && w.enemies != nil {
 		if err := renderFactorioEnemies(ctx, img, w.settings, w.enemies, originX, originY, tpp); err != nil {
 			return err
 		}
 	}
 	if charts {
-		w.resources.prepareForBounds(math.Floor(originX), math.Floor(originY), math.Floor(originX+float64(img.Bounds().Dx()-1)*tpp), math.Floor(originY+float64(img.Bounds().Dy()-1)*tpp))
-		xAxis, yAxis := newFastPreviewAxis(originX, tpp), newFastPreviewAxis(originY, tpp)
-		if err := parallelFastPreviewRows(ctx, img.Bounds().Dy(), func(y int) {
-			wy := math.Floor(yAxis.coordinate(y))
-			for x := 0; x < img.Bounds().Dx(); x++ {
-				wx := math.Floor(xAxis.coordinate(x))
-				if fastOutOfMapBounds(w.settings, wx, wy) || !factorioPreviewEntityDither(wx, wy, tpp) {
-					continue
-				}
-				o := y*img.Stride + x*4
-				base := color.RGBA{img.Pix[o], img.Pix[o+1], img.Pix[o+2], 255}
-				if !factorioPreviewWaterColor(base) {
-					if resource, ok := w.resources.resourceAt(wx, wy); ok {
-						img.SetRGBA(x, y, resource.mapColor)
-					}
-				}
-			}
-		}); err != nil {
-			return err
-		}
 		if w.natural != nil {
-			return w.natural.render(ctx, img, originX, originY, tpp)
+			if err := w.natural.render(ctx, img, originX, originY, tpp); err != nil {
+				return err
+			}
+			return w.natural.renderEnemies(ctx, img, originX, originY, tpp)
 		}
 		return nil
 	}

@@ -90,13 +90,19 @@ func TestPlanetReleaseAccuracy(t *testing.T) {
 						t.Fatal("oracle dimensions differ")
 					}
 					stats, diff, _ := previewImageDiff(want, img)
+					if layer == "full" && (c.Planet == "nauvis" || c.Planet == "gleba") {
+						_, changed := factorioEnemyPixelDifferences(want, img, 4)
+						if changed != 0 {
+							t.Errorf("enemy pixels differ at %d interior positions", changed)
+						}
+					}
 					t.Logf("%s: %.5f%% different, max delta %d", layer, stats.ChangedPercent, stats.MaxChannelDelta)
 					// Measured regression ceilings, not claims of parity. The zero ceilings
 					// deliberately require exact matches for these captured cases.
 					limits := map[string]map[string]float64{
 						"terrain": {"nauvis": .002, "vulcanus": .15, "gleba": 0, "fulgora": .003, "aquilo": 0},
-						"cliffs":  {"nauvis": .003, "vulcanus": .58, "gleba": .115, "fulgora": .19, "aquilo": 0},
-						"full":    {"nauvis": .15, "vulcanus": .69, "gleba": .30, "fulgora": .26, "aquilo": .0043},
+						"cliffs":  {"nauvis": .003, "vulcanus": .274, "gleba": .028, "fulgora": .030, "aquilo": 0},
+						"full":    {"nauvis": .071, "vulcanus": .38, "gleba": .047, "fulgora": .097, "aquilo": .0043},
 					}
 					if stats.ChangedPercent > limits[layer][c.Planet] {
 						t.Errorf("%s regression: %.5f%% exceeds %.5f%%", layer, stats.ChangedPercent, limits[layer][c.Planet])

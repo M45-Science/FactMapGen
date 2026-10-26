@@ -18,7 +18,7 @@ const (
 	defaultFastPreviewCacheBytes  = 2 << 30
 	defaultFastPreviewCacheWorlds = 5
 	fastPreviewMaxRegionsPerField = 64
-	fastPreviewRendererRevision   = "factorio-preview-v7"
+	fastPreviewRendererRevision   = "factorio-preview-v8"
 )
 
 type fastPreviewWorldKey [sha256.Size]byte

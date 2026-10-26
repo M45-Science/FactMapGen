@@ -31,10 +31,19 @@ func TestGlebaFeatureFields(t *testing.T) {
 	s := fastPreviewSettings{seed: ref.Seed, planet: fastPreviewPlanetGleba, cliffRichness: .8, cliffs: fastControl{frequency: 1, size: 1, enabled: true}}
 	e := newFactorioGlebaEvaluator(s, false)
 	f := newGlebaFeatureFields(e, false)
+	enemies := newGlebaEnemyFields(s)
+	positions := make([]factorioSpotCandidate, len(ref.Positions))
+	for i, p := range ref.Positions {
+		positions[i] = factorioSpotCandidate{x: p[0], y: p[1]}
+	}
+	baseValues := enemies.probabilities(positions)
 	worst := map[string]float64{}
 	for i, p := range ref.Positions {
-		v := f.sample(e.sample(p[0], p[1]), p[0], p[1])
+		terrain := e.sample(p[0], p[1])
+		v := f.sample(terrain, p[0], p[1])
 		got := map[string]float32{"entity:stone:probability": v.stoneProbability, "entity:stone:richness": v.stoneRichness, "cliffiness": v.cliffiness, "entity:iron-stromatolite:probability": v.stromatolites[0], "entity:copper-stromatolite:probability": v.stromatolites[1]}
+		enemy := glebaSpawnerProbabilities(terrain, baseValues[i])
+		got["entity:gleba-spawner:probability"], got["entity:gleba-spawner-small:probability"] = enemy[0], enemy[1]
 		for j, name := range glebaPlantNames {
 			got["entity:"+name+":probability"] = v.plants[j]
 		}
@@ -42,7 +51,13 @@ func TestGlebaFeatureFields(t *testing.T) {
 			if len(ref.Fields[k]) != len(ref.Positions) {
 				t.Fatalf("incomplete field %s", k)
 			}
-			d := math.Abs(float64(x - ref.Fields[k][i]))
+			want := ref.Fields[k][i]
+			// Negative probability magnitudes cannot accept a candidate. The
+			// enemy base has a separate oracle for its raw, unclamped field.
+			if strings.Contains(k, "spawner") {
+				x, want = max(0, x), max(0, want)
+			}
+			d := math.Abs(float64(x - want))
 			if math.IsNaN(d) || math.IsInf(d, 0) {
 				t.Fatalf("nonfinite field %s at %v", k, p)
 			}

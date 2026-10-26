@@ -47,5 +47,10 @@ func factorioCliffChartRect(c factorioCliffCell) (float64, float64, float64, flo
 		x3, y3, x4, y4 := 2*cx-x2, 2*cy-y2, 2*cx-x1, 2*cy-y1
 		l, t, r, bottom = min(x1, x2, x3, x4), min(y1, y2, y3, y4), max(x1, x2, x3, x4), max(y1, y2, y3, y4)
 	}
-	return math.Floor(float64(l) / 256), math.Floor(float64(t) / 256), math.Ceil(float64(r) / 256), math.Ceil(float64(bottom) / 256)
+	// Like ordinary entities, each cliff is drawn into its own preview chunk.
+	// A rotated box may extend past that chunk, but its ink cannot spill into
+	// the neighbouring chunk's independently generated chart.
+	cx, cy := math.Floor(c.x/32)*32, math.Floor(c.y/32)*32
+	return max(cx, math.Floor(float64(l)/256)), max(cy, math.Floor(float64(t)/256)),
+		min(cx+32, math.Ceil(float64(r)/256)), min(cy+32, math.Ceil(float64(bottom)/256))
 }

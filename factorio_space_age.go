@@ -53,6 +53,9 @@ func newFactorioSpaceAgeEvaluator(settings fastPreviewSettings) *factorioSpaceAg
 		evaluator.gleba = newFactorioGlebaEvaluator(settings, true)
 		evaluator.glebaFields = newGlebaFeatureFields(evaluator.gleba, true)
 		evaluator.glebaChart = &factorioGlebaChart{world: evaluator}
+		if !settings.noEnemies && fastSpaceAgeControl(settings, "gleba_enemy_base").enabled {
+			evaluator.glebaChart.enemies = newGlebaEnemyFields(settings, true)
+		}
 	}
 	if settings.planet == fastPreviewPlanetGleba {
 		control := fastSpaceAgeControl(settings, "gleba_enemy_base")
@@ -261,7 +264,7 @@ func (e *factorioSpaceAgeEvaluator) glebaFeatures(
 	x, y, tilesPerPixel float64,
 ) color.RGBA {
 	if tilesPerPixel <= 2 {
-		return e.glebaEnemies(base, x, y, tilesPerPixel)
+		return base
 	}
 	fields := e.glebaFields.sample(sample.gleba, x, y)
 	stone := fastSpaceAgeControl(e.settings, "gleba_stone")

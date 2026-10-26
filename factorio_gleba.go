@@ -99,6 +99,7 @@ type factorioGlebaEvaluator struct {
 type factorioGlebaSample struct {
 	tile                                                                                             factorioVulcanusTile
 	elevation, common, aux, moisture, temperature, rockpools, fertile, fertileSolid, plants, plantsB float32
+	distance, startingEnemies, startingEnemiesSafe                                                   float32
 	scores                                                                                           [41]float32
 }
 
@@ -191,6 +192,7 @@ func (e *factorioGlebaEvaluator) sample(px, py float64) factorioGlebaSample {
 	temperature := glebaClamp(.8*e.temperature(x+wx*6, y+wy*6), -1, 1)
 	fertile := max(min(1, max(cones[10], cones[11])*4), min(distance/.7/150-2.2, fertileRaw)-max(0, -(elevation+2)/5)-max(0, (elevation-10)/5))
 	s := factorioGlebaSample{elevation: elevation, common: common, aux: aux, moisture: moisture, temperature: 10 + temperature*10, rockpools: rockpools, fertile: fertile, fertileSolid: 2 * noiseAbs(e.fertileSolid(x, y)) * fertile, plants: noiseAbs(e.plants[0](x, y) * e.plants[1](x, y)), plantsB: noiseAbs(e.plants[2](x, y) * e.plants[3](x, y))}
+	s.distance, s.startingEnemies, s.startingEnemiesSafe = distance, max(cones[13], cones[14]), cones[12]
 	s.scores = s.tileScores(temperature, pitrock)
 	winner := 0
 	for i, v := range s.scores {

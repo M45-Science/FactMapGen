@@ -10,9 +10,10 @@ import (
 )
 
 type factorioGlebaChart struct {
-	world  *factorioSpaceAgeEvaluator
-	mu     sync.Mutex
-	chunks map[[2]int][]factorioChartEntity
+	world   *factorioSpaceAgeEvaluator
+	enemies *glebaEnemyFields
+	mu      sync.Mutex
+	chunks  map[[2]int][]factorioChartEntity
 }
 
 var glebaChartBoxes = [...][4]float64{
@@ -22,13 +23,14 @@ var glebaChartBoxes = [...][4]float64{
 	{-.4, -.4, .4, .4}, {-.6, -.5, .6, .5}, {-.8, -.6, .8, .6},
 	{-.9, -.6, .9, .6}, {-.6, -.8, .6, .8}, {-.1, -.1, .1, .1},
 	{-.1, -.1, .1, .1},
+	{-2.35, -2.35, 2.35, 2.35}, {-1.35, -1.35, 1.35, 1.35},
 }
 
 func glebaChartTileAllowed(kind int, tile string, restrict bool) bool {
 	wet := strings.HasPrefix(tile, "wetland-")
 	lake := tile == "gleba-deep-lake"
 	switch {
-	case kind < 2 || kind >= 10 && kind <= 12:
+	case kind < 2 || kind >= 10 && kind <= 12 || kind >= 15:
 		return wet
 	case kind == 13:
 		return wet || lake
@@ -53,18 +55,22 @@ func (g *factorioGlebaChart) chunk(ctx context.Context, cx, cy int) ([]factorioC
 		return nil, err
 	}
 	e := g.world
-	var tiles [34 * 34]string
+	var tiles [38 * 38]string
 	var fields [1024]glebaFeatureSample
-	for dy := -1; dy < 33; dy++ {
+	var samples [1024]factorioGlebaSample
+	var positions [1024]factorioSpotCandidate
+	for dy := -3; dy < 35; dy++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		for dx := -1; dx < 33; dx++ {
+		for dx := -3; dx < 35; dx++ {
 			x, y := float64(cx*32+dx), float64(cy*32+dy)
 			s := e.gleba.sample(x, y)
-			tiles[(dy+1)*34+dx+1] = s.tile.name
+			tiles[(dy+3)*38+dx+3] = s.tile.name
 			if dx >= 0 && dx < 32 && dy >= 0 && dy < 32 {
 				fields[dy*32+dx] = e.glebaFields.sample(s, x, y)
+				samples[dy*32+dx] = s
+				positions[dy*32+dx] = factorioSpotCandidate{x: x, y: y}
 			}
 		}
 	}
@@ -81,7 +87,18 @@ func (g *factorioGlebaChart) chunk(ctx context.Context, cx, cy int) ([]factorioC
 	if fastSpaceAgeControl(e.settings, "gleba_stone").enabled {
 		groups = append(groups, []int{14})
 	}
+	var enemies [1024][2]float32
+	if g.enemies != nil {
+		values := g.enemies.probabilities(positions[:])
+		for i := range enemies {
+			enemies[i] = glebaSpawnerProbabilities(samples[i], values[i])
+		}
+		groups = append(groups, []int{15}, []int{16})
+	}
 	prob := func(i, kind int) float32 {
+		if kind >= 15 {
+			return enemies[i][kind-15]
+		}
 		if kind < 2 {
 			return fields[i].stromatolites[kind]
 		}
@@ -93,7 +110,7 @@ func (g *factorioGlebaChart) chunk(ctx context.Context, cx, cy int) ([]factorioC
 	var entities []factorioChartEntity
 	for _, group := range groups {
 		for i := 1023; i >= 0; i-- {
-			tile := tiles[(i/32+1)*34+i%32+1]
+			tile := tiles[(i/32+3)*38+i%32+3]
 			kind := group[0]
 			if !glebaChartTileAllowed(kind, tile, true) {
 				continue
@@ -112,10 +129,13 @@ func (g *factorioGlebaChart) chunk(ctx context.Context, cx, cy int) ([]factorioC
 				y = float64(cy*32+i/32) + float64(rng.next()>>28)/16
 			}
 			box := glebaChartBoxes[kind]
+			if kind == 16 {
+				box = glebaChartBoxes[15]
+			}
 			allowed := true
 			for by := int(math.Floor(y + math.Trunc(box[1]*256)/256)); by <= int(math.Floor(y+math.Trunc(box[3]*256)/256)); by++ {
 				for bx := int(math.Floor(x + math.Trunc(box[0]*256)/256)); bx <= int(math.Floor(x+math.Trunc(box[2]*256)/256)); bx++ {
-					if !glebaChartTileAllowed(kind, tiles[(by-cy*32+1)*34+bx-cx*32+1], false) {
+					if !glebaChartTileAllowed(kind, tiles[(by-cy*32+3)*38+bx-cx*32+3], false) {
 						allowed = false
 					}
 				}
@@ -143,6 +163,9 @@ func (g *factorioGlebaChart) render(ctx context.Context, img *image.RGBA, x0, y0
 			}
 			for i := len(entities) - 1; i >= 0; i-- {
 				ent := entities[i]
+				if ent.kind >= 15 {
+					continue
+				}
 				ink := color.RGBA{48, 99, 48, 102}
 				switch {
 				case ent.kind < 2:
@@ -156,6 +179,16 @@ func (g *factorioGlebaChart) render(ctx context.Context, img *image.RGBA, x0, y0
 					ink = color.RGBA{175, 155, 108, 255}
 				}
 				paintFactorioChartEntity(img, g.world.settings, ent.x, ent.y, glebaChartBoxes[ent.kind], ink, x0, y0, tpp)
+			}
+			// Hostile chart rectangles are deferred until all ordinary entities
+			// have been drawn, so vegetation cannot tint the enemy markers.
+			var accepted [][4]float64
+			for i := len(entities) - 1; i >= 0; i-- {
+				ent := entities[i]
+				if ent.kind < 15 || !factorioEnemyChartAccept(&accepted, ent, glebaChartBoxes[15]) {
+					continue
+				}
+				paintFactorioChartEntity(img, g.world.settings, ent.x, ent.y, glebaChartBoxes[ent.kind], factorioEnemyMapColor, x0, y0, tpp)
 			}
 		}
 	}
