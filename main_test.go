@@ -1585,8 +1585,8 @@ func TestFactorioReleaseChannels(t *testing.T) {
 	if _, err := parseFactorioReleaseChannel("latest"); err == nil {
 		t.Fatal("parseFactorioReleaseChannel accepted an unknown channel")
 	}
-	if factorioDefaultReleaseChannel != factorioReleaseExperimental {
-		t.Fatalf("default release channel = %q, want experimental", factorioDefaultReleaseChannel)
+	if factorioDefaultReleaseChannel != factorioReleaseStable {
+		t.Fatalf("default release channel = %q, want stable", factorioDefaultReleaseChannel)
 	}
 }
 

@@ -448,6 +448,7 @@ const els = {
   factorioAdminStatus: $("#factorioAdminStatus"),
   refreshFactorioBtn: $("#refreshFactorioBtn"),
   installFactorioBtn: $("#installFactorioBtn"),
+  installFactorioExperimentalBtn: $("#installFactorioExperimentalBtn"),
   toast: $("#toast"),
   toastMessage: $("#toastMessage"),
   toastClose: $("#toastClose"),
@@ -479,7 +480,8 @@ async function init() {
   els.userCreateForm.addEventListener("submit", createUser);
   els.toastClose.addEventListener("click", hideToast);
   els.refreshFactorioBtn.addEventListener("click", () => refreshFactorioStatus({ toast: true }));
-  els.installFactorioBtn.addEventListener("click", installFactorio);
+  els.installFactorioBtn.addEventListener("click", () => installFactorio("stable"));
+  els.installFactorioExperimentalBtn.addEventListener("click", () => installFactorio("experimental"));
   els.openCreateBtn.addEventListener("click", openCreateDialog);
   els.openImportBtn.addEventListener("click", openImportDialog);
   els.closeImportBtn.addEventListener("click", closeImportDialog);
@@ -1118,13 +1120,13 @@ function currentFactorioStatus() {
     previewEnabled: Boolean(state.config.factorioBin),
     bin: state.config.factorioBin || "",
     installManaged: false,
-    releaseChannel: "experimental",
+    releaseChannel: "stable",
     updateAvailable: false,
   };
 }
 
 function factorioReleaseChannel(status = currentFactorioStatus()) {
-  return status.releaseChannel === "stable" ? "stable" : "experimental";
+  return status.releaseChannel === "experimental" ? "experimental" : "stable";
 }
 
 function factorioReleaseChannelLabel(status = currentFactorioStatus()) {
@@ -1187,11 +1189,13 @@ function renderFactorioAdmin(status = currentFactorioStatus()) {
   }
 
   els.refreshFactorioBtn.disabled = Boolean(status.installing);
-  els.installFactorioBtn.disabled = !status.installManaged || Boolean(status.installing);
-  els.installFactorioBtn.textContent = status.installing ? "Installing..." : `Delete and reinstall ${channel}`;
-  els.installFactorioBtn.title = status.installManaged
-    ? `Delete the managed Factorio install and install the latest ${channel} headless build.`
-    : "Install management is available only when the active binary is from -factorio-dir.";
+  for (const [button, target] of [[els.installFactorioBtn, "stable"], [els.installFactorioExperimentalBtn, "experimental"]]) {
+    button.disabled = !status.installManaged || Boolean(status.installing);
+    button.textContent = status.installing ? "Installing..." : `Install ${target}`;
+    button.title = status.installManaged
+      ? `Replace the managed Factorio install with the latest ${target} headless build.`
+      : "Install management is available only when the active binary is from -factorio-dir.";
+  }
 }
 
 function appendFactorioAdminLine(label, value, className = "") {
@@ -1215,16 +1219,15 @@ async function refreshFactorioStatus(options = {}) {
   }
 }
 
-async function installFactorio() {
+async function installFactorio(channel) {
   const status = currentFactorioStatus();
   if (!status.installManaged || status.installing) return;
-  const channel = factorioReleaseChannel(status);
   if (!window.confirm(`Delete the current managed Factorio install and install a fresh ${channel} headless copy?`)) return;
 
   renderFactorioAdmin({ ...status, installing: true });
   renderFactorioStatus({ ...status, installing: true });
   try {
-    const nextStatus = await api("/api/factorio/install", { method: "POST" });
+    const nextStatus = await api("/api/factorio/install", { method: "POST", body: JSON.stringify({ channel }) });
     applyFactorioStatus(nextStatus);
     if (state.selected) renderPreview();
     await refreshAdminPanel();

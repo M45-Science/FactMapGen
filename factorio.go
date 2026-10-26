@@ -37,7 +37,7 @@ type factorioReleaseChannel string
 const (
 	factorioReleaseStable         factorioReleaseChannel = "stable"
 	factorioReleaseExperimental   factorioReleaseChannel = "experimental"
-	factorioDefaultReleaseChannel                        = factorioReleaseExperimental
+	factorioDefaultReleaseChannel                        = factorioReleaseStable
 )
 
 func parseFactorioReleaseChannel(value string) (factorioReleaseChannel, error) {
@@ -56,7 +56,8 @@ var (
 )
 
 type factorioManager struct {
-	mu sync.Mutex
+	auth *authStore
+	mu   sync.Mutex
 
 	installDir     string
 	installManaged bool
@@ -267,7 +268,7 @@ func (m *factorioManager) applyLatestStatusLocked(ctx context.Context, status *f
 	}
 }
 
-func (m *factorioManager) installFresh(ctx context.Context) (factorioStatus, error) {
+func (m *factorioManager) installFresh(ctx context.Context, channels ...factorioReleaseChannel) (factorioStatus, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -281,9 +282,23 @@ func (m *factorioManager) installFresh(ctx context.Context) (factorioStatus, err
 	if m.installing {
 		return m.statusLocked(ctx, false), errFactorioInstallBusy
 	}
+	previousChannel, previousURL, previousCache := m.releaseChannel, m.downloadURL, m.latestCache
+	if len(channels) > 0 {
+		channel, err := parseFactorioReleaseChannel(string(channels[0]))
+		if err != nil {
+			return m.statusLocked(ctx, false), err
+		}
+		m.releaseChannel = channel
+		m.downloadURL = factorioStableDownloadURL
+		if channel == factorioReleaseExperimental {
+			m.downloadURL = factorioExperimentalDownloadURL
+		}
+		m.latestCache = factorioLatestCache{}
+	}
 	m.installing = true
 	fail := func(err error) (factorioStatus, error) {
 		m.installing = false
+		m.releaseChannel, m.downloadURL, m.latestCache = previousChannel, previousURL, previousCache
 		return m.statusLocked(ctx, false), err
 	}
 
@@ -329,6 +344,11 @@ func (m *factorioManager) installFresh(ctx context.Context) (factorioStatus, err
 	m.versionCache = factorioVersionCache{}
 	m.latestCache = factorioLatestCache{version: latest, checkedAt: time.Now()}
 	m.installing = false
+	if m.auth != nil {
+		if _, err := m.auth.db.Exec(`INSERT INTO app_settings(key, value) VALUES ('factorio_channel', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, string(m.releaseChannel)); err != nil {
+			return m.statusLocked(ctx, true), fmt.Errorf("saving Factorio channel: %w", err)
+		}
+	}
 	return m.statusLocked(ctx, true), nil
 }
 

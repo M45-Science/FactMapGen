@@ -274,8 +274,16 @@ func main() {
 		fastPreviewCacheBytes:       fastPreviewCacheBytes,
 		fastPreviewEntityCacheBytes: fastPreviewEntityCacheBytes,
 	}
+	var savedChannel string
+	if err := auth.db.QueryRow(`SELECT value FROM app_settings WHERE key = 'factorio_channel'`).Scan(&savedChannel); err == nil {
+		factorioChannel, err = parseFactorioReleaseChannel(savedChannel)
+		if err != nil {
+			log.Fatalf("invalid saved Factorio channel: %v", err)
+		}
+	}
 	factorio := newFactorioManager(*factorioDir, p, factorioInstallIsManaged(*factorioDir, *factorioBin), factorioChannel)
 
+	factorio.auth = auth
 	srv := &server{
 		store:        st,
 		previewer:    p,
@@ -490,7 +498,25 @@ func (s *server) handleFactorioInstall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusFailedDependency, "Factorio install manager is not configured")
 		return
 	}
-	status, err := s.factorio.installFresh(r.Context())
+	var req struct {
+		Channel string `json:"channel"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := decodeJSONRequest(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	var channels []factorioReleaseChannel
+	if req.Channel != "" {
+		channel, err := parseFactorioReleaseChannel(req.Channel)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		channels = append(channels, channel)
+	}
+	status, err := s.factorio.installFresh(r.Context(), channels...)
 	if err != nil {
 		writeFactorioError(w, err)
 		return

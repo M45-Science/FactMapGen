@@ -75,16 +75,16 @@ Fast preview seed resolution follows Factorio's built-in surface rules: Nauvis k
 
 Against fresh 512×512 full-preview captures at two seeds, differing pixels range from 0.117–0.148% on Nauvis, 0.443–0.663% on Vulcanus, 0.198–0.299% on Gleba, 0.140–0.259% on Fulgora, and 0.0023–0.0042% on Aquilo. These measurements apply to the captured settings at one tile per pixel; they are not all-seed, all-zoom or generated-world guarantees. Arbitrary mod expressions and all prototype allowlists are not reproduced. See [upstream provenance](docs/upstream-rendering.md) for the separate terrain references, source revision and licensing. Use Exact for authoritative entity placement or mod behavior.
 
-For signed-in users, the preview toolbar also offers an Exact engine that generates real Factorio map preview PNGs when a Factorio/headless binary is available. Install the latest experimental Linux headless package into the default discovery path with:
+For signed-in users, the preview toolbar also offers an Exact engine that generates real Factorio map preview PNGs when a Factorio/headless binary is available. Install the latest stable Linux headless package into the default discovery path with:
 
 ```sh
 ./scripts/install-factorio-headless.sh
 ```
 
-The standalone installer accepts the release channel as its second argument; use stable explicitly when needed:
+The standalone installer accepts the release channel as its second argument; use experimental explicitly when needed:
 
 ```sh
-./scripts/install-factorio-headless.sh tools/factorio stable
+./scripts/install-factorio-headless.sh tools/factorio experimental
 ```
 
 Then restart FactMapGen:
@@ -93,10 +93,10 @@ Then restart FactMapGen:
 go run . -addr :8080 -presets presets
 ```
 
-The server auto-discovers `tools/factorio/bin/x64/factorio`. Managed installs and update checks use the experimental channel by default. Select stable at boot with:
+The server auto-discovers `tools/factorio/bin/x64/factorio`. Managed installs and update checks use stable by default. The Admin panel offers **Install stable** and **Install experimental** buttons; a successful installation saves the selected channel in SQLite for subsequent restarts. Select an initial channel at boot with:
 
 ```sh
-go run . -factorio-channel stable
+go run . -factorio-channel experimental
 ```
 
 You can also point at another install:
@@ -105,7 +105,7 @@ You can also point at another install:
 go run . -factorio-bin /opt/factorio/bin/x64/factorio
 ```
 
-The main web page shows the detected Factorio binary version and flags when the latest headless release on the configured channel is newer. Version and latest-release checks are cached by the server. The Admin panel shows the active release channel. When the active binary comes from `-factorio-dir`, administrators can delete that managed install and install a fresh headless copy from that channel. The Fast renderer supports Nauvis, including Lakes and Island elevation options, plus Vulcanus, Gleba, Fulgora, and Aquilo. All five surfaces support public Go previews; signed-in users may still choose Exact with a suitable Factorio installation.
+The main web page shows the detected Factorio binary version and flags when the latest headless release on the configured channel is newer. Version and latest-release checks are cached by the server. The Admin panel shows the active release channel. When the active binary comes from `-factorio-dir`, administrators can replace that managed install with a fresh stable or experimental headless copy. The Fast renderer supports Nauvis, including Lakes and Island elevation options, plus Vulcanus, Gleba, Fulgora, and Aquilo. All five surfaces support public Go previews; signed-in users may still choose Exact with a suitable Factorio installation.
 
 Preview scale is an arbitrary numeric value in meters per output pixel from `0.015625` through `64`, with the browser viewer capped at `25` meters per pixel and subject to the Exact engine's 16,384-pixel source-render limit. Values above `1` show more map area and values below `1` zoom into whole map tiles. Legacy API values such as `out-4` and `in-3` remain accepted. Guest previews are locked to 1 meter per pixel by both the browser and server; signed-in users retain the full zoom range. In the browser, drag a rendered preview to pan, use the mouse wheel to zoom around the pointer, and use Reset to return to `(0, 0)` at 1 meter per pixel. Fast previews automatically size their square viewer to the available pane dimensions and hide the whole-image size selector, which remains available for Exact previews. Fast previews use 512x512 client tiles at one canonical source resolution of 1 map tile per image pixel: pan repositions retained tiles immediately and requests only tiles absent from the client cache, while zoom scales those tiles around the pointer immediately in the browser without requesting alternate-resolution copies. Newly exposed world coordinates begin loading their missing canonical source tiles during pan and zoom updates, with up to eight requests in flight and deterministic center-biased jitter instead of a top-left row sweep. After all visible tiles load, the client prefetches one complete one-tile-deep perimeter around the viewport's visible tile bounds. Perimeter counts therefore vary with the viewport dimensions. These requests do not count toward visible progress and are canceled if they become irrelevant to a changed viewport. Shared tile edges are snapped to identical screen pixels to prevent subpixel seams without adding overlap or another rendering pass. Returning to a cached area makes no request, and queued or in-flight tile requests are aborted as soon as they leave the latest viewport. The client LRU has a 512 MiB decoded-pixel target, which retains 512 canonical 512x512 RGBA tiles in addition to browser image and DOM overhead; changing the preset, planet, seed, or map-generation settings clears the prior client tile cache, while a very large viewport can temporarily require more visible tiles. Exact previews remain whole images. Both engines accept world-space `centerX` and `centerY` coordinates; the server snaps each coordinate to the selected scale's pixel lattice so adjacent views align exactly.
 
@@ -224,7 +224,7 @@ The bundled default templates are based on Wube's public `factorio-data` example
 - `GET /api/audit?limit=200` admin only
 - `GET /api/admin/guest-limits` and `PUT /api/admin/guest-limits` admin only; read or replace `{ "maxPreviewSize": 512, "allowZoom": false, "allowExact": false, "allowPNG": false }`
 - `GET /api/factorio` admin only; returns the configured release channel, cached Factorio binary and version, latest channel release, and install status
-- `POST /api/factorio/install` admin only; deletes and reinstalls the managed `-factorio-dir` headless install
+- `POST /api/factorio/install` admin only; accepts optional `{ "channel": "stable" }` or `{ "channel": "experimental" }`, replaces the managed `-factorio-dir` headless install, and saves the channel after success
 - `GET /api/profiles`; public
 - `POST /api/profiles` with `{ "name": "...", "preset": "default" }`; login required
 - `POST /api/profiles/import-exchange` with `{ "name": "...", "exchangeString": ">>><<<" }`; guests receive a transient `local:` document; logged-in users create a server preset
