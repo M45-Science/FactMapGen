@@ -97,7 +97,6 @@ func ParseMapExchangeString(input string) (*MapExchangeData, error) {
 	p := newMapExchangeParser(raw)
 	version := p.readVersion()
 	atLeastV2 := versionAtLeast(version, 2, 0, 0, 0)
-	atLeastV21 := versionAtLeast(version, 2, 1, 0, 0)
 
 	data := &MapExchangeData{
 		Version:        version,
@@ -106,7 +105,7 @@ func ParseMapExchangeString(input string) (*MapExchangeData, error) {
 	}
 	_ = p.readUint8() // Unknown exchange-format byte.
 	data.MapGenSettings = p.readMapGenSettings(atLeastV2)
-	data.MapSettings = p.readMapSettings(atLeastV2, atLeastV21)
+	data.MapSettings = p.readMapSettings(version)
 	data.Checksum = p.readUint32()
 
 	if p.err != nil {
@@ -487,21 +486,25 @@ func (p *mapExchangeParser) readMapGenSettings(atLeastV2 bool) map[string]interf
 	return settings
 }
 
-func (p *mapExchangeParser) readPollution() interface{} {
-	return map[string]interface{}{
-		"enabled":                                     p.readOptional(func() interface{} { return p.readBool() }),
-		"diffusion_ratio":                             p.readOptional(func() interface{} { return p.readDouble() }),
-		"min_to_diffuse":                              p.readOptional(func() interface{} { return p.readDouble() }),
-		"ageing":                                      p.readOptional(func() interface{} { return p.readDouble() }),
-		"expected_max_per_chunk":                      p.readOptional(func() interface{} { return p.readDouble() }),
-		"min_to_show_per_chunk":                       p.readOptional(func() interface{} { return p.readDouble() }),
-		"min_pollution_to_damage_trees":               p.readOptional(func() interface{} { return p.readDouble() }),
-		"pollution_with_max_forest_damage":            p.readOptional(func() interface{} { return p.readDouble() }),
-		"pollution_per_tree_damage":                   p.readOptional(func() interface{} { return p.readDouble() }),
-		"pollution_restored_per_tree_damage":          p.readOptional(func() interface{} { return p.readDouble() }),
-		"max_pollution_to_restore_trees":              p.readOptional(func() interface{} { return p.readDouble() }),
-		"enemy_attack_pollution_consumption_modifier": p.readOptional(func() interface{} { return p.readDouble() }),
+func (p *mapExchangeParser) readPollution(hasMaxPollutionToRestoreTrees bool) interface{} {
+	settings := map[string]interface{}{
+		"enabled":                            p.readOptional(func() interface{} { return p.readBool() }),
+		"diffusion_ratio":                    p.readOptional(func() interface{} { return p.readDouble() }),
+		"min_to_diffuse":                     p.readOptional(func() interface{} { return p.readDouble() }),
+		"ageing":                             p.readOptional(func() interface{} { return p.readDouble() }),
+		"expected_max_per_chunk":             p.readOptional(func() interface{} { return p.readDouble() }),
+		"min_to_show_per_chunk":              p.readOptional(func() interface{} { return p.readDouble() }),
+		"min_pollution_to_damage_trees":      p.readOptional(func() interface{} { return p.readDouble() }),
+		"pollution_with_max_forest_damage":   p.readOptional(func() interface{} { return p.readDouble() }),
+		"pollution_per_tree_damage":          p.readOptional(func() interface{} { return p.readDouble() }),
+		"pollution_restored_per_tree_damage": p.readOptional(func() interface{} { return p.readDouble() }),
 	}
+	// Removed from the exchange payload in Factorio 2.1.18.
+	if hasMaxPollutionToRestoreTrees {
+		settings["max_pollution_to_restore_trees"] = p.readOptional(func() interface{} { return p.readDouble() })
+	}
+	settings["enemy_attack_pollution_consumption_modifier"] = p.readOptional(func() interface{} { return p.readDouble() })
+	return settings
 }
 
 func (p *mapExchangeParser) readRealSteering() interface{} {
@@ -529,7 +532,7 @@ func (p *mapExchangeParser) readEnemyEvolution() interface{} {
 	}
 }
 
-func (p *mapExchangeParser) readEnemyExpansion(atLeastV21 bool) interface{} {
+func (p *mapExchangeParser) readEnemyExpansion(atLeastV21, hasDispatchCooldown bool) interface{} {
 	settings := map[string]interface{}{
 		"enabled":                p.readOptional(func() interface{} { return p.readBool() }),
 		"max_expansion_distance": p.readOptional(func() interface{} { return p.readUint32() }),
@@ -551,6 +554,9 @@ func (p *mapExchangeParser) readEnemyExpansion(atLeastV21 bool) interface{} {
 	}
 	settings["min_expansion_cooldown"] = p.readOptional(func() interface{} { return p.readUint32() })
 	settings["max_expansion_cooldown"] = p.readOptional(func() interface{} { return p.readUint32() })
+	if hasDispatchCooldown {
+		settings["build_base_unit_dispatch_cooldown"] = p.readOptional(func() interface{} { return p.readUint32() })
+	}
 	return settings
 }
 
@@ -649,15 +655,19 @@ func (p *mapExchangeParser) readAsteroidsSettings() interface{} {
 	}
 }
 
-func (p *mapExchangeParser) readMapSettings(atLeastV2, atLeastV21 bool) map[string]interface{} {
+func (p *mapExchangeParser) readMapSettings(version [4]uint16) map[string]interface{} {
+	atLeastV2 := versionAtLeast(version, 2, 0, 0, 0)
+	atLeastV21 := versionAtLeast(version, 2, 1, 0, 0)
+	hasDispatchCooldown := versionAtLeast(version, 2, 1, 13, 0)
+	hasMaxPollutionToRestoreTrees := !versionAtLeast(version, 2, 1, 18, 0)
 	settings := map[string]interface{}{
-		"pollution": p.readPollution(),
+		"pollution": p.readPollution(hasMaxPollutionToRestoreTrees),
 	}
 	if !atLeastV21 {
 		settings["steering"] = p.readSteering()
 	}
 	settings["enemy_evolution"] = p.readEnemyEvolution()
-	settings["enemy_expansion"] = p.readEnemyExpansion(atLeastV21)
+	settings["enemy_expansion"] = p.readEnemyExpansion(atLeastV21, hasDispatchCooldown)
 	settings["unit_group"] = p.readUnitGroup()
 	settings["path_finder"] = p.readPathFinder()
 	settings["max_failed_behavior_count"] = p.readUint32()

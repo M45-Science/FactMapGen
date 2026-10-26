@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
 	"testing"
 )
@@ -61,5 +62,36 @@ func TestSharedExchangeImportIsLocalForGuestsAndSignedInUsers(t *testing.T) {
 	}
 	if !reflect.DeepEqual(before, after) {
 		t.Fatal("opening shared exchange changed server presets")
+	}
+}
+
+func TestSharedChatWireExchangeImport(t *testing.T) {
+	input, err := os.ReadFile("testdata/map-exchange/chatwire-2.1.23.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &server{store: newTestStore(t)}
+	body, err := json.Marshal(importExchangeStringRequest{Name: "Shared map", ExchangeString: string(input), Local: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	srv.handleProfile(rec, httptest.NewRequest(http.MethodPost, "/api/profiles/import-exchange", bytes.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var doc profileDocument
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.ID != "local:Shared map" {
+		t.Fatalf("id=%q", doc.ID)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(doc.MapSettings, &settings); err != nil {
+		t.Fatal(err)
+	}
+	if asMap(settings["enemy_expansion"])["build_base_unit_dispatch_cooldown"] != float64(1800) {
+		t.Fatalf("lost expansion cooldown: %s", doc.MapSettings)
 	}
 }
