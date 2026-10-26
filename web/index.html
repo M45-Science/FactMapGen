@@ -155,29 +155,24 @@
                   <option value="3072">3K</option>
                   <option value="4096">4K</option>
                 </select>
-                <label id="previewScaleField" class="preview-scale-field" title="Map scale in meters per output pixel. Enter any value from 0.015625 to 25; larger values show more area.">
-                  <input id="previewZoom" type="number" min="0.015625" max="25" step="any" value="1" list="previewScalePresets" aria-label="Preview scale in meters per pixel" />
-                  <span>m/px</span>
+                <div id="previewScaleField" class="preview-scale-field" role="group" aria-label="Map zoom">
+                  <button id="previewZoomOut" type="button" title="Zoom out" aria-label="Zoom out" disabled>−</button>
+                  <input id="previewZoom" type="number" min="0.015625" max="25" step="any" value="1" aria-label="Preview scale in meter/pixel" title="Map scale in meter/pixel. Larger values show more area." />
+                  <label for="previewZoom">meter/pixel</label>
+                  <button id="previewZoomIn" type="button" title="Zoom in" aria-label="Zoom in" disabled>+</button>
+                </div>
+                <label class="check-field preview-grid-toggle" title="Show a sparse grid aligned to world coordinates. Spacing adjusts with zoom.">
+                  <input id="previewGridToggle" type="checkbox" />
+                  <span>Grid <output id="previewGridSize" hidden></output></span>
                 </label>
-                <datalist id="previewScalePresets">
-                  <option value="0.0625"></option>
-                  <option value="0.125"></option>
-                  <option value="0.25"></option>
-                  <option value="0.5"></option>
-                  <option value="1"></option>
-                  <option value="2"></option>
-                  <option value="4"></option>
-                  <option value="8"></option>
-                  <option value="16"></option>
-                  <option value="25"></option>
-                </datalist>
-                <button id="previewResetView" type="button" class="preview-reset-button" title="Return the preview to the map origin at 1 meter per pixel." disabled>Reset view</button>
+                <button id="previewResetView" type="button" class="preview-reset-button" title="Return the preview to the map origin at 1 meter/pixel." disabled>Reset view</button>
                 <button id="previewBtn" type="button" class="preview-button" aria-label="Generate preview">Preview</button>
               </div>
               <div class="preview-scroll">
                 <div class="preview-frame">
                   <div id="previewTiles" class="preview-tiles" aria-hidden="true"></div>
                   <img id="previewImage" alt="Factorio map preview" draggable="false" />
+                  <svg id="previewGrid" class="preview-grid" aria-hidden="true" hidden></svg>
                   <div id="previewEmpty" class="preview-empty">No preview image</div>
                   <div id="previewCoordinates" class="preview-coordinates" aria-hidden="true" hidden></div>
                 </div>
@@ -367,6 +362,9 @@
             <label>Maximum preview size (pixels)
               <input id="guestPreviewSize" type="number" min="512" max="4096" step="1" required value="512" />
             </label>
+            <label>Maximum view size (tiles per side)
+              <input id="guestMaxViewSize" type="number" min="512" max="262144" step="1" required value="8192" />
+            </label>
             <label class="check-field"><input id="guestAllowZoom" type="checkbox" /><span>Allow zoom</span></label>
             <label class="check-field"><input id="guestAllowExact" type="checkbox" /><span>Allow Exact Factorio previews</span></label>
             <label class="check-field"><input id="guestAllowPNG" type="checkbox" /><span>Allow lossless PNG output</span></label>
@@ -397,6 +395,7 @@
     <script src="/preview-source.js"></script>
     <script src="/share-link.js"></script>
     <script src="/tile-viewer.js"></script>
+    <script src="/preview-grid.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>

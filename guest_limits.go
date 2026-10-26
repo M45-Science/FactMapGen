@@ -9,13 +9,14 @@ import (
 
 type guestLimits struct {
 	MaxPreviewSize int  `json:"maxPreviewSize"`
+	MaxViewSize    int  `json:"maxViewSize"`
 	AllowZoom      bool `json:"allowZoom"`
 	AllowExact     bool `json:"allowExact"`
 	AllowPNG       bool `json:"allowPNG"`
 }
 
 func defaultGuestLimits() guestLimits {
-	return guestLimits{MaxPreviewSize: guestMaxPreviewSize}
+	return guestLimits{MaxPreviewSize: guestMaxPreviewSize, MaxViewSize: 8192}
 }
 
 func (s *server) loadGuestLimits() (guestLimits, error) {
@@ -57,6 +58,10 @@ func (s *server) handleGuestLimits(w http.ResponseWriter, r *http.Request) {
 		}
 		if limits.MaxPreviewSize < 512 || limits.MaxPreviewSize > 4096 {
 			writeError(w, http.StatusBadRequest, "maximum guest preview size must be between 512 and 4096 pixels")
+			return
+		}
+		if limits.MaxViewSize < 512 || limits.MaxViewSize > 262144 {
+			writeError(w, http.StatusBadRequest, "maximum guest view size must be between 512 and 262144 tiles per side")
 			return
 		}
 		raw, err := json.Marshal(limits)

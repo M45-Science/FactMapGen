@@ -388,12 +388,17 @@ const els = {
   previewPlanet: $("#previewPlanet"),
   previewZoom: $("#previewZoom"),
   previewScaleField: $("#previewScaleField"),
+  previewZoomOut: $("#previewZoomOut"),
+  previewZoomIn: $("#previewZoomIn"),
   previewResetView: $("#previewResetView"),
   autoRefreshPreview: $("#autoRefreshPreview"),
   seedValue: $("#seedValue"),
   seedRandom: $("#seedRandom"),
   seedRerollBtn: $("#seedRerollBtn"),
   previewFrame: $(".preview-frame"),
+  previewGridToggle: $("#previewGridToggle"),
+  previewGridSize: $("#previewGridSize"),
+  previewGrid: $("#previewGrid"),
   previewTiles: $("#previewTiles"),
   previewImage: $("#previewImage"),
   previewEmpty: $("#previewEmpty"),
@@ -435,6 +440,7 @@ const els = {
   adminPanel: $("#adminPanel"),
   guestLimitsForm: $("#guestLimitsForm"),
   guestPreviewSize: $("#guestPreviewSize"),
+  guestMaxViewSize: $("#guestMaxViewSize"),
   guestAllowZoom: $("#guestAllowZoom"),
   guestAllowExact: $("#guestAllowExact"),
   guestAllowPNG: $("#guestAllowPNG"),
@@ -561,7 +567,10 @@ async function init() {
     updatePreviewViewControls();
     scheduleAutoPreview();
   });
+  els.previewZoomOut.addEventListener("click", () => zoomPreviewByButton(1));
+  els.previewZoomIn.addEventListener("click", () => zoomPreviewByButton(-1));
   els.previewResetView.addEventListener("click", resetPreviewView);
+  els.previewGridToggle.addEventListener("change", () => updatePreviewGrid());
   els.previewFrame.addEventListener("pointerdown", beginPreviewPan);
   els.previewFrame.addEventListener("pointermove", updatePreviewPan);
   els.previewFrame.addEventListener("pointermove", updatePreviewCoordinates);
@@ -975,6 +984,7 @@ async function refreshAdminPanel() {
     ]);
     state.config.guestLimits = limits;
     els.guestPreviewSize.value = limits.maxPreviewSize;
+    els.guestMaxViewSize.value = limits.maxViewSize;
     els.guestAllowZoom.checked = limits.allowZoom;
     els.guestAllowExact.checked = limits.allowExact;
     els.guestAllowPNG.checked = limits.allowPNG;
@@ -995,6 +1005,7 @@ async function saveGuestLimits(event) {
       method: "PUT",
       body: JSON.stringify({
         maxPreviewSize: Number(els.guestPreviewSize.value),
+        maxViewSize: Number(els.guestMaxViewSize.value),
         allowZoom: els.guestAllowZoom.checked,
         allowExact: els.guestAllowExact.checked,
         allowPNG: els.guestAllowPNG.checked,
@@ -1803,7 +1814,7 @@ async function generatePreview(options = {}) {
       format: guestsCan("allowPNG") ? els.previewFormat.value : "avif",
       size,
       planet,
-      zoom: canUsePreviewZoom() ? currentPreviewScale() : "1",
+      zoom: currentPreviewScale(),
       centerX: view.centerX,
       centerY: view.centerY,
       mapGen: previewMapGenPayload(),
@@ -2037,11 +2048,16 @@ function canUsePreviewZoom() {
   return guestsCan("allowZoom");
 }
 
+function maxPreviewScaleForSize(size = currentPreviewSize()) {
+  if (state.session) return maxPreviewScale;
+  return Math.min(maxPreviewScale, (state.config.guestLimits?.maxViewSize ?? 8192) / size);
+}
+
 function currentPreviewScale() {
-  const scale = Number.parseFloat(els.previewZoom.value);
-  if (!Number.isFinite(scale)) return "1";
-  const bounded = Math.min(maxPreviewScale, Math.max(minPreviewScale, scale));
-  if (bounded !== scale) els.previewZoom.value = String(bounded);
+  const parsed = Number.parseFloat(els.previewZoom.value);
+  const scale = canUsePreviewZoom() && Number.isFinite(parsed) ? parsed : 1;
+  const bounded = Math.min(maxPreviewScaleForSize(), Math.max(minPreviewScale, scale));
+  els.previewZoom.value = String(bounded);
   return String(bounded);
 }
 
@@ -2104,11 +2120,37 @@ function updatePreviewViewControls() {
   );
   els.previewResetView.disabled = !enabled || previewViewIsReset();
   els.previewFrame.classList.toggle("preview-interactive", interactive);
+  updatePreviewZoomControls(interactive);
+  updatePreviewGrid();
   els.previewFrame.title = interactive
     ? canUsePreviewZoom()
-      ? "Drag to pan. Use the mouse wheel to zoom around the pointer."
+      ? "Drag to pan. Use + / − to zoom, or the mouse wheel to zoom around the pointer."
       : "Drag to pan."
     : "";
+}
+
+function updatePreviewGrid(view = pointerViewForCurrentPreview()) {
+  const grid = els.previewGrid;
+  const layout = els.previewGridToggle.checked && previewInteractionEnabled() && view
+    ? window.PreviewGrid.layout(view) : null;
+  grid.toggleAttribute("hidden", !layout);
+  els.previewGridSize.hidden = !layout;
+  if (!layout) return;
+  els.previewGridSize.textContent = `${layout.spacing.toLocaleString()} m`;
+  els.previewGridSize.title = `Grid cells: ${layout.spacing.toLocaleString()} × ${layout.spacing.toLocaleString()} meters`;
+  grid.setAttribute("viewBox", `0 0 ${layout.size} ${layout.size}`);
+  const lines = [];
+  for (const axis of ["x", "y"]) {
+    for (const position of layout[axis]) {
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", axis === "x" ? position : 0);
+      line.setAttribute("x2", axis === "x" ? position : layout.size);
+      line.setAttribute("y1", axis === "y" ? position : 0);
+      line.setAttribute("y2", axis === "y" ? position : layout.size);
+      lines.push(line);
+    }
+  }
+  grid.replaceChildren(...lines);
 }
 
 function resetPreviewView() {
@@ -2224,6 +2266,12 @@ function updatePreviewPan(event) {
     refreshVisibleFastTiles();
   } else {
     els.previewImage.style.transform = `translate(${gesture.dx}px, ${gesture.dy}px)`;
+    updatePreviewGrid({
+      size: gesture.size,
+      tilesPerPixel: gesture.tilesPerPixel,
+      centerX: gesture.centerX - gesture.dx * gesture.worldUnitsPerClientX,
+      centerY: gesture.centerY - gesture.dy * gesture.worldUnitsPerClientY,
+    });
   }
   event.preventDefault();
 }
@@ -2277,6 +2325,7 @@ function cancelPreviewPan(event) {
     refreshVisibleFastTiles();
   }
   clearPreviewPanTransform();
+  updatePreviewGrid();
   if (gesture && els.previewFrame.hasPointerCapture(gesture.pointerID)) {
     els.previewFrame.releasePointerCapture(gesture.pointerID);
   }
@@ -2292,8 +2341,8 @@ function setFastTileView(centerX, centerY, scale, size) {
   if (!displayed?.tiled || !previewTileViewer?.isActive()) return false;
   const nextCenterX = finitePreviewNumber(centerX, displayed.centerX);
   const nextCenterY = finitePreviewNumber(centerY, displayed.centerY);
-  const nextScale = positivePreviewNumber(scale, displayed.tilesPerPixel);
   const nextSize = positivePreviewNumber(size, displayed.size);
+  const nextScale = Math.min(maxPreviewScaleForSize(nextSize), positivePreviewNumber(scale, displayed.tilesPerPixel));
   const view = previewViewForCurrentProfile();
   view.centerX = nextCenterX;
   view.centerY = nextCenterY;
@@ -2346,10 +2395,10 @@ function zoomPreviewAtPointer(event) {
   if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) delta *= 16;
   if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) delta *= rect.height;
   const scaled = Math.min(
-    maxPreviewScale,
+    maxPreviewScaleForSize(pointerView.size),
     Math.max(minPreviewScale, oldScale * Math.pow(2, delta / 300)),
   );
-  const nextScale = Number(scaled.toPrecision(8));
+  const nextScale = Math.min(maxPreviewScaleForSize(pointerView.size), Number(scaled.toPrecision(8)));
   if (!Number.isFinite(nextScale) || nextScale === oldScale) return;
   event.preventDefault();
 
@@ -2386,11 +2435,33 @@ function zoomPreviewAtPointer(event) {
   }, previewWheelDebounceMs);
 }
 
+function zoomPreviewByButton(direction) {
+  const rect = els.previewFrame.getBoundingClientRect();
+  zoomPreviewAtPointer({
+    deltaY: direction * 300,
+    deltaMode: 0,
+    clientX: rect.left + rect.width / 2,
+    clientY: rect.top + rect.height / 2,
+    preventDefault() {},
+  });
+}
+
+function updatePreviewZoomControls(interactive = previewInteractionEnabled()) {
+  const scale = Number(currentPreviewScale());
+  const size = pointerViewForCurrentPreview()?.size ?? currentPreviewSize();
+  const enabled = interactive && canUsePreviewZoom();
+  els.previewZoom.max = String(maxPreviewScaleForSize(size));
+  els.previewZoomOut.disabled = !enabled || scale >= maxPreviewScaleForSize(size);
+  els.previewZoomIn.disabled = !enabled || scale <= minPreviewScale;
+}
+
 function renderPreviewScaleControl(enabled) {
   const canUseScale = canUsePreviewZoom();
   els.previewScaleField.hidden = !canUseScale;
   if (!canUseScale) els.previewZoom.value = "1";
   els.previewZoom.disabled = !enabled || !state.config.previewEnabled || !canUseScale;
+  currentPreviewScale();
+  updatePreviewZoomControls(enabled && previewInteractionEnabled());
 }
 
 function setControlsEnabled(enabled) {
@@ -2889,6 +2960,7 @@ function updatePreviewFrameSize(size = currentPreviewSize()) {
   const value = `${next}px`;
   if (els.mapgenBody.style.getPropertyValue("--preview-size") === value) return false;
   els.mapgenBody.style.setProperty("--preview-size", value);
+  renderPreviewScaleControl(Boolean(state.selected));
   return true;
 }
 

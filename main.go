@@ -1430,6 +1430,15 @@ func previewRequestWithLimits(req previewRequest, user *authUser, limits guestLi
 		if req.Size == 0 || req.Size > limits.MaxPreviewSize {
 			req.Size = limits.MaxPreviewSize
 		}
+		// Bound world coverage after applying the image-size cap. Use the Fast
+		// parser so legacy zoom values are covered without Exact source limits.
+		maxViewSize := limits.MaxViewSize
+		if maxViewSize == 0 {
+			maxViewSize = defaultGuestLimits().MaxViewSize
+		}
+		if zoom, err := fastPreviewZoomSpec(req.Zoom, req.Size); err == nil && req.Size > 0 && float64(req.Size)*zoom.tilesPerPixel > float64(maxViewSize) {
+			req.Zoom = strconv.FormatFloat(float64(maxViewSize)/float64(req.Size), 'g', -1, 64)
+		}
 	}
 	return req
 }
