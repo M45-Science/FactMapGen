@@ -117,7 +117,7 @@
                 <button id="duplicateBtn" type="button">Duplicate</button>
                 <button id="renameBtn" type="button">Rename</button>
                 <button id="downloadBtn" type="button">Export string</button>
-                <button id="downloadZipBtn" type="button">Download zip</button>
+                <button id="shareBtn" type="button">Share</button>
                 <button id="deleteBtn" type="button" class="danger">Delete</button>
                 <button id="saveBtn" type="button" class="primary">Save</button>
               </div>
@@ -139,6 +139,10 @@
                   <option value="gleba">Gleba</option>
                   <option value="fulgora">Fulgora</option>
                   <option value="aquilo">Aquilo</option>
+                </select>
+                <select id="previewFormat" title="AVIF reduces download size. PNG preserves every pixel." aria-label="Preview image format" hidden>
+                  <option value="avif" selected>AVIF (smaller)</option>
+                  <option value="png">PNG (lossless)</option>
                 </select>
                 <select id="previewSize" title="Preview image size in pixels. Auto uses the largest square that fits without scrollbars." aria-label="Preview size">
                   <option value="auto" selected>Autosize</option>
@@ -208,13 +212,19 @@
     </div>
 
     <div id="exportStringDialog" class="modal-overlay" hidden>
-      <section class="modal-dialog export-dialog" aria-label="Export exchange string">
+      <section class="modal-dialog export-dialog" aria-labelledby="exportStringTitle">
         <div class="modal-header">
-          <h2>Export string</h2>
+          <h2 id="exportStringTitle">Export string</h2>
           <button id="closeExportStringBtn" type="button" class="small-button">Close</button>
         </div>
+        <div id="shareViewOptions" hidden>
+          <label class="check-field">
+            <input id="shareIncludeView" type="checkbox" checked />
+            <span>Include coordinates and zoom</span>
+          </label>
+        </div>
         <label>
-          Exchange string
+          <span id="exportStringLabel">Exchange string</span>
           <textarea id="exportStringOutput" spellcheck="false" rows="8" readonly></textarea>
         </label>
         <div class="modal-actions">
@@ -371,6 +381,7 @@
       <button id="toastClose" type="button" class="toast-close" aria-label="Dismiss message">Dismiss</button>
     </div>
     <script src="/preview-source.js"></script>
+    <script src="/share-link.js"></script>
     <script src="/tile-viewer.js"></script>
     <script src="/app.js"></script>
   </body>

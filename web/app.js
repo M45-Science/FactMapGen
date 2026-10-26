@@ -52,6 +52,7 @@ let previewTileViewer = null;
 let displayedPreview = null;
 let previewPointerView = null;
 let factorioUpdateNoticeShown = false;
+let sharedPreview = null;
 
 const resources = [
   { key: "coal", label: "Coal", color: "#2b2d2a", richness: true },
@@ -357,7 +358,7 @@ const els = {
   duplicateBtn: $("#duplicateBtn"),
   deleteBtn: $("#deleteBtn"),
   downloadBtn: $("#downloadBtn"),
-  downloadZipBtn: $("#downloadZipBtn"),
+  shareBtn: $("#shareBtn"),
   saveBtn: $("#saveBtn"),
   openImportBtn: $("#openImportBtn"),
   importPresetDialog: $("#importPresetDialog"),
@@ -370,6 +371,10 @@ const els = {
   closeExportStringBtn: $("#closeExportStringBtn"),
   copyExportStringBtn: $("#copyExportStringBtn"),
   exportStringOutput: $("#exportStringOutput"),
+  exportStringTitle: $("#exportStringTitle"),
+  exportStringLabel: $("#exportStringLabel"),
+  shareViewOptions: $("#shareViewOptions"),
+  shareIncludeView: $("#shareIncludeView"),
   renamePresetDialog: $("#renamePresetDialog"),
   renameForm: $("#renameForm"),
   closeRenameBtn: $("#closeRenameBtn"),
@@ -378,6 +383,7 @@ const els = {
   previewBtn: $("#previewBtn"),
   previewEngine: $("#previewEngine"),
   previewSize: $("#previewSize"),
+  previewFormat: $("#previewFormat"),
   mapgenBody: $(".mapgen-body"),
   previewPlanet: $("#previewPlanet"),
   previewZoom: $("#previewZoom"),
@@ -478,6 +484,10 @@ async function init() {
   });
   els.closeExportStringBtn.addEventListener("click", closeExportStringDialog);
   els.copyExportStringBtn.addEventListener("click", copyExportString);
+  els.shareIncludeView.addEventListener("change", () => {
+    updateSharedPreviewLink();
+    hideToast();
+  });
   els.exportStringDialog.addEventListener("click", (event) => {
     if (event.target === els.exportStringDialog) closeExportStringDialog();
   });
@@ -502,7 +512,7 @@ async function init() {
   els.renameForm.addEventListener("submit", renameProfile);
   els.profileSelect.addEventListener("change", () => loadProfile(els.profileSelect.value));
   els.saveBtn.addEventListener("click", saveProfile);
-  els.downloadZipBtn.addEventListener("click", downloadPresetZip);
+  els.shareBtn.addEventListener("click", sharePreview);
   els.previewBtn.addEventListener("click", () => generatePreview());
   els.previewEngine.addEventListener("change", () => {
     renderPreviewEngineControls();
@@ -511,6 +521,7 @@ async function init() {
     renderPreview();
     scheduleAutoPreview();
   });
+  els.previewFormat.addEventListener("change", () => scheduleAutoPreview());
   els.previewSize.addEventListener("change", () => {
     updatePreviewFrameSize();
     scheduleAutoPreview();
@@ -577,12 +588,15 @@ async function init() {
   await loadSession();
   hideLogin();
   await loadProfiles(false);
+  window.addEventListener("hashchange", openSharedPreview);
+  await openSharedPreview();
 }
 
 async function api(path, options = {}) {
+  const { responseType, ...fetchOptions } = options;
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
+    ...fetchOptions,
   });
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
@@ -600,7 +614,7 @@ async function api(path, options = {}) {
     throw new Error(message);
   }
   if (response.status === 204) return null;
-  return response.json();
+  return responseType === "blob" ? response.blob() : response.json();
 }
 
 function localProfileDocument(name, mapGen, mapSettings, updatedAt = new Date().toISOString()) {
@@ -1548,50 +1562,75 @@ async function downloadPreset() {
   }
 }
 
-async function downloadPresetZip() {
-  if (!state.selected) return;
-  if (!state.mapGen || !state.mapSettings) {
-    window.location.href = "/api/profiles/" + encodeURIComponent(state.selected) + "/download.zip";
-    return;
-  }
-  ensureRandomSeedDefault();
+async function sharePreview() {
+  if (!state.selected || !state.mapGen || !state.mapSettings) return;
+  els.shareBtn.disabled = true;
   try {
-    const response = await fetch("/api/profiles/" + encodeURIComponent(state.selected) + "/download.zip", {
+    const mapGen = previewMapGenPayload();
+    // A random preset still has a resolved preview seed. Freeze it only in
+    // the shared copy so opening the link reproduces this map.
+    if (isRandomSeed(mapGen.seed)) mapGen.seed = Number(previewSeedForCurrentProfile());
+    const view = {
+      ...previewViewForCurrentProfile(),
+      planet: previewPlanetForCurrentProfile(),
+      scale: Number(currentPreviewScale()),
+    };
+    const body = await api("/api/profiles/" + encodeURIComponent(state.selected) + "/exchange-string", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: selectedProfileName(), mapGen: state.mapGen, mapSettings: state.mapSettings }),
+      body: JSON.stringify({ mapGen, mapSettings: state.mapSettings }),
     });
-    if (!response.ok) {
-      let message = response.status + " " + response.statusText;
-      try {
-        const body = await response.json();
-        if (body.error) message = body.error;
-      } catch {
-        // Keep the HTTP status text.
-      }
-      throw new Error(message);
-    }
-    const blob = await response.blob();
-    const link = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    link.href = url;
-    link.download = downloadFilenameFromResponse(response) || ((selectedProfileName() || "preset") + ".zip");
-    document.body.append(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+    sharedPreview = { exchangeString: body.exchangeString, view };
+    const url = updateSharedPreviewLink();
+    showExportString(url, true);
+    await copyTextToClipboard(url);
   } catch (error) {
     showToast(error.message, true);
+  } finally {
+    els.shareBtn.disabled = !state.selected;
   }
 }
 
-function downloadFilenameFromResponse(response) {
-  const header = response.headers.get("Content-Disposition") || "";
-  const match = header.match(/filename="?([^";]+)"?/i);
-  return match ? match[1] : "";
+function updateSharedPreviewLink() {
+  if (!sharedPreview) return;
+  const view = els.shareIncludeView.checked
+    ? sharedPreview.view
+    : { planet: sharedPreview.view.planet };
+  const url = window.PreviewShareLink.create(window.location.href, sharedPreview.exchangeString, view);
+  els.exportStringOutput.value = url;
+  return url;
 }
 
-function showExportString(exchangeString) {
+async function openSharedPreview() {
+  const hash = window.location.hash;
+  try {
+    const shared = window.PreviewShareLink.parse(hash);
+    if (!shared) return;
+    const body = await api("/api/profiles/import-exchange", {
+      method: "POST",
+      body: JSON.stringify({ name: "Shared map", exchangeString: shared.exchangeString, local: true }),
+    });
+    if (window.location.hash !== hash) return;
+    cancelAutoPreview();
+    const name = ensureAvailableLocalProfileName("Shared map");
+    const doc = localProfileDocument(name, body.mapGen, body.mapSettings);
+    state.previewViews[doc.id] = { centerX: shared.centerX, centerY: shared.centerY };
+    state.previewPlanets[doc.id] = shared.planet;
+    els.previewEngine.value = "fast";
+    els.previewZoom.value = String(canUsePreviewZoom() ? shared.scale : 1);
+    state.profiles = [localProfileSummary(doc), ...state.profiles.filter((profile) => profile.source !== "local")].sort(compareProfiles);
+    selectLocalProfile(doc);
+    showToast("Shared map opened.");
+  } catch (error) {
+    showToast("Could not open shared map: " + error.message, true);
+  }
+}
+
+function showExportString(exchangeString, share = false) {
+  els.shareViewOptions.hidden = !share;
+  if (!share) sharedPreview = null;
+  els.exportStringTitle.textContent = share ? "Share" : "Export string";
+  els.exportStringLabel.textContent = share ? "Link" : "Exchange string";
+  els.exportStringOutput.dataset.copyLabel = share ? "Link" : "Export string";
   els.exportStringOutput.value = exchangeString;
   els.exportStringDialog.hidden = false;
   window.setTimeout(() => {
@@ -1602,6 +1641,7 @@ function showExportString(exchangeString) {
 
 function closeExportStringDialog() {
   els.exportStringDialog.hidden = true;
+  sharedPreview = null;
 }
 
 async function copyExportString() {
@@ -1617,10 +1657,11 @@ async function copyExportString() {
 }
 
 async function copyTextToClipboard(text) {
+  const label = els.exportStringOutput.dataset.copyLabel || "Export string";
   if (navigator.clipboard && window.isSecureContext) {
     try {
       await navigator.clipboard.writeText(text);
-      showToast("Export string copied.");
+      showToast(`${label} copied.`);
       return;
     } catch {
       // Fall through to the selected-text fallback.
@@ -1629,10 +1670,10 @@ async function copyTextToClipboard(text) {
   els.exportStringOutput.focus();
   els.exportStringOutput.select();
   if (document.execCommand && document.execCommand("copy")) {
-    showToast("Export string copied.");
+    showToast(`${label} copied.`);
     return;
   }
-  showToast("Export string ready to copy.");
+  showToast(`${label} ready to copy.`);
 }
 
 function selectedPreviewAvailable() {
@@ -1712,6 +1753,7 @@ async function generatePreview(options = {}) {
     const view = previewViewForCurrentProfile();
     const payload = {
       engine: currentPreviewEngine(),
+      format: state.session ? els.previewFormat.value : "avif",
       size,
       planet,
       zoom: canUsePreviewZoom() ? currentPreviewScale() : "1",
@@ -1891,15 +1933,15 @@ function selectedProfileName() {
 
 function renderHeader() {
   if (!state.selected) {
-    els.statusLine.textContent = state.session ? "Create a preset to start." : "Guest access: choose a preset to view or download.";
+    els.statusLine.textContent = state.session ? "Create a preset to start." : "Guest access: choose a preset to preview.";
     return;
   }
   els.profileSelect.value = state.selected;
   if (!state.session) {
     if (selectedProfileIsLocal()) {
-      els.statusLine.textContent = "Local working preset; export or download when done";
+      els.statusLine.textContent = "Local working preset; share or export when done";
     } else {
-      els.statusLine.textContent = state.dirty ? "Guest local-only changes" : "Guest access: create, import, preview, export, and download locally";
+      els.statusLine.textContent = state.dirty ? "Guest local-only changes" : "Guest access: create, import, preview, share, and export locally";
     }
     return;
   }
@@ -2317,7 +2359,7 @@ function setControlsEnabled(enabled) {
   els.renameBtn.disabled = !canEdit;
   els.duplicateBtn.disabled = !canDuplicate;
   els.downloadBtn.disabled = !enabled;
-  els.downloadZipBtn.disabled = !enabled;
+  els.shareBtn.disabled = !enabled;
   els.profileSelect.disabled = state.profiles.length === 0;
   els.seedRandom.disabled = !enabled;
   els.seedValue.disabled = !enabled || !state.mapGen;
@@ -2345,6 +2387,8 @@ function renderPreviewEngineControls() {
   const exactOption = Array.from(els.previewEngine.options).find((option) => option.value === "factorio");
   const fastOption = Array.from(els.previewEngine.options).find((option) => option.value === "fast");
   const exactAllowed = Boolean(state.session);
+  els.previewFormat.hidden = !exactAllowed;
+  if (!exactAllowed) els.previewFormat.value = "avif";
   const exactAvailable = exactAllowed && factorioPreviewAvailable();
   const fastAvailable = fastPreviewAvailable();
   const planet = previewPlanetForCurrentProfile();
@@ -2916,17 +2960,12 @@ async function showFastTilePreview(profile, payload, requestRevision) {
         centerX: tile.centerX,
         centerY: tile.centerY,
       };
-      const body = await api(`/api/profiles/${encodeURIComponent(profile)}/preview`, {
+      return api(`/api/profiles/${encodeURIComponent(profile)}/preview-image`, {
         method: "POST",
         body: JSON.stringify(tilePayload),
         signal: tile.signal,
+        responseType: "blob",
       });
-      if (body.engine && body.engine !== "fast") throw new Error("tile request did not use the Fast renderer");
-      if (String(body.planet || "") !== payload.planet) {
-        throw new Error("tile response did not use the selected planet");
-      }
-      if (!body.url) throw new Error("tile response did not include an image URL");
-      return body.url;
     },
   });
   updatePreviewViewControls();

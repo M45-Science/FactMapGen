@@ -348,12 +348,15 @@ func TestFastPreviewCacheCanceledSameWorldWaiterReturnsPromptly(t *testing.T) {
 	cache := newFastPreviewCache(8<<20, 2)
 	key := fastPreviewWorldKey{0x43}
 	entry := cache.acquireWorld(key, settings)
-	if err := entry.acquireRender(context.Background()); err != nil {
-		cache.releaseWorld(entry)
-		t.Fatal(err)
+	for range cap(entry.renderGate) {
+		if err := entry.acquireRender(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 	}
 	defer func() {
-		entry.releaseRender()
+		for range cap(entry.renderGate) {
+			entry.releaseRender()
+		}
 		cache.releaseWorld(entry)
 	}()
 
@@ -390,12 +393,9 @@ func TestFastPreviewCacheCanceledSameWorldWaiterReturnsPromptly(t *testing.T) {
 func TestFastPreviewCacheRenderAdmissionCancellation(t *testing.T) {
 	_, _, _, settings := benchmarkPreviewSettings()
 	cache := newFastPreviewCache(8<<20, 2)
-	wantSlots := 1
-	if runtime.GOMAXPROCS(0) >= 2*fastPreviewMaxWorkers {
-		wantSlots = 2
-	}
-	if slots := cap(cache.renderGate); slots != wantSlots || slots > 2 {
-		t.Fatalf("render admission slots = %d, want %d and at most 2", slots, wantSlots)
+	wantSlots := max(1, runtime.NumCPU())
+	if slots := cap(cache.renderGate); slots != wantSlots {
+		t.Fatalf("render admission slots = %d, want %d", slots, wantSlots)
 	}
 	heldSlots := 0
 	defer func() {

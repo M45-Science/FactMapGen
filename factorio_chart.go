@@ -23,6 +23,8 @@ type factorioChartEntity struct {
 // Keep neighboring views reusable when the cache fills, instead of dropping
 // every chunk at once. Published entity slices are immutable.
 type factorioChartChunkCache struct {
+	// Immutable after publication; pooled evaluators share the original LRU.
+	shared    *factorioChartChunkCache
 	mu        sync.Mutex
 	entries   map[[2]int]*list.Element
 	lru       list.List
@@ -37,6 +39,9 @@ type factorioChartChunkEntry struct {
 }
 
 func (c *factorioChartChunkCache) get(key [2]int) ([]factorioChartEntity, bool) {
+	if c.shared != nil {
+		return c.shared.get(key)
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	entry, ok := c.entries[key]
@@ -48,6 +53,10 @@ func (c *factorioChartChunkCache) get(key [2]int) ([]factorioChartEntity, bool) 
 }
 
 func (c *factorioChartChunkCache) store(key [2]int, entities []factorioChartEntity) {
+	if c.shared != nil {
+		c.shared.store(key, entities)
+		return
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if entry, ok := c.entries[key]; ok {

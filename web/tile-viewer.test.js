@@ -380,3 +380,29 @@ test("fractional scales preserve seamless world alignment", () => {
   assert.equal(left.top, right.top);
   assert.equal(left.size, 512);
 });
+
+test("direct image blobs are released after tile decode and late cancellation", async (t) => {
+  const originalDocument = global.document;
+  const originalCreate = URL.createObjectURL;
+  const originalRevoke = URL.revokeObjectURL;
+  global.document = { createElement: () => new FakeImage() };
+  const created = [];
+  const revoked = [];
+  URL.createObjectURL = () => { const url = `blob:tile-${created.length}`; created.push(url); return url; };
+  URL.revokeObjectURL = (url) => revoked.push(url);
+  t.after(() => {
+    global.document = originalDocument;
+    URL.createObjectURL = originalCreate;
+    URL.revokeObjectURL = originalRevoke;
+  });
+  const viewer = new TilePreviewViewer(createFakeContainer(), { prefetchPerimeters: false });
+  viewer.configure({
+    sourceKey: "avif", tileScale: 1,
+    view: { size: 512, scale: 1, centerX: 256, centerY: 256 },
+    requestTile: async () => new Blob(["image"], { type: "image/avif" }),
+  });
+  assert.equal((await viewer.refresh()).loaded, 1);
+  assert.deepEqual(revoked, created);
+  await viewer.loadEntryImage({ state: "canceled" }, new Blob(["late"]));
+  assert.equal(created.length, 1, "canceled requests must not allocate object URLs");
+});

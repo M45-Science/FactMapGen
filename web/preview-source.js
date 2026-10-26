@@ -28,6 +28,7 @@
     return JSON.stringify({
       profile,
       engine: "fast",
+      format: payload?.format || "avif",
       planet: knownPlanetName(payload?.planet),
       seed: payload?.seed || "",
       mapGen: payload?.mapGen || {},

@@ -129,53 +129,62 @@ var fastScaleValues = map[string]float64{
 }
 
 func (p *previewer) renderFast(ctx context.Context, ref profileRef, mapGen json.RawMessage, req previewRequest) (previewResponse, error) {
+	resp, img, err := p.renderFastImage(ctx, ref, mapGen, req)
+	if err != nil {
+		return previewResponse{}, err
+	}
+	previewName, err := p.storePreviewImage(img.data, img.contentType, img.ext)
+	if err != nil {
+		return previewResponse{}, err
+	}
+	resp.URL = "/api/previews/" + url.PathEscape(previewName) + "?ts=" + url.QueryEscape(resp.GeneratedAt)
+	return resp, nil
+}
+
+// renderFastImage returns an encoded image directly without retaining a transient image URL.
+func (p *previewer) renderFastImage(ctx context.Context, ref profileRef, mapGen json.RawMessage, req previewRequest) (previewResponse, previewEncodedImage, error) {
 	size := req.Size
 	if size == 0 {
 		size = 768
 	}
 	if size < 256 || size > maxPreviewOutputSize {
-		return previewResponse{}, invalidPreviewRequest(fmt.Errorf("preview size must be between 256 and %d pixels", maxPreviewOutputSize))
+		return previewResponse{}, previewEncodedImage{}, invalidPreviewRequest(fmt.Errorf("preview size must be between 256 and %d pixels", maxPreviewOutputSize))
 	}
 	planet, err := normalizeFastPreviewPlanet(req.Planet)
 	if err != nil {
-		return previewResponse{}, invalidPreviewRequest(err)
+		return previewResponse{}, previewEncodedImage{}, invalidPreviewRequest(err)
 	}
 	zoom, err := fastPreviewZoomSpec(req.Zoom, size)
 	if err != nil {
-		return previewResponse{}, invalidPreviewRequest(err)
+		return previewResponse{}, previewEncodedImage{}, invalidPreviewRequest(err)
 	}
 	centerX, centerY, err := normalizedPreviewCenter(req.CenterX, req.CenterY, zoom.tilesPerPixel)
 	if err != nil {
-		return previewResponse{}, invalidPreviewRequest(err)
+		return previewResponse{}, previewEncodedImage{}, invalidPreviewRequest(err)
 	}
 	if err := validatePreviewSeedOverride(req.Seed); err != nil {
-		return previewResponse{}, invalidPreviewRequest(err)
+		return previewResponse{}, previewEncodedImage{}, invalidPreviewRequest(err)
 	}
 	settings, err := parseFastPreviewSettingsForPlanet(mapGen, req.Seed, planet)
 	if err != nil {
-		return previewResponse{}, invalidPreviewRequest(err)
+		return previewResponse{}, previewEncodedImage{}, invalidPreviewRequest(err)
 	}
 	cacheKey, err := fastPreviewCacheKeyForPlanet(mapGen, settings.seed, planet)
 	if err != nil {
-		return previewResponse{}, invalidPreviewRequest(err)
+		return previewResponse{}, previewEncodedImage{}, invalidPreviewRequest(err)
 	}
 	tpp := fastTilesPerPixel(zoom)
 	img, err := p.fastCache().render(ctx, cacheKey, settings, size, tpp, centerX, centerY)
 	if err != nil {
-		return previewResponse{}, err
+		return previewResponse{}, previewEncodedImage{}, err
 	}
-	data, contentType, ext, err := encodePNGPreviewImage(img)
+	encoded, err := p.encodePreviewImage(ctx, img, req.Format)
 	if err != nil {
-		return previewResponse{}, err
-	}
-	previewName, err := p.storePreviewImage(data, contentType, ext)
-	if err != nil {
-		return previewResponse{}, err
+		return previewResponse{}, previewEncodedImage{}, err
 	}
 
 	generatedAt := time.Now().UTC().Format(time.RFC3339)
 	return previewResponse{
-		URL:           "/api/previews/" + url.PathEscape(previewName) + "?ts=" + url.QueryEscape(generatedAt),
 		GeneratedAt:   generatedAt,
 		Size:          size,
 		Planet:        planet,
@@ -187,7 +196,7 @@ func (p *previewer) renderFast(ctx context.Context, ref profileRef, mapGen json.
 			"Fast Go preview rendered %s at %.6g tiles/pixel centered on %.6g, %.6g for %s.",
 			planet, tpp, centerX, centerY, ref.id(),
 		),
-	}, nil
+	}, encoded, nil
 }
 
 func normalizeFastPreviewPlanet(value string) (string, error) {
@@ -485,6 +494,25 @@ func (w *fastPreviewWorld) setEntityCacheBudget(bytes int64) {
 		}
 		if w.spaceAge.vulcanusChart != nil {
 			w.spaceAge.vulcanusChart.chunks.maxBytes = bytes
+		}
+	}
+}
+
+// Only completed, immutable entity chunks are shared. Resource/enemy fields
+// and their mutable spatial caches stay private to each render evaluator.
+func (w *fastPreviewWorld) shareEntityCaches(owner *fastPreviewWorld) {
+	if w.natural != nil {
+		w.natural.chunks.shared = &owner.natural.chunks
+	}
+	if w.spaceAge != nil {
+		if w.spaceAge.glebaChart != nil {
+			w.spaceAge.glebaChart.chunks.shared = &owner.spaceAge.glebaChart.chunks
+		}
+		if w.spaceAge.fulgoraChart != nil {
+			w.spaceAge.fulgoraChart.chunks.shared = &owner.spaceAge.fulgoraChart.chunks
+		}
+		if w.spaceAge.vulcanusChart != nil {
+			w.spaceAge.vulcanusChart.chunks.shared = &owner.spaceAge.vulcanusChart.chunks
 		}
 	}
 }

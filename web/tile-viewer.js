@@ -364,12 +364,17 @@
       }
     }
 
-    loadEntryImage(entry, url) {
+    loadEntryImage(entry, source) {
+      // A request can finish after cancellation even if its transport ignored abort.
+      if (entry.state === "canceled") return;
+      const objectURL = source instanceof Blob ? URL.createObjectURL(source) : null;
+      const url = objectURL || source;
       return new Promise((resolve, reject) => {
         const settle = (callback, value) => {
           entry.cancelImageLoad = null;
           entry.image.onload = null;
           entry.image.onerror = null;
+          if (objectURL) URL.revokeObjectURL(objectURL);
           callback(value);
         };
         entry.cancelImageLoad = (error) => settle(reject, error);

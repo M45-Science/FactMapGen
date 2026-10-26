@@ -66,3 +66,10 @@ test("Gleba can render in Go when Exact is unavailable", () => {
   assert.equal(preferredPreviewEngine("fast", "gleba", false, true), "fast");
   assert.equal(preferredPreviewEngine("factorio", "gleba", false, true), "fast");
 });
+
+test("image format changes invalidate the tile source", () => {
+  assert.notEqual(
+    fastTileSourceKey("default", { format: "avif" }),
+    fastTileSourceKey("default", { format: "png" }),
+  );
+});

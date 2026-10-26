@@ -352,7 +352,9 @@ input[type="range"] {
 
 .mapgen-controls {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0;
   min-height: 0;
   border-right: 3px solid var(--line);
   background: #2a2928;
@@ -360,6 +362,7 @@ input[type="range"] {
 
 .mapgen-subtabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 2px;
   padding: 12px 10px 0;
   border-bottom: 2px solid var(--line);
@@ -1166,6 +1169,22 @@ input[type="range"] {
   width: min(100%, 460px);
 }
 
+.export-dialog {
+  width: min(100%, 860px);
+  max-height: calc(100dvh - 44px);
+  overflow: auto;
+}
+
+#exportStringOutput {
+  height: clamp(180px, 40vh, 380px);
+  padding: 8px;
+  resize: vertical;
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
 .auth-dialog h1,
 .admin-dialog h2,
 .admin-dialog h3,
@@ -1187,6 +1206,11 @@ input[type="range"] {
   min-height: 18px;
   color: #ffb8af;
   font-size: 13px;
+}
+
+#shareViewOptions .check-field {
+  display: flex;
+  gap: 8px;
 }
 
 .auth-actions {

@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"image"
+	"image/draw"
 	_ "image/png"
 	"io"
 	"io/fs"
@@ -69,6 +70,7 @@ type store struct {
 }
 
 type previewer struct {
+	avif                        *previewAVIFEncoder
 	mu                          sync.RWMutex
 	factorioBin                 string
 	timeout                     time.Duration
@@ -119,6 +121,7 @@ type exchangeStringRequest struct {
 }
 
 type importExchangeStringRequest struct {
+	Local          bool   `json:"local,omitempty"`
 	Name           string `json:"name"`
 	ExchangeString string `json:"exchangeString"`
 }
@@ -136,6 +139,7 @@ type renameProfileRequest struct {
 }
 
 type previewRequest struct {
+	Format  string          `json:"format,omitempty"`
 	Engine  string          `json:"engine"`
 	Size    int             `json:"size"`
 	Planet  string          `json:"planet"`
@@ -545,7 +549,7 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 			writeAuthError(w, authErr)
 			return
 		}
-		if errors.Is(authErr, errAuthRequired) {
+		if req.Local || errors.Is(authErr, errAuthRequired) {
 			name, err := canonicalProfileName(req.Name)
 			if err != nil {
 				writeStoreError(w, err)
@@ -571,7 +575,7 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(parts) == 2 && parts[1] == "preview" {
+	if len(parts) == 2 && (parts[1] == "preview" || parts[1] == "preview-image") {
 		if r.Method != http.MethodPost {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
@@ -587,7 +591,41 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusForbidden, "exact previews require sign-in")
 			return
 		}
+		if req.Format != "" && req.Format != "avif" && req.Format != "png" {
+			writeError(w, http.StatusBadRequest, "preview format must be avif or png")
+			return
+		}
 		req = previewRequestForUser(req, user)
+		if parts[1] == "preview-image" {
+			if req.Engine != previewEngineFast {
+				writeError(w, http.StatusBadRequest, "direct image requests require the Fast renderer")
+				return
+			}
+			if s.previewer == nil {
+				writeStoreError(w, errPreviewUnavailable)
+				return
+			}
+			ref, err := s.previewRenderRef(name, req)
+			if err != nil {
+				writeStoreError(w, err)
+				return
+			}
+			mapGen, err := s.previewMapGenBytes(ref, req)
+			if err != nil {
+				writeStoreError(w, err)
+				return
+			}
+			_, img, err := s.previewer.renderFastImage(r.Context(), ref, mapGen, req)
+			if err != nil {
+				writeStoreError(w, err)
+				return
+			}
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("Content-Type", img.contentType)
+			w.Header().Set("Content-Length", strconv.Itoa(len(img.data)))
+			_, _ = w.Write(img.data)
+			return
+		}
 		resp, err := s.renderPreview(r.Context(), name, req, previewPriorityForUser(user))
 		if err != nil {
 			writeStoreError(w, err)
@@ -1336,6 +1374,9 @@ func (s *server) warmDefaultPreview(ctx context.Context) {
 }
 
 func previewRequestForUser(req previewRequest, user *authUser) previewRequest {
+	if req.Format == "" || user == nil {
+		req.Format = "avif"
+	}
 	if user == nil {
 		req.Engine = previewEngineFast
 		req.Zoom = "1"
@@ -1612,7 +1653,24 @@ func (p *previewer) render(ctx context.Context, ref profileRef, mapGenPath strin
 		return previewResponse{}, fmt.Errorf("Factorio preview failed: %w: %s", err, factorioErrorSummary(factorioOutput))
 	}
 
-	data, contentType, ext, err := previewImageBytes(tmpPath, zoom, size)
+	var data []byte
+	var contentType, ext string
+	if req.Format == "avif" {
+		var img image.Image
+		img, err = transformedPreviewImage(tmpPath, zoom, size)
+		if err == nil {
+			rgba, ok := img.(*image.RGBA)
+			if !ok {
+				rgba = image.NewRGBA(image.Rect(0, 0, img.Bounds().Dx(), img.Bounds().Dy()))
+				draw.Draw(rgba, rgba.Bounds(), img, img.Bounds().Min, draw.Src)
+			}
+			var encoded previewEncodedImage
+			encoded, err = p.encodePreviewImage(runCtx, rgba, req.Format)
+			data, contentType, ext = encoded.data, encoded.contentType, encoded.ext
+		}
+	} else {
+		data, contentType, ext, err = previewImageBytes(tmpPath, zoom, size)
+	}
 	if err != nil {
 		return previewResponse{}, err
 	}
@@ -1804,7 +1862,7 @@ func (p *previewer) storePinnedPreviewImage(data []byte, contentType string, ext
 }
 
 func (p *previewer) storePreviewImageWithOptions(data []byte, contentType string, ext string, pinned bool) (string, error) {
-	if ext != ".png" {
+	if ext != ".png" && ext != ".avif" {
 		return "", errors.New("invalid preview image extension")
 	}
 	token, err := randomToken(18)

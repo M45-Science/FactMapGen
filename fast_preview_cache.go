@@ -45,6 +45,8 @@ type fastPreviewTileUse struct {
 }
 
 type fastPreviewWorldCache struct {
+	poolMu     sync.Mutex
+	idleWorlds []*fastPreviewWorld
 	key        fastPreviewWorldKey
 	world      *fastPreviewWorld
 	renderGate chan struct{}
@@ -99,10 +101,7 @@ func newFastPreviewCache(maxBytes int64, maxWorlds int) *fastPreviewCache {
 }
 
 func fastPreviewRenderConcurrency() int {
-	if runtime.GOMAXPROCS(0) >= 2*fastPreviewMaxWorkers {
-		return 2
-	}
-	return 1
+	return max(1, runtime.NumCPU())
 }
 
 func fastPreviewCacheKey(raw json.RawMessage, effectiveSeed uint32) (fastPreviewWorldKey, error) {
@@ -161,16 +160,20 @@ func (c *fastPreviewCache) render(
 		return nil, err
 	}
 	defer releaseFastPreviewGate(c.renderGate)
-	defer entry.world.trimSpatialCaches()
+	// Each admitted render owns its mutable evaluator state. Tile pixels and
+	// the synchronized entity LRU remain shared across those evaluators.
+	world := entry.takeRenderWorld()
+	defer entry.returnRenderWorld(world)
+	defer world.trimSpatialCaches()
 
 	if !entry.retained {
-		return entry.world.render(ctx, size, tilesPerPixel, centerX, centerY)
+		return world.render(ctx, size, tilesPerPixel, centerX, centerY)
 	}
 
 	centerPixelX, alignedX := fastPreviewRasterCoordinate(centerX, tilesPerPixel)
 	centerPixelY, alignedY := fastPreviewRasterCoordinate(centerY, tilesPerPixel)
 	if size%2 != 0 || !alignedX || !alignedY {
-		return entry.world.render(ctx, size, tilesPerPixel, centerX, centerY)
+		return world.render(ctx, size, tilesPerPixel, centerX, centerY)
 	}
 
 	startX := centerPixelX - int64(size/2)
@@ -205,12 +208,12 @@ func (c *fastPreviewCache) render(
 	}
 	if len(missing) > 0 {
 		if tilesPerPixel == 1 && size%fastPreviewTileEdge == 0 && len(missing) == len(uses) && startX%fastPreviewTileEdge == 0 && startY%fastPreviewTileEdge == 0 {
-			if err := c.renderAlignedTileBatch(ctx, entry, uses, size, startX, startY); err != nil {
+			if err := c.renderAlignedTileBatch(ctx, entry, world, uses, size, startX, startY); err != nil {
 				return nil, err
 			}
 		} else {
-			prepareFastPreviewCacheTiles(entry.world, uses, missing, tilesPerPixel)
-			if err := c.renderMissingTiles(ctx, entry, uses, missing, tilesPerPixel); err != nil {
+			prepareFastPreviewCacheTiles(world, uses, missing, tilesPerPixel)
+			if err := c.renderMissingTiles(ctx, entry, world, uses, missing, tilesPerPixel); err != nil {
 				return nil, err
 			}
 		}
@@ -223,7 +226,7 @@ func (c *fastPreviewCache) render(
 
 	originX := float64(startX) * tilesPerPixel
 	originY := float64(startY) * tilesPerPixel
-	if err := entry.world.renderOverlays(ctx, result, originX, originY, tilesPerPixel); err != nil {
+	if err := world.renderOverlays(ctx, result, originX, originY, tilesPerPixel); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -232,12 +235,13 @@ func (c *fastPreviewCache) render(
 func (c *fastPreviewCache) renderAlignedTileBatch(
 	ctx context.Context,
 	entry *fastPreviewWorldCache,
+	world *fastPreviewWorld,
 	uses []fastPreviewTileUse,
 	size int,
 	startX, startY int64,
 ) error {
 	base := image.NewRGBA(image.Rect(0, 0, size, size))
-	if err := entry.world.renderBase(ctx, base, float64(startX), float64(startY), 1); err != nil {
+	if err := world.renderBase(ctx, base, float64(startX), float64(startY), 1); err != nil {
 		return err
 	}
 	for index := range uses {
@@ -286,13 +290,14 @@ func prepareFastPreviewCacheTiles(
 func (c *fastPreviewCache) renderMissingTiles(
 	ctx context.Context,
 	entry *fastPreviewWorldCache,
+	world *fastPreviewWorld,
 	uses []fastPreviewTileUse,
 	missing []int,
 	tilesPerPixel float64,
 ) error {
 	renderOne := func(index int) error {
 		use := &uses[index]
-		tile, err := renderFastPreviewCacheTile(ctx, entry.world, use.x, use.y, tilesPerPixel)
+		tile, err := renderFastPreviewCacheTile(ctx, world, use.x, use.y, tilesPerPixel)
 		if err != nil {
 			return err
 		}
@@ -478,10 +483,34 @@ func newFastPreviewWorldCache(
 	return &fastPreviewWorldCache{
 		key:        key,
 		world:      world,
-		renderGate: make(chan struct{}, 1),
+		renderGate: make(chan struct{}, fastPreviewRenderConcurrency()),
+		idleWorlds: []*fastPreviewWorld{world},
 		retained:   retained,
 		references: 1,
 	}
+}
+
+// takeRenderWorld is called only after acquiring both render admission gates.
+// Extra evaluators are allocated on demand, so idle worlds retain one until
+// concurrent work actually needs another. The gates bound pool growth.
+func (entry *fastPreviewWorldCache) takeRenderWorld() *fastPreviewWorld {
+	entry.poolMu.Lock()
+	if n := len(entry.idleWorlds); n > 0 {
+		world := entry.idleWorlds[n-1]
+		entry.idleWorlds = entry.idleWorlds[:n-1]
+		entry.poolMu.Unlock()
+		return world
+	}
+	entry.poolMu.Unlock()
+	world := newFastPreviewWorld(entry.world.settings)
+	world.shareEntityCaches(entry.world)
+	return world
+}
+
+func (entry *fastPreviewWorldCache) returnRenderWorld(world *fastPreviewWorld) {
+	entry.poolMu.Lock()
+	entry.idleWorlds = append(entry.idleWorlds, world)
+	entry.poolMu.Unlock()
 }
 
 func (entry *fastPreviewWorldCache) acquireRender(ctx context.Context) error {
