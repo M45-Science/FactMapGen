@@ -574,6 +574,7 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		req.Engine = s.previewEngineForPlanet(req.Engine, req.Planet)
 		if user == nil && exactPreviewRequested(req.Engine) {
 			writeError(w, http.StatusForbidden, "exact previews require sign-in")
 			return
@@ -1357,7 +1358,7 @@ func previewPriorityForUser(user *authUser) int {
 }
 
 func (s *server) renderPreview(ctx context.Context, name string, req previewRequest, priority int) (previewResponse, error) {
-	engine := s.previewEngine(req.Engine)
+	engine := s.previewEngineForPlanet(req.Engine, req.Planet)
 	if engine == previewEngineFast {
 		return s.renderFastPreview(ctx, name, req)
 	}
@@ -1376,18 +1377,18 @@ func (s *server) renderPreview(ctx context.Context, name string, req previewRequ
 	return s.previewQueue.submit(ctx, priority, run)
 }
 
+// All built-in planets support Go terrain rendering; Exact remains opt-in and
+// retains its existing authorization requirement.
+func (s *server) previewEngineForPlanet(value, planet string) string {
+	return s.previewEngine(value)
+}
+
 func (s *server) previewEngine(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "exact", previewEngineFactorio:
-		if s.previewer != nil && s.previewer.factorioBinary() != "" {
-			return previewEngineFactorio
-		}
-		if strings.TrimSpace(value) != "" {
-			return previewEngineFactorio
-		}
+	case "", previewEngineFast, "custom", "go":
 		return previewEngineFast
-	case previewEngineFast, "custom", "go":
-		return previewEngineFast
+	case "exact", previewEngineFactorio:
+		return previewEngineFactorio
 	default:
 		return value
 	}

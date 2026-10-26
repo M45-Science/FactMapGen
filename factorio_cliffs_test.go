@@ -103,8 +103,8 @@ func TestFactorioCliffPlacementMatchesEntityOracle(t *testing.T) {
 			}
 		}
 		matchFraction := float64(matched) / float64(len(testCase.Cliffs))
-		if matchFraction < 0.85 {
-			t.Errorf("cliff placement seed %d matched %d/%d (%.1f%%), want >= 85%%", testCase.Seed, matched, len(testCase.Cliffs), matchFraction*100)
+		if matched != len(testCase.Cliffs) || len(placed) != matched {
+			t.Errorf("cliff placement seed %d matched %d/%d (%.1f%%), want exact positions and count", testCase.Seed, matched, len(testCase.Cliffs), matchFraction*100)
 		}
 		t.Logf("cliff placement seed %d matched %d/%d (%.1f%%), predicted %d", testCase.Seed, matched, len(testCase.Cliffs), matchFraction*100, len(placed))
 	}
@@ -183,28 +183,15 @@ func TestRenderFactorioCliffsPaintsChartColorAndSkipsWater(t *testing.T) {
 	}
 }
 
-func TestFactorioCliffStrokeFollowsCrossingOrientation(t *testing.T) {
-	cell := factorioCliffCell{
-		factorioPoint: factorioPoint{x: 10, y: 10.5},
-		left:          1,
-		right:         -1,
-	}
-	painted := map[image.Point]bool{}
-	factorioCliffStrokeRects(cell, func(x0, y0, x1, y1 float64) {
-		for y := int(y0); y < int(y1); y++ {
-			for x := int(x0); x < int(x1); x++ {
-				painted[image.Pt(x, y)] = true
-			}
-		}
-	})
-	for _, point := range []image.Point{image.Pt(8, 10), image.Pt(10, 10), image.Pt(12, 10)} {
-		if !painted[point] {
-			t.Errorf("horizontal cliff stroke did not paint %v", point)
-		}
-	}
-	for _, point := range []image.Point{image.Pt(8, 8), image.Pt(12, 8), image.Pt(8, 12), image.Pt(12, 12)} {
-		if painted[point] {
-			t.Errorf("horizontal cliff stroke painted chunky outer corner %v", point)
+func TestFactorioCliffChartRectUsesOrientation(t *testing.T) {
+	for _, tc := range []struct {
+		cross int
+		want  [4]float64
+	}{{-1, [4]float64{8, 9, 12, 12}}, {1, [4]float64{8, 10, 12, 11}}} {
+		cell := factorioCliffCell{factorioPoint: factorioPoint{x: 10, y: 10.5}, left: tc.cross, right: tc.cross}
+		l, top, r, b := factorioCliffChartRect(cell)
+		if got := [4]float64{l, top, r, b}; got != tc.want {
+			t.Errorf("cross %d: got %v want %v", tc.cross, got, tc.want)
 		}
 	}
 }

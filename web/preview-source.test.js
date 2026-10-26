@@ -53,14 +53,14 @@ test("planet inference recognizes bundled elevation and cliff markers", () => {
   assert.equal(inferPreviewPlanet({ property_expression_names: {} }), "nauvis");
 });
 
-test("Space Age planets prefer Exact whenever Factorio is available", () => {
+test("Every planet honors Fast and explicit Exact selections", () => {
   for (const planet of knownPlanets.slice(1)) {
-    assert.equal(preferredPreviewEngine("fast", planet, true, true), "factorio");
+    assert.equal(preferredPreviewEngine("fast", planet, true, true), "fast");
     assert.equal(preferredPreviewEngine("factorio", planet, true, true), "factorio");
   }
 });
 
-test("Nauvis preserves the requested engine and Space Age falls back when Exact is unavailable", () => {
+test("Gleba can render in Go when Exact is unavailable", () => {
   assert.equal(preferredPreviewEngine("fast", "nauvis", true, true), "fast");
   assert.equal(preferredPreviewEngine("factorio", "nauvis", true, true), "factorio");
   assert.equal(preferredPreviewEngine("fast", "gleba", false, true), "fast");

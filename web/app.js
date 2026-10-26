@@ -1635,8 +1635,13 @@ async function copyTextToClipboard(text) {
   showToast("Export string ready to copy.");
 }
 
+function selectedPreviewAvailable() {
+  return state.config.previewEnabled && (currentPreviewEngine() === "fast"
+    ? fastPreviewAvailable() : Boolean(state.session) && factorioPreviewAvailable());
+}
+
 function canAutoRefreshPreview() {
-  return Boolean(state.selected && state.config.previewEnabled && els.autoRefreshPreview.checked);
+  return Boolean(state.selected && selectedPreviewAvailable() && els.autoRefreshPreview.checked);
 }
 
 function invalidatePreviewResponse() {
@@ -1679,7 +1684,7 @@ async function generatePreview(options = {}) {
   const automatic = Boolean(options.automatic);
   if (!state.selected || !state.mapGen) return false;
   if (automatic && !canAutoRefreshPreview()) return false;
-  if (!state.config.previewEnabled) {
+  if (!selectedPreviewAvailable()) {
     if (!automatic) showToast(previewUnavailableMessage(), true);
     return false;
   }
@@ -2343,7 +2348,6 @@ function renderPreviewEngineControls() {
   const exactAvailable = exactAllowed && factorioPreviewAvailable();
   const fastAvailable = fastPreviewAvailable();
   const planet = previewPlanetForCurrentProfile();
-  const spaceAgeUsesExact = planet !== "nauvis" && exactAvailable;
   els.previewEngine.value = previewSource.preferredPreviewEngine(
     els.previewEngine.value,
     planet,
@@ -2351,10 +2355,8 @@ function renderPreviewEngineControls() {
     fastAvailable,
   );
   if (fastOption) {
-    fastOption.disabled = !fastAvailable || spaceAgeUsesExact;
-    fastOption.title = spaceAgeUsesExact
-      ? "Space Age planets use Factorio Exact rendering for authoritative terrain and resources."
-      : "Fast uses the built-in Go renderer.";
+    fastOption.disabled = !fastAvailable;
+    fastOption.title = "Fast uses the built-in Go renderer.";
   }
   if (exactOption) {
     exactOption.hidden = !exactAllowed;
@@ -2367,10 +2369,8 @@ function renderPreviewEngineControls() {
   els.previewSize.hidden = fast;
   for (const option of els.previewPlanet.options) option.disabled = false;
   els.previewPlanet.title = fast
-    ? "Fast preview surface. Nauvis uses the built-in seeded renderer."
-    : spaceAgeUsesExact
-      ? "Space Age planets automatically use authoritative Factorio Exact rendering."
-      : "Preview surface. Space Age planets require a Space Age-capable Factorio install.";
+    ? "Fast renders all five planets in Go."
+    : "Preview surface. Space Age planets require a Space Age-capable Factorio install.";
 }
 
 function clearVisualControls() {
@@ -2656,7 +2656,7 @@ function randomPreviewSeed() {
 function renderPreviewButtonState() {
   const autoRefresh = els.autoRefreshPreview.checked;
   els.previewBtn.hidden = autoRefresh;
-  els.previewBtn.disabled = autoRefresh || previewInFlight || !state.selected || !state.config.previewEnabled;
+  els.previewBtn.disabled = autoRefresh || previewInFlight || !state.selected || !selectedPreviewAvailable();
 }
 
 function previewMapGenPayload() {
@@ -2720,9 +2720,9 @@ function renderPreview() {
     return;
   }
   els.previewStatus.classList.remove("error");
-  els.previewStatus.textContent = state.config.previewEnabled ? "" : previewUnavailableMessage();
+  els.previewStatus.textContent = selectedPreviewAvailable() ? "" : previewUnavailableMessage();
   updatePreviewFrameSize();
-  hidePreview("No preview image");
+  hidePreview(selectedPreviewAvailable() ? "No preview image" : previewUnavailableMessage());
 }
 
 function previewUnavailableMessage() {
@@ -3732,7 +3732,12 @@ function restorePreviewPlanetForCurrentProfile() {
 }
 
 function invalidatePreviewForPlanetChange() {
-  const message = "Preview planet changed; generate a preview to update the map.";
+  invalidatePreviewResponse();
+  cancelAutoPreview();
+  renderPreviewButtonState();
+  const message = selectedPreviewAvailable()
+    ? "Preview planet changed; generate a preview to update the map."
+    : previewUnavailableMessage();
   hidePreview(message);
   els.previewStatus.classList.remove("error");
   els.previewStatus.textContent = message;

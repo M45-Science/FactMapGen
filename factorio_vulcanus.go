@@ -20,6 +20,7 @@ type factorioVulcanusTile struct {
 }
 
 type factorioVulcanusSample struct {
+	resources            [4]float64
 	tile                 factorioVulcanusTile
 	elevation            float64
 	temperature          float64
@@ -68,11 +69,13 @@ type factorioVulcanusCrackSample struct {
 // factorioVulcanusEvaluator is a topological port of Factorio 2.1.12's
 // default Vulcanus terrain expression graph. settings.seed must already be the
 // effective surface seed; all state is immutable except the bounded,
-// mutex-protected volcano-region cache.
+// mutex-protected volcano and resource region caches.
 type factorioVulcanusEvaluator struct {
-	settings fastPreviewSettings
-	seed     uint32
-	starts   []factorioPoint
+	settings  fastPreviewSettings
+	seed      uint32
+	grid      bool
+	resources *factorioVulcanusResources
+	starts    []factorioPoint
 
 	scaleMultiplier   float64
 	startingDirection float64
@@ -126,7 +129,7 @@ type factorioVulcanusEvaluator struct {
 	regionSpots map[[2]int64][]factorioSelectedSpot
 }
 
-func newFactorioVulcanusEvaluator(settings fastPreviewSettings) *factorioVulcanusEvaluator {
+func newFactorioVulcanusEvaluator(settings fastPreviewSettings, gridMode ...bool) *factorioVulcanusEvaluator {
 	starts := settings.startingPositions
 	if len(starts) == 0 {
 		starts = []factorioPoint{{}}
@@ -144,6 +147,7 @@ func newFactorioVulcanusEvaluator(settings fastPreviewSettings) *factorioVulcanu
 
 	e := &factorioVulcanusEvaluator{
 		settings:          settings,
+		grid:              len(gridMode) > 0 && gridMode[0],
 		seed:              settings.seed,
 		starts:            starts,
 		scaleMultiplier:   scaleMultiplier,
@@ -172,26 +176,26 @@ func newFactorioVulcanusEvaluator(settings fastPreviewSettings) *factorioVulcanu
 	e.basaltsNear = e.biomeNoise(42416, 80*0.5)
 	e.basaltsFar = e.biomeNoise(42416+1000, 80)
 
-	cs := factorioVulcanusCracksScale
-	e.hairlineNoise = e.plasma(15223, 0.3*cs, 0.6*cs, 0.6, 1)
-	e.crackA1 = e.plasma(7543, 2.5*cs, 4*cs, 0.5, 1)
-	e.crackA2 = e.plasma(7443, 1.5*cs, 3.5*cs, 0.5, 1)
-	e.crackAMix = e.detailNoise(241, 2*cs, 2, 0.25)
-	e.crackB1 = e.plasma(12223, 2*cs, 3*cs, 0.5, 1)
-	e.crackB2 = e.plasma(152, cs, 1.5*cs, 0.25, 0.5)
-	e.crackBMix = e.detailNoise(821, 6*cs, 2, 0.5)
-	e.pathPlasma = e.plasma(1543, 1.5*cs, 3*cs, 0.5, 1)
+	cs := float64(float32(factorioVulcanusCracksScale))
+	e.hairlineNoise = e.plasma(15223, float64(float32(0.3)*float32(cs)), float64(float32(0.6)*float32(cs)), 0.6, 1)
+	e.crackA1 = e.plasma(7543, float64(float32(2.5)*float32(cs)), float64(float32(4)*float32(cs)), 0.5, 1)
+	e.crackA2 = e.plasma(7443, float64(float32(1.5)*float32(cs)), float64(float32(3.5)*float32(cs)), 0.5, 1)
+	e.crackAMix = e.detailNoise(241, float64(float32(2)*float32(cs)), 2, 0.25)
+	e.crackB1 = e.plasma(12223, float64(float32(2)*float32(cs)), float64(float32(3)*float32(cs)), 0.5, 1)
+	e.crackB2 = e.plasma(152, cs, float64(float32(1.5)*float32(cs)), 0.25, 0.5)
+	e.crackBMix = e.detailNoise(821, float64(float32(6)*float32(cs)), 2, 0.5)
+	e.pathPlasma = e.plasma(1543, float64(float32(1.5)*float32(cs)), float64(float32(3)*float32(cs)), 0.5, 1)
 	e.pathDetail = e.detailNoise(121, cs*4, 2, 0.5)
 
-	e.auxNoise = makeFactorioMultioctaveNoise(factorioMultioctaveParams{
+	e.auxNoise = e.multioctaveNoise(factorioMultioctaveParams{
 		seed0: e.seed, seed1: 2, octaves: 5, persistence: 0.6,
 		inputScale: 0.2, outputScale: 0.6,
 	})
-	e.moistureNoiseA = makeFactorioMultioctaveNoise(factorioMultioctaveParams{
+	e.moistureNoiseA = e.multioctaveNoise(factorioMultioctaveParams{
 		seed0: e.seed, seed1: 4, octaves: 2, persistence: 0.6,
 		inputScale: 0.025, outputScale: 0.25,
 	})
-	e.moistureNoiseB = makeFactorioMultioctaveNoise(factorioMultioctaveParams{
+	e.moistureNoiseB = e.multioctaveNoise(factorioMultioctaveParams{
 		seed0: e.seed, seed1: 400, octaves: 3, persistence: 0.62,
 		inputScale: 0.051144353, outputScale: 0.25,
 	})
@@ -208,10 +212,11 @@ func newFactorioVulcanusEvaluator(settings fastPreviewSettings) *factorioVulcanu
 	e.basaltDetail234 = e.detailNoise(234, 1.0/50, 4, 1)
 	e.basaltDetail643 = e.detailNoise(643, 1.0/70, 4, 0.7)
 	e.mountainLavaPlasma = e.plasma(17453, 0.2, 0.4, 10, 20)
-	e.rockNoise = makeFactorioMultioctaveNoise(factorioMultioctaveParams{
+	e.rockNoise = e.multioctaveNoise(factorioMultioctaveParams{
 		seed0: e.seed, seed1: 137, octaves: 4, persistence: 0.65,
 		inputScale: 0.1, outputScale: 0.4,
 	})
+	e.initResources()
 	return e
 }
 
@@ -221,9 +226,9 @@ func (e *factorioVulcanusEvaluator) detailNoise(
 	octaves int,
 	magnitude float64,
 ) func(float64, float64) float64 {
-	return makeFactorioMultioctaveNoise(factorioMultioctaveParams{
+	return e.multioctaveNoise(factorioMultioctaveParams{
 		seed0: e.seed, seed1: seed1 + 12243, octaves: octaves,
-		persistence: 0.6, inputScale: 1 / 50.0 / scale, outputScale: magnitude,
+		persistence: 0.6, inputScale: float64(float32(1.0/50) / float32(scale)), outputScale: magnitude,
 	})
 }
 
@@ -231,7 +236,7 @@ func (e *factorioVulcanusEvaluator) biomeNoise(
 	seed1 uint32,
 	scale float64,
 ) func(float64, float64) float64 {
-	return makeFactorioMultioctaveNoise(factorioMultioctaveParams{
+	return e.multioctaveNoise(factorioMultioctaveParams{
 		seed0: e.seed, seed1: seed1, octaves: 5, persistence: 0.65,
 		inputScale: e.scaleMultiplier / scale, outputScale: 1,
 	})
@@ -243,7 +248,7 @@ func (e *factorioVulcanusEvaluator) basisNoise(
 ) func(float64, float64) float64 {
 	tables := factorioBasisTablesFromSeed(e.seed, seed1)
 	return func(x, y float64) float64 {
-		return outputScale * factorioBasisNoise(x*inputScale, y*inputScale, &tables)
+		return float64(float32(outputScale) * factorioBasisNoise32(float32(x)*float32(inputScale), float32(y)*float32(inputScale), &tables, e.grid))
 	}
 }
 
@@ -253,11 +258,11 @@ func (e *factorioVulcanusEvaluator) plasma(
 ) func(float64, float64) float64 {
 	tablesA := factorioBasisTablesFromSeed(e.seed, 12643)
 	tablesB := factorioBasisTablesFromSeed(e.seed, 13423+seed)
-	inputScaleA := 1 / 50.0 / scale
-	inputScaleB := 1 / 50.0 / scale2
+	inputScaleA := float64(float32(1.0/50) / float32(scale))
+	inputScaleB := float64(float32(1.0/50) / float32(scale2))
 	return func(x, y float64) float64 {
-		a := magnitude1 * factorioBasisNoise(x*inputScaleA, y*inputScaleA, &tablesA)
-		b := magnitude2 * factorioBasisNoise(x*inputScaleB, y*inputScaleB, &tablesB)
+		a := float64(float32(magnitude1) * factorioBasisNoise32(float32(x)*float32(inputScaleA), float32(y)*float32(inputScaleA), &tablesA, e.grid))
+		b := float64(float32(magnitude2) * factorioBasisNoise32(float32(x)*float32(inputScaleB), float32(y)*float32(inputScaleB), &tablesB, e.grid))
 		return math.Abs(a - b)
 	}
 }
@@ -304,10 +309,8 @@ func factorioVulcanusStartingSpotAtAngle(
 	xDistortion, yDistortion,
 	xFromStart, yFromStart float64,
 ) float64 {
-	angleRadians := angle / 180 * math.Pi
-	deltaX := distance*math.Sin(angleRadians) - xFromStart + xDistortion
-	deltaY := -distance*math.Cos(angleRadians) - yFromStart + yDistortion
-	return 1 - math.Sqrt(deltaX*deltaX+deltaY*deltaY)/radius
+	cone := newFactorioNoiseCone(float32(angle), float32(distance), float32(radius))
+	return float64(cone.at(float32(xFromStart), float32(yFromStart), float32(xDistortion), float32(yDistortion)))
 }
 
 func (e *factorioVulcanusEvaluator) spawnAt(
@@ -582,6 +585,12 @@ func (e *factorioVulcanusEvaluator) basaltLakesFromCracks(
 }
 
 func (e *factorioVulcanusEvaluator) sample(x, y float64) factorioVulcanusSample {
+	return e.sampleWithStep(x, y, 1)
+}
+
+// Multisample offsets use the consuming generator's lattice spacing: tiles
+// use one world tile, whereas cliff corners use four.
+func (e *factorioVulcanusEvaluator) sampleWithStep(x, y, step float64) factorioVulcanusSample {
 	pre := e.preVolcanoAt(x, y)
 	mountainVolcanoSpots := e.mountainVolcanoSpotsAt(x, y, pre)
 	mountainsRawVolcano := 0.5*pre.mountainsRawPreVolcano + max(
@@ -639,9 +648,9 @@ func (e *factorioVulcanusEvaluator) sample(x, y float64) factorioVulcanusSample 
 	ashlandsFunc := 300 + 0.001*min(ashlandsBasis, ashlandsBasis)
 	basaltLakesMultisample := min(
 		e.basaltLakesFromCracks(x, y, cracks),
-		e.basaltLakesAt(x+1, y),
-		e.basaltLakesAt(x, y+1),
-		e.basaltLakesAt(x+1, y+1),
+		e.basaltLakesAt(x+step, y),
+		e.basaltLakesAt(x, y+step),
+		e.basaltLakesAt(x+step, y+step),
 	)
 	mountainsBlend := lerpFloat(
 		120*basaltLakesMultisample,
@@ -673,6 +682,7 @@ func (e *factorioVulcanusEvaluator) sample(x, y float64) factorioVulcanusSample 
 		1,
 	)
 
+	regions, metal := e.resourceRegions(x, y, pre, [3]float64{mountainsBiomeFull, ashlandsBiomeFull, basaltsBiomeFull}, mountainVolcanoSpots, cracks.hairline)
 	tile := factorioResolveVulcanusTile(factorioVulcanusTileFields{
 		elevation:            elevation,
 		aux:                  aux,
@@ -684,9 +694,11 @@ func (e *factorioVulcanusEvaluator) sample(x, y float64) factorioVulcanusSample 
 		mountainLavaSpots:    mountainLavaSpots,
 		rockNoise:            e.rockNoise(x, y),
 		distance:             pre.spawn.distance,
+		metal:                metal, calcite: regions[2], sulfur: regions[3],
 	})
 	return factorioVulcanusSample{
 		tile:                 tile,
+		resources:            regions,
 		elevation:            max(-500, elevation),
 		temperature:          temperature,
 		moisture:             moisture,
@@ -699,16 +711,17 @@ func (e *factorioVulcanusEvaluator) sample(x, y float64) factorioVulcanusSample 
 }
 
 type factorioVulcanusTileFields struct {
-	elevation            float64
-	aux                  float64
-	moisture             float64
-	mountainsBiome       float64
-	ashlandsBiome        float64
-	basaltsBiome         float64
-	mountainVolcanoSpots float64
-	mountainLavaSpots    float64
-	rockNoise            float64
-	distance             float64
+	metal, calcite, sulfur float64
+	elevation              float64
+	aux                    float64
+	moisture               float64
+	mountainsBiome         float64
+	ashlandsBiome          float64
+	basaltsBiome           float64
+	mountainVolcanoSpots   float64
+	mountainLavaSpots      float64
+	rockNoise              float64
+	distance               float64
 }
 
 func factorioVulcanusRangeSelect(
@@ -728,7 +741,7 @@ func factorioResolveVulcanusTile(f factorioVulcanusTileFields) factorioVulcanusT
 	lavaBasaltsRange := 100 * min(
 		f.basaltsBiome*lavaSpawnExcluder*
 			factorioVulcanusRangeSelect(f.elevation, -5000, 0, 1, -1000, 1),
-		100,
+		100*(1-f.metal),
 	)
 	lavaMountainsRange := 1100 * factorioVulcanusRangeSelect(
 		f.mountainLavaSpots,
@@ -748,7 +761,7 @@ func factorioResolveVulcanusTile(f factorioVulcanusTileFields) factorioVulcanusT
 				-1000,
 				1,
 			),
-		100,
+		100*(1-f.metal),
 	)
 	lavaHotMountainsRange := 1000 * factorioVulcanusRangeSelect(
 		f.mountainLavaSpots,
@@ -773,7 +786,7 @@ func factorioResolveVulcanusTile(f factorioVulcanusTileFields) factorioVulcanusT
 		1,
 		0,
 		5,
-	) + (f.aux - 0.05)
+	) + (f.aux - 0.05) + 50000*f.metal
 	volcanicCracksColdRange := (0.5-f.ashlandsBiome)*factorioVulcanusRangeSelect(
 		f.elevation,
 		20,
@@ -789,7 +802,7 @@ func factorioResolveVulcanusTile(f factorioVulcanusTileFields) factorioVulcanusT
 		1,
 		0,
 		5,
-	) - (f.aux - 0.05)
+	) - (f.aux - 0.05) + 50000*f.metal
 	volcanicSmoothStoneRange := (0.5-f.ashlandsBiome)*factorioVulcanusRangeSelect(
 		f.elevation,
 		20,
@@ -807,8 +820,8 @@ func factorioResolveVulcanusTile(f factorioVulcanusTileFields) factorioVulcanusT
 		2*(f.aux-0.5)
 	volcanicJaggedGroundRange := 5 * min(
 		10,
-		factorioVulcanusRangeSelect(f.elevation, 1010, 2000, 2, -10, 1)+
-			3*(f.aux-0.5),
+		max(f.calcite+0.2, factorioVulcanusRangeSelect(f.elevation, 1010, 2000, 2, -10, 1)+
+			3*(f.aux-0.5)),
 	)
 	volcanicSoilLightMountains := min(0.8, 4*(f.mountainsBiome-0.25)) -
 		0.35*f.mountainVolcanoSpots -
@@ -835,7 +848,7 @@ func factorioResolveVulcanusTile(f factorioVulcanusTileFields) factorioVulcanusT
 	volcanicSoilDarkAshlands := 2*(f.ashlandsBiome-0.5) -
 		1.5*(f.aux-0.25) +
 		1.5*(f.moisture-0.8)
-	volcanicSoilLightRange := max(volcanicSoilLightMountains, volcanicSoilLightAshlands)
+	volcanicSoilLightRange := max(volcanicSoilLightMountains, volcanicSoilLightAshlands, 10*(f.sulfur+0.2))
 	volcanicSoilDarkRange := max(volcanicSoilDarkMountains, volcanicSoilDarkAshlands)
 
 	tiles := [...]struct {
@@ -872,4 +885,9 @@ func factorioResolveVulcanusTile(f factorioVulcanusTileFields) factorioVulcanusT
 		}
 	}
 	return winner
+}
+
+func (e *factorioVulcanusEvaluator) multioctaveNoise(p factorioMultioctaveParams) func(float64, float64) float64 {
+	noise := makeFactorioMultioctaveNoise32(p.seed0, p.seed1, p.octaves, float32(p.persistence), float32(p.inputScale), float32(p.outputScale), e.grid)
+	return func(x, y float64) float64 { return float64(noise(float32(x), float32(y))) }
 }

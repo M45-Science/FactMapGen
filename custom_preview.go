@@ -26,11 +26,13 @@ type fastPreviewSettings struct {
 	startingArea                  float64
 	water                         fastControl
 	trees                         fastControl
+	fish                          bool
 	rocks                         fastControl
 	cliffs                        fastControl
 	cliffElevation0               float64
 	cliffElevationInterval        float64
 	cliffRichness                 float64
+	cliffSmoothing                float64
 	enemyBases                    fastControl
 	noEnemies                     bool
 	moistureFrequency             float64
@@ -63,6 +65,7 @@ type fastPreviewWorld struct {
 	rocks     *factorioRockEvaluator
 	cliffs    *factorioCliffEvaluator
 	enemies   *factorioEnemyEvaluator
+	natural   *factorioNauvisNaturalEvaluator
 }
 
 const (
@@ -235,6 +238,15 @@ func parseFastPreviewSettingsForPlanet(
 	props := fastMap(root["property_expression_names"])
 	cliffSettings := fastMap(root["cliff_settings"])
 	cliffControl := fastPlanetCliffControl(normalizedPlanet)
+	cliff0, cliffInterval, cliffRichness, cliffSmoothing := 10.0, 40.0, 1.0, 0.0
+	switch normalizedPlanet {
+	case fastPreviewPlanetVulcanus:
+		cliff0, cliffInterval, cliffSmoothing = 70, 120, 1
+	case fastPreviewPlanetGleba:
+		cliff0, cliffInterval, cliffRichness = 40, 60, .8
+	case fastPreviewPlanetFulgora:
+		cliff0, cliffRichness = 80, .95
+	}
 	waterControl := "water"
 	treeControl := "trees"
 	enemyControl := "enemy-base"
@@ -258,9 +270,10 @@ func parseFastPreviewSettingsForPlanet(
 		trees:                         fastAutoplaceControl(root, treeControl),
 		rocks:                         fastAutoplaceControl(root, "rocks"),
 		cliffs:                        fastAutoplaceControl(root, cliffControl),
-		cliffElevation0:               fastNumber(cliffSettings["cliff_elevation_0"], 10),
-		cliffElevationInterval:        fastNumber(cliffSettings["cliff_elevation_interval"], 40),
-		cliffRichness:                 fastNumber(cliffSettings["richness"], 1),
+		cliffElevation0:               fastNumber(cliffSettings["cliff_elevation_0"], cliff0),
+		cliffElevationInterval:        fastNumber(cliffSettings["cliff_elevation_interval"], cliffInterval),
+		cliffRichness:                 fastNumber(cliffSettings["richness"], cliffRichness),
+		cliffSmoothing:                clampFloat(fastNumber(cliffSettings["cliff_smoothing"], cliffSmoothing), 0, 1),
 		enemyBases:                    fastAutoplaceControl(root, enemyControl),
 		noEnemies:                     fastBool(root["no_enemies_mode"]),
 		moistureFrequency:             fastNumber(props["control:moisture:frequency"], 1),
@@ -275,6 +288,22 @@ func parseFastPreviewSettingsForPlanet(
 		resourceControls:              map[string]fastControl{},
 		autoplaceControls:             map[string]fastControl{},
 		propertyExpression:            props,
+	}
+	entitySettings := fastMap(fastMap(root["autoplace_settings"])["entity"])
+	fish, explicitFish := fastMap(entitySettings["settings"])["fish"]
+	missingDefault := true
+	if value, ok := entitySettings["treat_missing_as_default"]; ok {
+		missingDefault = fastBool(value)
+	}
+	settings.fish = (explicitFish || missingDefault) && fastNumber(fastMap(fish)["size"], 1) > 0 && fastNumber(fastMap(fish)["frequency"], 1) > 0
+	if normalizedPlanet != fastPreviewPlanetNauvis {
+		if _, explicit := fastMap(root["autoplace_controls"])["rocks"]; !explicit {
+			settings.rocks = fastControl{frequency: 1, size: 1, richness: 1, enabled: true}
+		}
+	}
+	if normalizedPlanet == fastPreviewPlanetVulcanus {
+		// Vulcanus has no cliff autoplace control; Nauvis's control cannot disable it.
+		settings.cliffs = fastControl{frequency: 1, size: 1, richness: 1, enabled: true}
 	}
 	if normalizedPlanet == fastPreviewPlanetNauvis {
 		settings.mapType = fastMapType(props)
@@ -419,6 +448,9 @@ func newFastPreviewWorld(settings fastPreviewSettings) *fastPreviewWorld {
 	if !settings.noEnemies && settings.enemyBases.enabled {
 		world.enemies = newFactorioEnemyEvaluator(settings)
 	}
+	if world.trees != nil || world.rocks != nil {
+		world.natural = &factorioNauvisNaturalEvaluator{settings: settings, nauvis: world.nauvis, trees: world.trees, rocks: world.rocks}
+	}
 	return world
 }
 
@@ -469,7 +501,7 @@ func (w *fastPreviewWorld) renderBase(
 			math.Floor(originY+float64(size-1)),
 		)
 		if err := renderFastNauvisOneTileRows(
-			ctx, img, settings, w.nauvis, w.trees, w.rocks, w.resources, nil, originX, originY,
+			ctx, img, settings, w.nauvis, nil, nil, nil, nil, originX, originY,
 		); err != nil {
 			return err
 		}
@@ -514,6 +546,9 @@ func (w *fastPreviewWorld) renderBase(
 		}
 	}
 
+	if tpp <= 2 {
+		return nil
+	}
 	if w.trees != nil {
 		if err := renderFactorioTrees(ctx, img, settings, w.trees, originX, originY, tpp); err != nil {
 			return err
@@ -570,6 +605,15 @@ func (w *fastPreviewWorld) renderOverlays(
 	img *image.RGBA,
 	originX, originY, tpp float64,
 ) error {
+	// Factorio charts cliffs first, then entities in reverse autoplace order.
+	// At close zoom, keep the cached base as terrain and composite the actual
+	// chart footprints here. Wider views retain the bounded sampling path.
+	charts := w.nauvis != nil && tpp <= 2
+	if charts && w.cliffs != nil {
+		if err := renderFactorioCliffs(ctx, img, w.settings, w.cliffs, originX, originY, tpp); err != nil {
+			return err
+		}
+	}
 	if w.resources != nil && w.resources.hasOil() {
 		oilMask, err := w.resources.oilPreviewMask(
 			ctx, w.settings, img, originX, originY, tpp,
@@ -583,6 +627,32 @@ func (w *fastPreviewWorld) renderOverlays(
 		if err := renderFactorioEnemies(ctx, img, w.settings, w.enemies, originX, originY, tpp); err != nil {
 			return err
 		}
+	}
+	if charts {
+		w.resources.prepareForBounds(math.Floor(originX), math.Floor(originY), math.Floor(originX+float64(img.Bounds().Dx()-1)*tpp), math.Floor(originY+float64(img.Bounds().Dy()-1)*tpp))
+		xAxis, yAxis := newFastPreviewAxis(originX, tpp), newFastPreviewAxis(originY, tpp)
+		if err := parallelFastPreviewRows(ctx, img.Bounds().Dy(), func(y int) {
+			wy := math.Floor(yAxis.coordinate(y))
+			for x := 0; x < img.Bounds().Dx(); x++ {
+				wx := math.Floor(xAxis.coordinate(x))
+				if fastOutOfMapBounds(w.settings, wx, wy) || !factorioPreviewEntityDither(wx, wy, tpp) {
+					continue
+				}
+				o := y*img.Stride + x*4
+				base := color.RGBA{img.Pix[o], img.Pix[o+1], img.Pix[o+2], 255}
+				if !factorioPreviewWaterColor(base) {
+					if resource, ok := w.resources.resourceAt(wx, wy); ok {
+						img.SetRGBA(x, y, resource.mapColor)
+					}
+				}
+			}
+		}); err != nil {
+			return err
+		}
+		if w.natural != nil {
+			return w.natural.render(ctx, img, originX, originY, tpp)
+		}
+		return nil
 	}
 	if w.cliffs != nil {
 		if err := renderFactorioCliffs(ctx, img, w.settings, w.cliffs, originX, originY, tpp); err != nil {
@@ -756,7 +826,7 @@ func fastTilesPerPixel(zoom previewZoom) float64 {
 
 func factorioPreviewEntityDither(wx, wy, tilesPerPixel float64) bool {
 	if tilesPerPixel <= 2 {
-		return (int64(math.Floor(wx/2))+int64(math.Floor(wy/2)))&1 == 0
+		return (int64(math.Floor(wx/2))+int64(math.Floor(wy/2)))&1 != 0
 	}
 	return fastHashUnit(0, 0x43484152, int64(math.Floor(wx)), int64(math.Floor(wy))) < 0.5
 }

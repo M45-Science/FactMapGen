@@ -11,7 +11,7 @@ import (
 
 const (
 	factorioVulcanusOracleSampleCount    = 381
-	factorioVulcanusOracleMinimumMatches = 369
+	factorioVulcanusOracleMinimumMatches = 374
 )
 
 type factorioVulcanusTerrainOracle struct {
@@ -31,18 +31,13 @@ type factorioVulcanusTerrainMismatch struct {
 }
 
 var factorioVulcanusKnownTerrainMismatches = map[factorioVulcanusTerrainMismatch]struct{}{
-	{x: -192, y: -128, gotTile: "volcanic-folds", expectedTile: "volcanic-folds-flat"}:        {},
-	{x: 192, y: 0, gotTile: "volcanic-cracks-warm", expectedTile: "volcanic-smooth-stone"}:    {},
-	{x: 320, y: 0, gotTile: "volcanic-cracks-warm", expectedTile: "volcanic-smooth-stone"}:    {},
-	{x: 491, y: 348, gotTile: "volcanic-cracks-warm", expectedTile: "volcanic-smooth-stone"}:  {},
-	{x: 607, y: -344, gotTile: "volcanic-folds", expectedTile: "volcanic-jagged-ground"}:      {},
-	{x: 763, y: -128, gotTile: "volcanic-soil-dark", expectedTile: "volcanic-soil-light"}:     {},
-	{x: 635, y: 776, gotTile: "volcanic-folds-warm", expectedTile: "volcanic-jagged-ground"}:  {},
-	{x: -966, y: 435, gotTile: "volcanic-folds", expectedTile: "volcanic-jagged-ground"}:      {},
-	{x: 355, y: 1018, gotTile: "volcanic-smooth-stone", expectedTile: "volcanic-cracks-warm"}: {},
-	{x: -1443, y: 226, gotTile: "volcanic-pumice-stones", expectedTile: "volcanic-ash-soil"}:  {},
-	{x: 1871, y: -537, gotTile: "volcanic-ash-light", expectedTile: "volcanic-ash-flats"}:     {},
-	{x: -680, y: 1965, gotTile: "volcanic-cracks-warm", expectedTile: "volcanic-cracks-hot"}:  {},
+	{x: -192, y: -128, gotTile: "volcanic-folds", expectedTile: "volcanic-folds-flat"}:       {},
+	{x: 192, y: 0, gotTile: "volcanic-cracks-warm", expectedTile: "volcanic-smooth-stone"}:   {},
+	{x: 320, y: 0, gotTile: "volcanic-cracks-warm", expectedTile: "volcanic-smooth-stone"}:   {},
+	{x: 491, y: 348, gotTile: "volcanic-cracks-warm", expectedTile: "volcanic-smooth-stone"}: {},
+	{x: -1443, y: 226, gotTile: "volcanic-pumice-stones", expectedTile: "volcanic-ash-soil"}: {},
+	{x: 1871, y: -537, gotTile: "volcanic-ash-light", expectedTile: "volcanic-ash-flats"}:    {},
+	{x: -680, y: 1965, gotTile: "volcanic-cracks-warm", expectedTile: "volcanic-cracks-hot"}: {},
 }
 
 func TestFactorioVulcanusTerrainMatchesReferenceOracle(t *testing.T) {

@@ -11,9 +11,6 @@ const (
 	factorioCliffGridSize         = 4
 	factorioCliffCellCenterX      = 2
 	factorioCliffCellCenterY      = 2.5
-	factorioCliffCornerOffsetY    = 0.5
-	factorioCliffStrokeInset      = 1
-	factorioCliffStrokeReach      = 2
 	factorioCliffLowFrequencySeed = 86883
 	factorioNauvisOffsetXSeed     = 593691028
 	factorioNauvisOffsetYSeed     = 1415852290
@@ -39,6 +36,7 @@ type factorioCliffEvaluator struct {
 	offsetXTables factorioBasisTables
 	offsetYTables factorioBasisTables
 	lowTables     factorioBasisTables
+	smoothing     float64
 	interval      float64
 	elevation0    float64
 	lowFrequency  float64
@@ -63,6 +61,7 @@ func newFactorioCliffEvaluator(
 		offsetYTables: factorioBasisTablesFromSeed(settings.seed, factorioNauvisOffsetYSeed),
 		lowTables:     factorioBasisTablesFromSeed(settings.seed, factorioCliffLowFrequencySeed),
 		interval:      interval,
+		smoothing:     settings.cliffSmoothing,
 		elevation0:    settings.cliffElevation0,
 		enabled: settings.cliffs.enabled && settings.cliffs.size > 0 &&
 			settings.cliffRichness > 0 && interval > 0,
@@ -164,13 +163,6 @@ func factorioCrossesCliff(a, b, cliffAverage, elevation0, interval float64) int 
 	return 0
 }
 
-func factorioCliffCrossingCode(value int) int {
-	if value < 0 {
-		return 3
-	}
-	return value
-}
-
 func factorioCliffCodePlaces(code int) bool {
 	switch code {
 	case 1, 3, 4, 5, 12, 15, 16, 17, 28, 48, 51, 52, 64, 67, 68, 80,
@@ -188,73 +180,7 @@ func (e *factorioCliffEvaluator) placedCells(
 	if !e.enabled {
 		return nil, nil
 	}
-	cxMin := int(math.Floor((x0 - factorioCliffCellCenterX) / factorioCliffGridSize))
-	cxMax := int(math.Ceil((x1 - factorioCliffCellCenterX) / factorioCliffGridSize))
-	cyMin := int(math.Floor((y0 - factorioCliffCellCenterY) / factorioCliffGridSize))
-	cyMax := int(math.Ceil((y1 - factorioCliffCellCenterY) / factorioCliffGridSize))
-	cornerWidth := cxMax - cxMin + 2
-	cornerHeight := cyMax - cyMin + 2
-	corners := make([]factorioCliffCorner, cornerWidth*cornerHeight)
-	cornerReady := make([]bool, len(corners))
-	corner := func(i, j int) factorioCliffCorner {
-		index := (j-cyMin)*cornerWidth + i - cxMin
-		if cornerReady[index] {
-			return corners[index]
-		}
-		value := e.cornerAt(
-			float64(i)*factorioCliffGridSize,
-			float64(j)*factorioCliffGridSize+factorioCliffCornerOffsetY,
-		)
-		corners[index] = value
-		cornerReady[index] = true
-		return value
-	}
-	cross := func(a, b factorioCliffCorner) int {
-		return factorioCrossesCliff(
-			a.elevation,
-			b.elevation,
-			(a.cliffiness+b.cliffiness)/2,
-			e.elevation0,
-			e.interval,
-		)
-	}
-
-	cells := make([]factorioCliffCell, 0)
-	for cy := cyMin; cy <= cyMax; cy++ {
-		if cy&31 == 0 {
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			default:
-			}
-		}
-		for cx := cxMin; cx <= cxMax; cx++ {
-			topLeft := corner(cx, cy)
-			bottomLeft := corner(cx, cy+1)
-			topRight := corner(cx+1, cy)
-			bottomRight := corner(cx+1, cy+1)
-			left := cross(topLeft, bottomLeft)
-			right := cross(topRight, bottomRight)
-			top := cross(topLeft, topRight)
-			bottom := cross(bottomLeft, bottomRight)
-			code := factorioCliffCrossingCode(left)<<6 |
-				factorioCliffCrossingCode(right)<<4 |
-				factorioCliffCrossingCode(top)<<2 |
-				factorioCliffCrossingCode(bottom)
-			if !factorioCliffCodePlaces(code) {
-				continue
-			}
-			worldX := float64(cx)*factorioCliffGridSize + factorioCliffCellCenterX
-			worldY := float64(cy)*factorioCliffGridSize + factorioCliffCellCenterY
-			if worldX >= x0 && worldX < x1 && worldY >= y0 && worldY < y1 {
-				cells = append(cells, factorioCliffCell{
-					factorioPoint: factorioPoint{x: worldX, y: worldY},
-					left:          left, right: right, top: top, bottom: bottom,
-				})
-			}
-		}
-	}
-	return cells, nil
+	return factorioPlaceCliffs(ctx, x0, y0, x1, y1, e.elevation0, e.interval, e.smoothing, e.cornerAt, nil)
 }
 
 func renderFactorioCliffs(
@@ -268,7 +194,7 @@ func renderFactorioCliffs(
 		return nil
 	}
 	bounds := img.Bounds()
-	queryPadding := float64(factorioCliffStrokeReach + factorioCliffStrokeInset)
+	queryPadding := 4.0
 	cells, err := evaluator.placedCells(
 		ctx,
 		originX-queryPadding,
@@ -307,36 +233,30 @@ func renderFactorioCliffs(
 		}
 	}
 	for _, cell := range cells {
-		factorioCliffStrokeRects(cell, paintRect)
+		paintRect(factorioCliffChartRect(cell))
 	}
 	return nil
-}
-
-func factorioCliffStrokeRects(cell factorioCliffCell, paint func(x0, y0, x1, y1 float64)) {
-	centerX := math.Floor(cell.x)
-	centerY := math.Floor(cell.y)
-	inset := float64(factorioCliffStrokeInset)
-	reach := float64(factorioCliffStrokeReach)
-	lowX, highX := centerX-inset, centerX+inset
-	lowY, highY := centerY-inset, centerY+inset
-	paint(lowX, lowY, highX, highY)
-	if cell.left != 0 {
-		paint(centerX-reach, lowY, highX, highY)
-	}
-	if cell.right != 0 {
-		paint(lowX, lowY, centerX+reach+1, highY)
-	}
-	if cell.top != 0 {
-		paint(lowX, centerY-reach, highX, highY)
-	}
-	if cell.bottom != 0 {
-		paint(lowX, lowY, highX, centerY+reach+1)
-	}
 }
 
 func factorioCliffPixelSpan(lower, upperExclusive, origin, tilesPerPixel float64) (int, int) {
 	minPixel := int(math.Ceil((lower - origin) / tilesPerPixel))
 	maxPixel := int(math.Ceil((upperExclusive-origin)/tilesPerPixel)) - 1
+	// Division can round an integer boundary just above the integer (for
+	// example (-20 - -25.6) / .4). Use the same axis as the terrain sampler
+	// to keep every pixel of a world tile inside the same chart rectangle.
+	axis := newFastPreviewAxis(origin, tilesPerPixel)
+	for axis.coordinate(minPixel) < lower {
+		minPixel++
+	}
+	for axis.coordinate(minPixel-1) >= lower {
+		minPixel--
+	}
+	for axis.coordinate(maxPixel) >= upperExclusive {
+		maxPixel--
+	}
+	for axis.coordinate(maxPixel+1) < upperExclusive {
+		maxPixel++
+	}
 	if minPixel > maxPixel {
 		centerPixel := int(math.Floor(((lower+upperExclusive)/2 - origin) / tilesPerPixel))
 		return centerPixel, centerPixel

@@ -1670,3 +1670,46 @@ func TestFactorioInstallManagedDetection(t *testing.T) {
 		t.Fatal("expected empty binary with configured factorio dir to be installable")
 	}
 }
+
+func TestGlebaSupportsPublicGoAndAuthenticatedExact(t *testing.T) {
+	srv := &server{store: newTestStore(t), previewer: &previewer{}}
+	for _, engine := range []string{"", "fast", "go", "factorio"} {
+		t.Run(engine, func(t *testing.T) {
+			wantEngine := previewEngineFast
+			if engine == "factorio" {
+				wantEngine = previewEngineFactorio
+			}
+			if got := srv.previewEngineForPlanet(engine, " GLEBA "); got != wantEngine {
+				t.Fatalf("engine = %q, want %q", got, wantEngine)
+			}
+			body := fmt.Sprintf(`{"engine":%q,"planet":"gleba","size":256,"seed":"123456","mapGen":{"seed":123456}}`, engine)
+			req := httptest.NewRequest(http.MethodPost, "/api/profiles/default:Default/preview", strings.NewReader(body))
+			rec := httptest.NewRecorder()
+			srv.handleProfile(rec, req)
+			wantStatus := http.StatusOK
+			if engine == "factorio" {
+				wantStatus = http.StatusForbidden
+			}
+			if rec.Code != wantStatus {
+				t.Fatalf("guest status = %d, want %d: %s", rec.Code, wantStatus, rec.Body.String())
+			}
+			if engine != "factorio" {
+				var response previewResponse
+				if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+					t.Fatal(err)
+				}
+				if response.Engine != previewEngineFast || response.Planet != fastPreviewPlanetGleba {
+					t.Fatalf("unexpected response: %+v", response)
+				}
+			}
+		})
+	}
+	for _, planet := range fastPreviewTestPlanets {
+		if got := srv.previewEngineForPlanet("", planet); got != previewEngineFast {
+			t.Fatalf("%s default engine = %q", planet, got)
+		}
+		if got := srv.previewEngineForPlanet("factorio", planet); got != previewEngineFactorio {
+			t.Fatalf("%s Exact engine = %q", planet, got)
+		}
+	}
+}

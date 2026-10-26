@@ -5,13 +5,20 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"strings"
 )
 
 type factorioSpaceAgeEvaluator struct {
-	settings fastPreviewSettings
-	terrain  [8]func(float64, float64) float64
-	resource map[string]func(float64, float64) float64
-	vulcanus *factorioVulcanusEvaluator
+	settings      fastPreviewSettings
+	resource      map[string]func(float64, float64) float64
+	vulcanus      *factorioVulcanusEvaluator
+	fulgora       *factorioFulgoraEvaluator
+	aquilo        *factorioAquiloEvaluator
+	gleba         *factorioGlebaEvaluator
+	glebaFields   *glebaFeatureFields
+	glebaChart    *factorioGlebaChart
+	fulgoraChart  *factorioFulgoraChart
+	vulcanusChart *factorioVulcanusChart
 }
 
 type factorioSpaceAgeSample struct {
@@ -22,34 +29,8 @@ type factorioSpaceAgeSample struct {
 	land      bool
 	strength  float64
 	code      float64
-}
-
-var fastGlebaTerrainColors = [...]color.RGBA{
-	{R: 46, G: 68, B: 48, A: 255},
-	{R: 66, G: 82, B: 11, A: 255},
-	{R: 114, G: 86, B: 40, A: 255},
-	{R: 61, G: 57, B: 30, A: 255},
-	{R: 54, G: 15, B: 24, A: 255},
-	{R: 115, G: 53, B: 66, A: 255},
-	{R: 95, G: 93, B: 88, A: 255},
-	{R: 52, G: 55, B: 48, A: 255},
-}
-
-var fastFulgoraTerrainColors = [...]color.RGBA{
-	{R: 131, G: 85, B: 66, A: 255},
-	{R: 120, G: 94, B: 67, A: 255},
-	{R: 112, G: 65, B: 50, A: 255},
-	{R: 125, G: 71, B: 59, A: 255},
-	{R: 114, G: 75, B: 65, A: 255},
-}
-
-var fastAquiloTerrainColors = [...]color.RGBA{
-	{R: 100, G: 135, B: 177, A: 255},
-	{R: 168, G: 188, B: 211, A: 255},
-	{R: 179, G: 185, B: 192, A: 255},
-	{R: 166, G: 174, B: 185, A: 255},
-	{R: 156, G: 166, B: 181, A: 255},
-	{R: 190, G: 194, B: 197, A: 255},
+	resources [4]float64
+	gleba     factorioGlebaSample
 }
 
 func newFactorioSpaceAgeEvaluator(settings fastPreviewSettings) *factorioSpaceAgeEvaluator {
@@ -58,42 +39,24 @@ func newFactorioSpaceAgeEvaluator(settings fastPreviewSettings) *factorioSpaceAg
 		resource: make(map[string]func(float64, float64) float64),
 	}
 	if settings.planet == fastPreviewPlanetVulcanus {
-		evaluator.vulcanus = newFactorioVulcanusEvaluator(settings)
+		evaluator.vulcanus = newFactorioVulcanusEvaluator(settings, true)
+		evaluator.vulcanusChart = &factorioVulcanusChart{world: evaluator, knockout: makeFactorioMultioctaveNoise32(settings.seed, 1300000, 2, .7, 1.0/3, 1, true)}
 	}
-	scales := [8]float64{220, 180, 145, 58, 34, 52, 40, 24}
-	switch settings.planet {
-	case fastPreviewPlanetVulcanus:
-		frequency := positiveOr(fastSpaceAgeControl(settings, "vulcanus_volcanism").frequency, 1)
-		for index := range scales {
-			scales[index] /= frequency
-		}
-	case fastPreviewPlanetGleba:
-		scales = [8]float64{175, 145, 190, 48, 30, 55, 36, 23}
-		frequency := positiveOr(settings.water.frequency, 1)
-		for index := range scales {
-			scales[index] /= frequency
-		}
-	case fastPreviewPlanetFulgora:
-		scales = [8]float64{180, 95, 24, 32, 18, 55, 38, 21}
-	case fastPreviewPlanetAquilo:
-		scales = [8]float64{260, 110, 26, 20, 14, 48, 33, 18}
+	if settings.planet == fastPreviewPlanetFulgora {
+		evaluator.fulgora = newFactorioFulgoraEvaluator(settings, true)
+		evaluator.fulgoraChart = &factorioFulgoraChart{world: evaluator}
 	}
-	for index := range evaluator.terrain {
-		evaluator.terrain[index] = makeFastSpaceAgeNoise(
-			settings.seed, 0x534100+uint32(index)*977, scales[index],
-		)
+	if settings.planet == fastPreviewPlanetAquilo {
+		evaluator.aquilo = newFactorioAquiloEvaluator(settings, true)
 	}
-	resourceNames := []string{
-		"vulcanus_coal", "tungsten_ore", "calcite", "sulfuric_acid_geyser",
-		"gleba_stone", "gleba_enemy_base", "scrap",
-		"aquilo_crude_oil", "lithium_brine", "fluorine_vent",
+	if settings.planet == fastPreviewPlanetGleba {
+		evaluator.gleba = newFactorioGlebaEvaluator(settings, true)
+		evaluator.glebaFields = newGlebaFeatureFields(evaluator.gleba, true)
+		evaluator.glebaChart = &factorioGlebaChart{world: evaluator}
 	}
-	for index, name := range resourceNames {
-		control := fastSpaceAgeControl(settings, name)
-		scale := 68 / positiveOr(control.frequency, 1)
-		evaluator.resource[name] = makeFastSpaceAgeNoise(
-			settings.seed, 0x735000+uint32(index)*1237, scale,
-		)
+	if settings.planet == fastPreviewPlanetGleba {
+		control := fastSpaceAgeControl(settings, "gleba_enemy_base")
+		evaluator.resource["gleba_enemy_base"] = makeFastSpaceAgeNoise(settings.seed, 0x735000+5*1237, 68/positiveOr(control.frequency, 1))
 	}
 	return evaluator
 }
@@ -113,11 +76,15 @@ func (e *factorioSpaceAgeEvaluator) render(
 ) error {
 	width := img.Bounds().Dx()
 	height := img.Bounds().Dy()
+	cliffPixels, err := e.cliffPixels(ctx, width, height, originX, originY, tilesPerPixel)
+	if err != nil {
+		return err
+	}
 	xAxis := newFastPreviewAxis(originX, tilesPerPixel)
 	yAxis := newFastPreviewAxis(originY, tilesPerPixel)
 	renderPixel := func(x, y int, wx, wy float64) {
 		offset := y*img.Stride + x*4
-		base := e.colorAt(wx, wy, tilesPerPixel)
+		base := e.colorAt(wx, wy, tilesPerPixel, cliffPixels[y*width+x])
 		if fastOutOfMapBounds(settings, wx, wy) {
 			base = color.RGBA{R: 20, G: 23, B: 20, A: 255}
 		}
@@ -127,12 +94,28 @@ func (e *factorioSpaceAgeEvaluator) render(
 		img.Pix[offset+3] = 255
 	}
 	if tilesPerPixel >= 1 {
-		return parallelFastPreviewRows(ctx, height, func(y int) {
+		err := parallelFastPreviewRows(ctx, height, func(y int) {
 			wy := math.Floor(yAxis.coordinate(y))
 			for x := 0; x < width; x++ {
 				renderPixel(x, y, math.Floor(xAxis.coordinate(x)), wy)
 			}
 		})
+		if err != nil {
+			return err
+		}
+		if e.aquilo != nil {
+			return e.aquilo.renderEntities(ctx, img, originX, originY, tilesPerPixel)
+		}
+		if e.glebaChart != nil && tilesPerPixel <= 2 {
+			return e.glebaChart.render(ctx, img, originX, originY, tilesPerPixel)
+		}
+		if e.fulgoraChart != nil && tilesPerPixel <= 2 {
+			return e.fulgoraChart.render(ctx, img, originX, originY, tilesPerPixel)
+		}
+		if e.vulcanusChart != nil && tilesPerPixel <= 2 {
+			return e.vulcanusChart.render(ctx, img, originX, originY, tilesPerPixel)
+		}
+		return nil
 	}
 
 	lastWorldY := math.Inf(-1)
@@ -159,23 +142,40 @@ func (e *factorioSpaceAgeEvaluator) render(
 			renderPixel(x, y, wx, wy)
 		}
 	}
+	if e.aquilo != nil {
+		return e.aquilo.renderEntities(ctx, img, originX, originY, tilesPerPixel)
+	}
+	if e.glebaChart != nil {
+		return e.glebaChart.render(ctx, img, originX, originY, tilesPerPixel)
+	}
+	if e.fulgoraChart != nil {
+		return e.fulgoraChart.render(ctx, img, originX, originY, tilesPerPixel)
+	}
+	if e.vulcanusChart != nil {
+		return e.vulcanusChart.render(ctx, img, originX, originY, tilesPerPixel)
+	}
 	return nil
 }
 
-func (e *factorioSpaceAgeEvaluator) colorAt(x, y, tilesPerPixel float64) color.RGBA {
+func (e *factorioSpaceAgeEvaluator) colorAt(x, y, tilesPerPixel float64, cliff ...bool) color.RGBA {
+	withCliff := func(base color.RGBA) color.RGBA {
+		if len(cliff) > 0 && cliff[0] {
+			return factorioCliffMapColor
+		}
+		return base
+	}
 	switch e.settings.planet {
 	case fastPreviewPlanetVulcanus:
 		base, sample := e.vulcanusTerrain(x, y)
-		return e.vulcanusFeatures(base, sample, x, y, tilesPerPixel)
+		return e.vulcanusFeatures(withCliff(base), sample, x, y, tilesPerPixel)
 	case fastPreviewPlanetGleba:
 		base, sample := e.glebaTerrain(x, y)
-		return e.glebaFeatures(base, sample, x, y, tilesPerPixel)
+		return e.glebaFeatures(withCliff(base), sample, x, y, tilesPerPixel)
 	case fastPreviewPlanetFulgora:
 		base, sample := e.fulgoraTerrain(x, y)
-		return e.fulgoraFeatures(base, sample, x, y, tilesPerPixel)
+		return e.fulgoraFeatures(withCliff(base), sample, x, y, tilesPerPixel)
 	case fastPreviewPlanetAquilo:
-		base, sample := e.aquiloTerrain(x, y)
-		return e.aquiloFeatures(base, sample, x, y, tilesPerPixel)
+		return e.aquilo.sample(x, y).tile.color
 	default:
 		return color.RGBA{R: 20, G: 23, B: 20, A: 255}
 	}
@@ -197,6 +197,7 @@ func (e *factorioSpaceAgeEvaluator) vulcanusTerrain(x, y float64) (color.RGBA, f
 		zone:      zone,
 		land:      land,
 		strength:  exact.mountainVolcanoSpots,
+		resources: exact.resources,
 	}
 	return exact.tile.color, sample
 }
@@ -206,29 +207,29 @@ func (e *factorioSpaceAgeEvaluator) vulcanusFeatures(
 	sample factorioSpaceAgeSample,
 	x, y, tilesPerPixel float64,
 ) color.RGBA {
+	if tilesPerPixel <= 2 {
+		return base
+	}
 	if !sample.land {
 		return base
 	}
-	if e.fastCliffAt(sample.elevation, x, y, 120) {
-		base = color.RGBA{R: 144, G: 119, B: 87, A: 255}
-	}
-	start := e.startingPoint()
-	angle := fastSpaceAgeSeedAngle(e.settings.seed)
-	if e.spaceAgeResourceAt("tungsten_ore", x, y, tilesPerPixel, sample.zone == 0,
-		fastSpaceAgeAngledSpot(x, y, start, angle+4*math.Pi/3-0.18, 230, 24)) {
-		return color.RGBA{R: 97, G: 85, B: 149, A: 255}
-	}
-	if e.spaceAgeResourceAt("calcite", x, y, tilesPerPixel, sample.zone == 2,
-		fastSpaceAgeAngledSpot(x, y, start, angle+2*math.Pi/3-0.3, 180, 27)) {
-		return color.RGBA{R: 204, G: 178, B: 178, A: 255}
-	}
-	if e.spaceAgeResourceAt("vulcanus_coal", x, y, tilesPerPixel, sample.zone == 1,
-		fastSpaceAgeAngledSpot(x, y, start, angle+0.25, 105, 25)) {
-		return color.RGBA{A: 255}
-	}
-	if e.spaceAgeFluidAt("sulfuric_acid_geyser", x, y, tilesPerPixel, sample.zone == 2,
-		fastSpaceAgeAngledSpot(x, y, start, angle+2*math.Pi/3+0.28, 285, 32)) {
-		return color.RGBA{R: 198, G: 198, B: 25, A: 255}
+	colors := [4]color.RGBA{{97, 85, 149, 255}, {0, 0, 0, 255}, {204, 178, 178, 255}, {198, 198, 25, 255}}
+	for i, name := range factorioVulcanusResourceNames {
+		control := fastSpaceAgeControl(e.settings, name)
+		if !control.enabled || control.size <= 0 || control.richness <= 0 || sample.resources[i] <= 0 {
+			continue
+		}
+		// Resource regions follow the terrain expressions. Discrete entity rolls
+		// remain seed-stable approximations of Factorio's shared chunk RNG.
+		chance := clampFloat(sample.resources[i]*4, 0, 1)
+		if i == 3 {
+			chance *= 0.05
+		} else if !factorioPreviewEntityDither(x, y, tilesPerPixel) {
+			continue
+		}
+		if fastSpaceAgeEntityChance(e.settings.seed, uint32(0x56524500+i), x, y, tilesPerPixel, chance) {
+			return colors[i]
+		}
 	}
 	if sample.zone == 1 && sample.moisture > 0.62 &&
 		fastSpaceAgeEntityChance(e.settings.seed, 0x5647524e, x, y, tilesPerPixel, 0.045) {
@@ -238,51 +239,19 @@ func (e *factorioSpaceAgeEvaluator) vulcanusFeatures(
 }
 
 func (e *factorioSpaceAgeEvaluator) glebaTerrain(x, y float64) (color.RGBA, factorioSpaceAgeSample) {
-	start := e.startingPoint()
-	distance := math.Hypot(x-start.x, y-start.y)
-	startRadius := 180 * positiveOr(e.settings.startingArea, 1)
-	startLift := clampFloat(1-distance/startRadius, 0, 1)
-	elevation := 0.72*e.terrain[0](x, y) + 0.28*e.terrain[3](x, y) + 0.55*startLift
-	moisture := clampFloat(0.5+0.55*e.terrain[1](x, y)+0.18*e.settings.moistureBias, 0, 1)
-	aux := clampFloat(0.5+0.55*e.terrain[2](x, y)+0.18*e.settings.auxBias, 0, 1)
-	water := fastSpaceAgeControl(e.settings, "gleba_water")
-	waterline := -0.18 + 0.16*math.Log2(positiveOr(water.size, 1))
-	sample := factorioSpaceAgeSample{
-		elevation: 65 + elevation*95,
-		moisture:  moisture,
-		aux:       aux,
-		land:      elevation > waterline,
-	}
-	if !sample.land {
-		if elevation < waterline-0.28 {
-			return color.RGBA{R: 18, G: 37, B: 51, A: 255}, sample
-		}
-		return color.RGBA{R: 25, G: 49, B: 58, A: 255}, sample
-	}
-
-	detail := e.terrain[4](x, y)
+	terrain := e.gleba.sample(x, y)
+	zone := 0
 	switch {
-	case elevation > 0.5:
-		sample.zone = 3
-		return fastGlebaTerrainColors[6+fastSpaceAgeVariant(detail, 2)], sample
-	case elevation > 0.12:
-		sample.zone = 2
-		return fastGlebaTerrainColors[2+fastSpaceAgeVariant(aux+detail*0.25, 2)], sample
-	case moisture > 0.62 && aux < 0.34:
-		sample.zone = 1
-		if moisture > 0.78 {
-			return color.RGBA{R: 132, G: 119, B: 7, A: 255}, sample
-		}
-		return fastGlebaTerrainColors[fastSpaceAgeVariant(detail, 2)], sample
-	case moisture > 0.58 && aux > 0.66:
-		sample.zone = 1
-		if moisture > 0.78 {
-			return color.RGBA{R: 132, G: 7, B: 119, A: 255}, sample
-		}
-		return fastGlebaTerrainColors[4+fastSpaceAgeVariant(detail, 2)], sample
-	default:
-		sample.zone = 0
-		return fastGlebaTerrainColors[fastSpaceAgeVariant(moisture+detail*0.2, 2)], sample
+	case terrain.elevation > 120:
+		zone = 3
+	case terrain.elevation > 20:
+		zone = 2
+	case terrain.elevation > 1:
+		zone = 1
+	}
+	return terrain.tile.color, factorioSpaceAgeSample{
+		elevation: float64(terrain.elevation), moisture: float64(terrain.moisture), aux: float64(terrain.aux),
+		zone: zone, land: !strings.HasPrefix(terrain.tile.name, "wetland-") && terrain.tile.name != "gleba-deep-lake", gleba: terrain,
 	}
 }
 
@@ -291,32 +260,50 @@ func (e *factorioSpaceAgeEvaluator) glebaFeatures(
 	sample factorioSpaceAgeSample,
 	x, y, tilesPerPixel float64,
 ) color.RGBA {
-	if !sample.land {
-		return base
+	if tilesPerPixel <= 2 {
+		return e.glebaEnemies(base, x, y, tilesPerPixel)
 	}
-	if e.fastCliffAt(sample.elevation, x, y, 60) {
-		base = color.RGBA{R: 144, G: 119, B: 87, A: 255}
-	}
-	start := e.startingPoint()
-	stoneStart := fastSpaceAgeAngledSpot(
-		x, y, start, fastSpaceAgeSeedAngle(e.settings.seed)+0.6, 145, 24,
-	)
-	if e.spaceAgeResourceAt("gleba_stone", x, y, tilesPerPixel, sample.zone >= 2, stoneStart) {
+	fields := e.glebaFields.sample(sample.gleba, x, y)
+	stone := fastSpaceAgeControl(e.settings, "gleba_stone")
+	if sample.land && stone.enabled && fields.stoneProbability > 0 && factorioPreviewEntityDither(x, y, tilesPerPixel) {
 		return color.RGBA{R: 175, G: 155, B: 108, A: 255}
 	}
-	plants := fastSpaceAgeControl(e.settings, "gleba_plants")
-	if plants.enabled && sample.moisture > 0.48 {
-		chance := 0.035 * positiveOr(plants.frequency, 1) * positiveOr(plants.size, 1)
-		if fastSpaceAgeEntityChance(e.settings.seed, 0x504c414e, x, y, tilesPerPixel, chance) {
-			if sample.aux > 0.62 {
-				return color.RGBA{R: 185, G: 5, B: 166, A: 255}
-			}
-			if sample.aux < 0.38 {
-				return color.RGBA{R: 185, G: 166, B: 5, A: 255}
-			}
-			return color.RGBA{R: 46, G: 87, B: 48, A: 255}
+	// Stromatolites use ground_tile collision, so they belong in wetlands.
+	if !sample.land && sample.gleba.tile.name != "gleba-deep-lake" && e.settings.rocks.enabled {
+		prob := max(fields.stromatolites[0], fields.stromatolites[1])
+		if fastSpaceAgeEntityChance(e.settings.seed, 0x5354524f, x, y, tilesPerPixel, float64(prob)) {
+			return color.RGBA{129, 105, 78, 255}
 		}
 	}
+	plants := fastSpaceAgeControl(e.settings, "gleba_plants")
+	if plants.enabled && base != factorioCliffMapColor {
+		winner, probability := -1, float32(0)
+		for i, p := range fields.plants {
+			allowed := sample.land
+			switch {
+			case i == 0:
+				allowed = strings.Contains(sample.gleba.tile.name, "yumako")
+			case i == 1:
+				allowed = strings.Contains(sample.gleba.tile.name, "jellynut")
+			case i >= 8:
+				allowed = !sample.land && sample.gleba.tile.name != "gleba-deep-lake"
+			}
+			if allowed && p > probability {
+				winner, probability = i, p
+			}
+		}
+		if winner >= 0 && fastSpaceAgeEntityChance(e.settings.seed, 0x504c414e, x, y, tilesPerPixel, float64(probability)) {
+			if winner < 2 {
+				return color.RGBA{255, 255, 255, 255}
+			}
+			return blendFactorioTrees(base, 1)
+		}
+	}
+	return e.glebaEnemies(base, x, y, tilesPerPixel)
+}
+
+func (e *factorioSpaceAgeEvaluator) glebaEnemies(base color.RGBA, x, y, tilesPerPixel float64) color.RGBA {
+	start := e.startingPoint()
 	enemy := fastSpaceAgeControl(e.settings, "gleba_enemy_base")
 	distance := math.Hypot(x-start.x, y-start.y)
 	if !e.settings.noEnemies && enemy.enabled && distance > 220*positiveOr(e.settings.startingArea, 1) {
@@ -330,206 +317,21 @@ func (e *factorioSpaceAgeEvaluator) glebaFeatures(
 }
 
 func (e *factorioSpaceAgeEvaluator) fulgoraTerrain(x, y float64) (color.RGBA, factorioSpaceAgeSample) {
-	control := fastSpaceAgeControl(e.settings, "fulgora_islands")
-	frequency := positiveOr(control.frequency, 1)
-	size := math.Sqrt(positiveOr(control.size, 1))
-	large, largeCode := fastSpaceAgeSpotField(
-		e.settings.seed, 0x46554c47, x, y,
-		245/frequency, 0.78, 42*size, 92*size,
-	)
-	small, smallCode := fastSpaceAgeSpotField(
-		e.settings.seed, 0x46534d4c, x, y,
-		112/frequency, 0.24, 12*size, 35*size,
-	)
-	start := e.startingPoint()
-	startingIsland := fastSpaceAgeRadialSpot(x, y, start.x, start.y, 52*size)
-	strength := max(large, small, startingIsland)
-	if strength > 0 {
-		strength += 0.18 * e.terrain[2](x, y)
-	}
-	code := largeCode
-	if small > large {
-		code = smallCode
-	}
-	sample := factorioSpaceAgeSample{
-		elevation: strength * 120,
-		land:      strength > 0,
-		strength:  strength,
-		code:      code,
-	}
-	if !sample.land {
-		if e.terrain[0](x, y) > 0 {
-			return color.RGBA{R: 74, G: 42, B: 43, A: 255}, sample
-		}
-		return color.RGBA{R: 56, G: 35, B: 40, A: 255}, sample
-	}
-
-	detail := e.terrain[3](x, y)
-	variant := fastSpaceAgeVariant(detail+code*0.3, len(fastFulgoraTerrainColors))
-	base := fastFulgoraTerrainColors[variant]
-	city := (large > 0.28 && largeCode > 0.43) || startingIsland > 0.35
-	if city {
-		gridX := fastSpaceAgePositiveMod(int64(math.Floor(x)), 14)
-		gridY := fastSpaceAgePositiveMod(int64(math.Floor(y)), 14)
-		switch {
-		case gridX < 2 || gridY < 2:
-			base = color.RGBA{R: 114, G: 102, B: 88, A: 255}
-		case (gridX/4+gridY/4)&1 == 0:
-			base = color.RGBA{R: 104, G: 99, B: 94, A: 255}
-		default:
-			base = color.RGBA{R: 114, G: 95, B: 90, A: 255}
-		}
-		if fastSpaceAgeEntityChance(e.settings.seed, 0x46434f4e, x, y, 1, 0.025) {
-			base = color.RGBA{R: 0, G: 96, B: 145, A: 255}
-		}
-	}
-	return base, sample
+	sample := e.fulgora.sample(x, y)
+	return sample.tile.color, factorioSpaceAgeSample{elevation: float64(sample.elevation), land: sample.tile.name[:3] != "oil", strength: float64(sample.scrapProbability)}
 }
 
-func (e *factorioSpaceAgeEvaluator) fulgoraFeatures(
-	base color.RGBA,
-	sample factorioSpaceAgeSample,
-	x, y, tilesPerPixel float64,
-) color.RGBA {
+func (e *factorioSpaceAgeEvaluator) fulgoraFeatures(base color.RGBA, sample factorioSpaceAgeSample, x, y, tilesPerPixel float64) color.RGBA {
+	if tilesPerPixel <= 2 {
+		return base
+	}
 	if !sample.land {
 		return base
 	}
-	if sample.strength < 0.08 && e.settings.cliffs.enabled && e.settings.cliffRichness > 0 {
-		base = color.RGBA{R: 144, G: 119, B: 87, A: 255}
-	}
-	start := e.startingPoint()
-	scrapStart := fastSpaceAgeRadialSpot(x, y, start.x+22, start.y-16, 28)
-	if e.spaceAgeResourceAt("scrap", x, y, tilesPerPixel, sample.strength > 0.22, scrapStart) {
-		return color.RGBA{R: 229, G: 229, B: 229, A: 255}
+	if sample.strength > 0 && factorioPreviewEntityDither(x, y, tilesPerPixel) && fastSpaceAgeEntityChance(e.settings.seed, 0x46534352, x, y, tilesPerPixel, sample.strength) {
+		return color.RGBA{229, 229, 229, 255}
 	}
 	return base
-}
-
-func (e *factorioSpaceAgeEvaluator) aquiloTerrain(x, y float64) (color.RGBA, factorioSpaceAgeSample) {
-	large, code := fastSpaceAgeSpotField(
-		e.settings.seed, 0x41515549, x, y,
-		650, 0.52, 42, 105,
-	)
-	small, smallCode := fastSpaceAgeSpotField(
-		e.settings.seed, 0x41494345, x, y,
-		88, 0.18, 3, 11,
-	)
-	start := e.startingPoint()
-	startingIsland := fastSpaceAgeRadialSpot(x, y, start.x, start.y, 64)
-	strength := max(large, small, startingIsland)
-	if strength > 0 {
-		strength += 0.2 * e.terrain[2](x, y)
-	}
-	if small > large {
-		code = smallCode
-	}
-	sample := factorioSpaceAgeSample{
-		elevation: strength * 40,
-		land:      strength > 0,
-		strength:  strength,
-		code:      code,
-	}
-	if !sample.land {
-		if e.terrain[0](x, y) > 0 {
-			return color.RGBA{R: 17, G: 15, B: 30, A: 255}, sample
-		}
-		return color.RGBA{R: 15, G: 13, B: 25, A: 255}, sample
-	}
-	if strength < 0.08 {
-		return color.RGBA{R: 21, G: 42, B: 56, A: 255}, sample
-	}
-	variant := fastSpaceAgeVariant(e.terrain[3](x, y)+code*0.25, len(fastAquiloTerrainColors))
-	return fastAquiloTerrainColors[variant], sample
-}
-
-func (e *factorioSpaceAgeEvaluator) aquiloFeatures(
-	base color.RGBA,
-	sample factorioSpaceAgeSample,
-	x, y, tilesPerPixel float64,
-) color.RGBA {
-	if !sample.land || sample.strength < 0.12 {
-		return base
-	}
-	start := e.startingPoint()
-	angle := fastSpaceAgeSeedAngle(e.settings.seed)
-	if e.spaceAgeFluidAt("aquilo_crude_oil", x, y, tilesPerPixel, true,
-		fastSpaceAgeAngledSpot(x, y, start, angle, 34, 13)) {
-		return color.RGBA{A: 255}
-	}
-	if e.spaceAgeFluidAt("lithium_brine", x, y, tilesPerPixel, true,
-		fastSpaceAgeAngledSpot(x, y, start, angle+2*math.Pi/3, 39, 14)) {
-		return color.RGBA{R: 178, G: 255, B: 153, A: 255}
-	}
-	if e.spaceAgeFluidAt("fluorine_vent", x, y, tilesPerPixel, true,
-		fastSpaceAgeAngledSpot(x, y, start, angle+4*math.Pi/3, 43, 14)) {
-		return color.RGBA{G: 204, B: 255, A: 255}
-	}
-	return base
-}
-
-func (e *factorioSpaceAgeEvaluator) fastCliffAt(
-	elevation, x, y, fallbackInterval float64,
-) bool {
-	if !e.settings.cliffs.enabled || e.settings.cliffRichness <= 0 {
-		return false
-	}
-	interval := e.settings.cliffElevationInterval
-	if interval <= 0 {
-		interval = fallbackInterval
-	}
-	phase := math.Mod(elevation-e.settings.cliffElevation0, interval)
-	if phase < 0 {
-		phase += interval
-	}
-	distance := min(phase, interval-phase)
-	continuity := 0.5 + 0.5*e.terrain[7](x, y)
-	return distance < 0.5*positiveOr(e.settings.cliffRichness, 1) && continuity < 0.42
-}
-
-func (e *factorioSpaceAgeEvaluator) spaceAgeResourceAt(
-	name string,
-	x, y, tilesPerPixel float64,
-	favorable bool,
-	startingSignal float64,
-) bool {
-	control := fastSpaceAgeControl(e.settings, name)
-	if !control.enabled || (!favorable && startingSignal <= 0) {
-		return false
-	}
-	field := e.resource[name](x, y)
-	threshold := 0.62 - 0.09*math.Log2(positiveOr(control.size, 1))
-	inPatch := startingSignal+0.28*field > 0.28 || favorable && field > threshold
-	if !inPatch {
-		return false
-	}
-	coverage := 0.38 * clampFloat(positiveOr(control.richness, 1), 0.25, 3)
-	return fastSpaceAgeEntityChance(
-		e.settings.seed, fastSpaceAgeNameSalt(name), x, y, tilesPerPixel, coverage,
-	)
-}
-
-func (e *factorioSpaceAgeEvaluator) spaceAgeFluidAt(
-	name string,
-	x, y, tilesPerPixel float64,
-	favorable bool,
-	startingSignal float64,
-) bool {
-	control := fastSpaceAgeControl(e.settings, name)
-	if !control.enabled || (!favorable && startingSignal <= 0) {
-		return false
-	}
-	field := e.resource[name](x, y)
-	threshold := 0.58 - 0.1*math.Log2(positiveOr(control.size, 1))
-	if startingSignal+0.22*field <= 0.22 && field <= threshold {
-		return false
-	}
-	chance := 0.006 * positiveOr(control.frequency, 1)
-	if startingSignal > 0 {
-		chance = 0.035
-	}
-	return fastSpaceAgeEntityChance(
-		e.settings.seed, fastSpaceAgeNameSalt(name), x, y, tilesPerPixel, chance,
-	)
 }
 
 func (e *factorioSpaceAgeEvaluator) startingPoint() factorioPoint {
@@ -566,87 +368,12 @@ func makeFastSpaceAgeNoise(seed, salt uint32, scale float64) func(float64, float
 	}
 }
 
-func fastSpaceAgeVariant(value float64, count int) int {
-	if count <= 1 {
-		return 0
-	}
-	normalized := clampFloat(0.5+0.42*value, 0, math.Nextafter(1, 0))
-	return min(int(normalized*float64(count)), count-1)
-}
-
-func fastSpaceAgeSeedAngle(seed uint32) float64 {
-	return 2 * math.Pi * float64(seed) / float64(^uint32(0))
-}
-
-func fastSpaceAgeAngledSpot(
-	x, y float64,
-	start factorioPoint,
-	angle, distance, radius float64,
-) float64 {
-	centerX := start.x + math.Cos(angle)*distance
-	centerY := start.y + math.Sin(angle)*distance
-	return fastSpaceAgeRadialSpot(x, y, centerX, centerY, radius)
-}
-
-func fastSpaceAgeRadialSpot(x, y, centerX, centerY, radius float64) float64 {
-	if radius <= 0 {
-		return 0
-	}
-	return clampFloat(1-math.Hypot(x-centerX, y-centerY)/radius, 0, 1)
-}
-
-func fastSpaceAgeSpotField(
-	seed, salt uint32,
-	x, y, spacing, activity, minRadius, maxRadius float64,
-) (float64, float64) {
-	if spacing <= 0 || maxRadius <= 0 || activity <= 0 {
-		return 0, 0
-	}
-	cellX := int64(math.Floor(x / spacing))
-	cellY := int64(math.Floor(y / spacing))
-	best := 0.0
-	bestCode := 0.0
-	for offsetY := int64(-1); offsetY <= 1; offsetY++ {
-		for offsetX := int64(-1); offsetX <= 1; offsetX++ {
-			cx := cellX + offsetX
-			cy := cellY + offsetY
-			active := fastHashUnit(seed, salt, cx, cy)
-			if active > activity {
-				continue
-			}
-			jitterX := fastHashUnit(seed, salt+1, cx, cy)
-			jitterY := fastHashUnit(seed, salt+2, cx, cy)
-			code := fastHashUnit(seed, salt+3, cx, cy)
-			radius := lerpFloat(minRadius, maxRadius, fastHashUnit(seed, salt+4, cx, cy))
-			centerX := (float64(cx) + 0.12 + 0.76*jitterX) * spacing
-			centerY := (float64(cy) + 0.12 + 0.76*jitterY) * spacing
-			dx := (x - centerX) / radius
-			dy := (y - centerY) / (radius * lerpFloat(0.72, 1.25, code))
-			strength := 1 - math.Hypot(dx, dy)
-			if strength > best {
-				best = strength
-				bestCode = code
-			}
-		}
-	}
-	return max(0, best), bestCode
-}
-
 func fastSpaceAgeEntityChance(
 	seed, salt uint32,
 	x, y, tilesPerPixel, chance float64,
 ) bool {
 	coverage := clampFloat(chance*max(1, tilesPerPixel*tilesPerPixel), 0, 1)
 	return fastHashUnit(seed, salt, int64(math.Floor(x)), int64(math.Floor(y))) < coverage
-}
-
-func fastSpaceAgeNameSalt(name string) uint32 {
-	hash := uint32(2166136261)
-	for _, value := range []byte(name) {
-		hash ^= uint32(value)
-		hash *= 16777619
-	}
-	return hash
 }
 
 func fastSpaceAgePositiveMod(value, divisor int64) int64 {

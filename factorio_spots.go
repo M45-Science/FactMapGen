@@ -110,7 +110,7 @@ func factorioSelectSpots(key factorioSpotRegionKey, params factorioSpotSelection
 	mine := make([]factorioSpotCandidate, 0, params.candidateSpotCount)
 	// Every resource shares this stream and owns one skip-set partition.
 	for index, candidate := range accepted {
-		if index%span == offset {
+		if index >= offset && (index-offset)%span == 0 {
 			mine = append(mine, candidate)
 		}
 	}

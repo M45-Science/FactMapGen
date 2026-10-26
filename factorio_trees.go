@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"math"
@@ -67,6 +68,7 @@ type factorioTreeEvaluator struct {
 	starts                   []factorioPoint
 	forestPathCutoutOverride *float64
 	smallNoise               func(float64, float64) float64
+	desertNoise              func(float64, float64) float64
 	fields                   []factorioTreeSpeciesField
 	tempRamps                [][4]float64
 	moistRamps               [][4]float64
@@ -87,6 +89,10 @@ func newFactorioTreeEvaluator(settings fastPreviewSettings, nauvis *factorioNauv
 			persistence: 0.75, inputScale: 0.2, outputScale: 0.5,
 		}),
 		fields: make([]factorioTreeSpeciesField, 0, len(factorioTreeSpeciesCatalog)),
+		desertNoise: makeFactorioMultioctaveNoise(factorioMultioctaveParams{
+			seed0: settings.seed, seed1: crc32.ChecksumIEEE([]byte("tree-08-desert")),
+			octaves: 3, persistence: .65, inputScale: treeFrequency / 50, outputScale: .7,
+		}),
 	}
 	if raw, ok := settings.propertyExpression["trees_forest_path_cutout"]; ok {
 		value := fastNumber(raw, 0)
