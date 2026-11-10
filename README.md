@@ -2,6 +2,22 @@
 
 FactMapGen is a small Go web tool for creating and editing Factorio `map-gen-settings.json` and `map-settings.json` files. Map presets are stored on the server as folders; the browser edits those server-side files directly.
 
+## License
+
+Copyright (c) 2026 Carl Frank Otto III, for original contributions.
+
+FactMapGen is licensed under the GNU Affero General Public License, version 3
+or (at your option) any later version (`AGPL-3.0-or-later`). See [LICENSE](LICENSE)
+for the full terms, including the source-availability requirements for modified
+versions used to provide a network service.
+
+The renderer includes work adapted from
+[FactoryGameFan/FactorioMapWebUI](https://github.com/FactoryGameFan/FactorioMapWebUI)
+under the same license. Preserve its [provenance and attribution](docs/upstream-rendering.md)
+and the [upstream fixture license](testdata/space-age-upstream/LICENSE).
+Third-party dependencies and Factorio game data retain their respective licenses
+and copyright notices; this project license does not relicense those materials.
+
 ![FactMapGen fast Nauvis preview with terrain, resources, trees, and cliffs at an arbitrary 2.75 meters per pixel](docs/preview.png)
 
 Demo videos: [Video 1](https://youtube.com/shorts/kI67a37VIvE?feature=share) · [Video 2](https://youtube.com/shorts/7DkeSczQjD4)
