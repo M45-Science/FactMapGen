@@ -660,8 +660,8 @@ func (w *fastPreviewWorld) renderOverlays(
 	originX, originY, tpp float64,
 ) error {
 	// Factorio charts cliffs first, then entities in reverse autoplace order.
-	// At close zoom, keep the cached base as terrain and composite the actual
-	// chart footprints here. Wider views retain the bounded sampling path.
+	// At close zoom, composite the actual chart footprints over terrain.
+	// Wider views use bounded sampling.
 	charts := w.nauvis != nil && tpp <= 2
 	if charts && w.cliffs != nil {
 		if err := renderFactorioCliffs(ctx, img, w.settings, w.cliffs, originX, originY, tpp); err != nil {

@@ -230,12 +230,16 @@ type factorioEnemyPlacementCandidate struct {
 // and the seed uses the first (possibly translated) position of that batch.
 func (e *factorioEnemyEvaluator) prototypeValues(positions []factorioSpotCandidate, prototype factorioEnemyPrototype) []float64 {
 	sources := make([]float64, len(positions))
-	translated := make([]factorioSpotCandidate, len(positions))
+	if len(positions) == 0 {
+		return sources
+	}
 	for i, p := range positions {
 		sources[i] = e.autoplaceSourceAt(p.x, p.y, prototype.distanceFactor)
-		translated[i] = factorioSpotCandidate{x: p.x + float64(prototype.seed), y: p.y}
 	}
-	return factorioRandomPenaltyBatch(translated, sources, 1, .1)
+	first := positions[0]
+	first.x += float64(prototype.seed)
+	applyFactorioRandomPenalty(sources, first, 1, .1)
+	return sources
 }
 
 // The preview rejects overlapping enemies in reverse candidate order. These

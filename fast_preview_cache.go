@@ -208,14 +208,18 @@ func (c *fastPreviewCache) render(
 	}
 	if len(missing) > 0 {
 		if tilesPerPixel == 1 && size%fastPreviewTileEdge == 0 && len(missing) == len(uses) && startX%fastPreviewTileEdge == 0 && startY%fastPreviewTileEdge == 0 {
-			if err := c.renderAlignedTileBatch(ctx, entry, world, uses, size, startX, startY); err != nil {
+			img, err := world.render(ctx, size, 1, centerX, centerY)
+			if err != nil {
 				return nil, err
 			}
-		} else {
-			prepareFastPreviewCacheTiles(world, uses, missing, tilesPerPixel)
-			if err := c.renderMissingTiles(ctx, entry, world, uses, missing, tilesPerPixel); err != nil {
+			if err := c.storeAlignedTileBatch(ctx, entry, uses, img, startX, startY); err != nil {
 				return nil, err
 			}
+			return img, nil
+		}
+		prepareFastPreviewCacheTiles(world, uses, missing, tilesPerPixel)
+		if err := c.renderMissingTiles(ctx, entry, world, uses, missing, tilesPerPixel); err != nil {
+			return nil, err
 		}
 	}
 
@@ -224,6 +228,13 @@ func (c *fastPreviewCache) render(
 		copyFastPreviewTile(result, use.image, startX, startY, use.x, use.y)
 	}
 
+	// At one tile per pixel the cached pixels include all chart overlays.
+	if tilesPerPixel == 1 {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
 	originX := float64(startX) * tilesPerPixel
 	originY := float64(startY) * tilesPerPixel
 	if err := world.renderOverlays(ctx, result, originX, originY, tilesPerPixel); err != nil {
@@ -232,32 +243,28 @@ func (c *fastPreviewCache) render(
 	return result, nil
 }
 
-func (c *fastPreviewCache) renderAlignedTileBatch(
+func (c *fastPreviewCache) storeAlignedTileBatch(
 	ctx context.Context,
 	entry *fastPreviewWorldCache,
-	world *fastPreviewWorld,
 	uses []fastPreviewTileUse,
-	size int,
+	img *image.RGBA,
 	startX, startY int64,
 ) error {
-	base := image.NewRGBA(image.Rect(0, 0, size, size))
-	if err := world.renderBase(ctx, base, float64(startX), float64(startY), 1); err != nil {
-		return err
-	}
-	for index := range uses {
-		use := &uses[index]
+	for _, use := range uses {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		tile := image.NewRGBA(image.Rect(0, 0, fastPreviewTileEdge, fastPreviewTileEdge))
 		sourceX := int(use.x*fastPreviewTileEdge - startX)
 		sourceY := int(use.y*fastPreviewTileEdge - startY)
 		for y := 0; y < fastPreviewTileEdge; y++ {
-			sourceOffset := (sourceY+y)*base.Stride + sourceX*4
+			sourceOffset := (sourceY+y)*img.Stride + sourceX*4
 			destinationOffset := y * tile.Stride
 			copy(
 				tile.Pix[destinationOffset:destinationOffset+tile.Stride],
-				base.Pix[sourceOffset:sourceOffset+tile.Stride],
+				img.Pix[sourceOffset:sourceOffset+tile.Stride],
 			)
 		}
-		use.image = tile
 		c.storeTile(entry, use.key, tile)
 	}
 	return nil
@@ -354,6 +361,11 @@ func renderFastPreviewCacheTile(
 	tileX, tileY int64,
 	tilesPerPixel float64,
 ) (*image.RGBA, error) {
+	if tilesPerPixel == 1 {
+		centerX := float64(tileX*fastPreviewTileEdge + fastPreviewTileEdge/2)
+		centerY := float64(tileY*fastPreviewTileEdge + fastPreviewTileEdge/2)
+		return world.render(ctx, fastPreviewTileEdge, 1, centerX, centerY)
+	}
 	padding := fastPreviewTileHistoryPadding(tilesPerPixel)
 	renderSize := fastPreviewTileEdge + padding
 	scratch := image.NewRGBA(image.Rect(0, 0, renderSize, renderSize))

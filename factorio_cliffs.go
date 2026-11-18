@@ -107,6 +107,28 @@ func (e *factorioCliffEvaluator) cliffinessAt(x, y float64) float64 {
 
 func (e *factorioCliffEvaluator) cliffinessFromHills(x, y, hills float64) float64 {
 	nauvisSegmentation := 1.5 * e.nauvis.segmentation
+	// Cliffiness is the minimum of these terms. Reject cheap misses first.
+	distance := factorioDistanceFromNearestPoint(x, y, e.nauvis.starts, math.Inf(1))
+	startingArea := -2 + distance*e.nauvis.segmentation/120
+	if !(startingArea >= e.cutoff) {
+		return 0
+	}
+	forest := (math.Abs(e.nauvis.forestPathNoise(x, y)) - 0.03) * 12
+	if !(forest >= e.cutoff) {
+		return 0
+	}
+	bridge := (math.Abs(e.nauvis.bridgeNoise(x, y)) - 0.05) * 15
+	if !(bridge >= e.cutoff) {
+		return 0
+	}
+	low := 1.5 + 0.51*factorioBasisNoise(
+		x*nauvisSegmentation/500,
+		y*nauvisSegmentation/500,
+		&e.lowTables,
+	) + e.lowFrequency
+	if !(4*low >= e.cutoff) {
+		return 0
+	}
 	offsetScale := nauvisSegmentation / 500
 	rawX := factorioBasisNoise(x*offsetScale, y*offsetScale, &e.offsetXTables)
 	rawY := factorioBasisNoise(x*offsetScale, y*offsetScale, &e.offsetYTables)
@@ -116,21 +138,11 @@ func (e *factorioCliffEvaluator) cliffinessFromHills(x, y, hills float64) float6
 	ringbreak := math.Abs(hills - hillsOffset)
 
 	base := (ringbreak - 0.01) * 60
-	forest := (math.Abs(e.nauvis.forestPathNoise(x, y)) - 0.03) * 12
-	bridge := (math.Abs(e.nauvis.bridgeNoise(x, y)) - 0.05) * 15
+	if !(base >= e.cutoff) {
+		return 0
+	}
 	elevation := (e.nauvis.elevationNoCliff(x, y) - 4) / 2
-	distance := factorioDistanceFromNearestPoint(x, y, e.nauvis.starts, math.Inf(1))
-	startingArea := -2 + distance*e.nauvis.segmentation/120
-	low := 1.5 + 0.51*factorioBasisNoise(
-		x*nauvisSegmentation/500,
-		y*nauvisSegmentation/500,
-		&e.lowTables,
-	) + e.lowFrequency
-	main := math.Min(
-		math.Min(base, forest),
-		math.Min(math.Min(bridge, elevation), math.Min(startingArea, 4*low)),
-	)
-	if main >= e.cutoff {
+	if elevation >= e.cutoff {
 		return 10
 	}
 	return 0

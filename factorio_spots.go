@@ -189,20 +189,24 @@ func factorioRandomPenaltyBatch(
 	if len(positions) == 0 {
 		return result
 	}
-	x := uint32(int32(math.Trunc(positions[0].x)))
-	y := uint32(int32(math.Trunc(positions[0].y + seed)))
+	copy(result, source[:len(positions)])
+	applyFactorioRandomPenalty(result, positions[0], seed, amplitude)
+	return result
+}
+
+func applyFactorioRandomPenalty(values []float64, first factorioSpotCandidate, seed, amplitude float64) {
+	x := uint32(int32(math.Trunc(first.x)))
+	y := uint32(int32(math.Trunc(first.y + seed)))
 	word := uint32(factorioSpotSeedBase) + x*factorioSpotRegionXPrime + y*factorioSpotRegionYPrime
 	if word < factorioMinSeedWord {
 		word = factorioMinSeedWord
 	}
 	state := newFactorioTaus88State(word)
 	// The noise operation streams from the last batch element to the first.
-	for index := len(positions) - 1; index >= 0; index-- {
-		if source[index] <= 0 {
-			result[index] = source[index]
+	for index := len(values) - 1; index >= 0; index-- {
+		if values[index] <= 0 {
 			continue
 		}
-		result[index] = source[index] - amplitude*float64(state.next())/4294967296.0
+		values[index] -= amplitude * float64(state.next()) / 4294967296.0
 	}
-	return result
 }

@@ -25,6 +25,12 @@ type factorioNauvisNaturalEvaluator struct {
 	chunks     factorioChartChunkCache
 }
 
+type factorioNauvisProbabilities [1024][35]float64
+
+var factorioNauvisProbabilityPool = sync.Pool{
+	New: func() any { return new(factorioNauvisProbabilities) },
+}
+
 var factorioNauvisNaturalBoxes = [...][4]float64{
 	{-1.5, -1.1, 1.5, 1.1}, {-1, -.9, 1, 1}, {-.75, -.75, .75, .75},
 }
@@ -103,7 +109,9 @@ func (e *factorioNauvisNaturalEvaluator) chunk(ctx context.Context, cx, cy int) 
 		return nil, err
 	}
 	var water [40 * 40]bool
-	var probabilities [1024][35]float64
+	probabilities := factorioNauvisProbabilityPool.Get().(*factorioNauvisProbabilities)
+	defer factorioNauvisProbabilityPool.Put(probabilities)
+	clear(probabilities[:])
 	var richness [1024][6]float64
 	var positions [1024]factorioSpotCandidate
 	for dy := -4; dy < 36; dy++ {
@@ -113,7 +121,9 @@ func (e *factorioNauvisNaturalEvaluator) chunk(ctx context.Context, cx, cy int) 
 		for dx := -4; dx < 36; dx++ {
 			x, y := float64(cx*32+dx), float64(cy*32+dy)
 			s := e.nauvis.sample(x, y)
-			wet := e.nauvis.terrainTileFast(s, x, y).water || fastOutOfMapBounds(e.settings, x, y)
+			// Both water probabilities are negative infinity above sea level.
+			wet := fastOutOfMapBounds(e.settings, x, y) ||
+				(!(s.elevation > 0) && e.nauvis.terrainTileFast(s, x, y).water)
 			water[(dy+4)*40+dx+4] = wet
 			if dx >= 0 && dx < 32 && dy >= 0 && dy < 32 {
 				positions[dy*32+dx] = factorioSpotCandidate{x: x, y: y}
@@ -146,13 +156,13 @@ func (e *factorioNauvisNaturalEvaluator) chunk(ctx context.Context, cx, cy int) 
 		}
 		for kind, prototype := range factorioEnemyOverviewPrototypes {
 			var sources [1024]float64
-			var translated [1024]factorioSpotCandidate
-			for i, p := range positions {
+			for i := range positions {
 				sources[i] = e.enemies.autoplaceSourceAtPoint(base[i], distance[i], prototype.distanceFactor)
-				translated[i] = factorioSpotCandidate{x: p.x + float64(prototype.seed), y: p.y}
 			}
-			values := factorioRandomPenaltyBatch(translated[:], sources[:], 1, .1)
-			for i, v := range values {
+			first := positions[0]
+			first.x += float64(prototype.seed)
+			applyFactorioRandomPenalty(sources[:], first, 1, .1)
+			for i, v := range sources {
 				probabilities[i][kind+23] = v
 			}
 		}

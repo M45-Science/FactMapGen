@@ -105,6 +105,13 @@ func TestFastPreviewTileCacheAlignedStandardColdAndWarm(t *testing.T) {
 	if warmStats.Misses != coldStats.Misses || warmStats.Hits-coldStats.Hits != 64 {
 		t.Fatalf("warm aligned cache stats = %#v after %#v, want 64 hits and no misses", warmStats, coldStats)
 	}
+
+	// A warm view can skip overlays only if the stored tiles already contain them.
+	stitched := image.NewRGBA(direct.Bounds())
+	for _, tile := range cache.tiles {
+		copyFastPreviewTile(stitched, tile.image, -size/2, -size/2, tile.key.rasterTileX, tile.key.rasterTileY)
+	}
+	assertFastPreviewImagesEqual(t, stitched, direct)
 }
 
 func TestFastPreviewClientTilesStitchToStandardView(t *testing.T) {
