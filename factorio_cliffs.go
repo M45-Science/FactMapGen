@@ -202,8 +202,10 @@ func renderFactorioCliffs(
 	evaluator *factorioCliffEvaluator,
 	originX, originY, tilesPerPixel float64,
 ) error {
-	if !evaluator.enabled {
-		return nil
+	// At overview scale cliff footprints are subpixel; avoid enumerating the
+	// world area (which grows quadratically with tiles per output pixel).
+	if tilesPerPixel >= fastPreviewOverviewTilesPerPixel || !evaluator.enabled {
+		return ctx.Err()
 	}
 	bounds := img.Bounds()
 	queryPadding := 4.0

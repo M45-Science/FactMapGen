@@ -259,6 +259,9 @@ func renderFactorioTrees(
 	yAxis := newFastPreviewAxis(originY, tilesPerPixel)
 	lastWorldY := math.Inf(-1)
 	for py := 0; py < height; py++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		worldY := math.Floor(yAxis.coordinate(py))
 		row := py * img.Stride
 		if py > 0 && worldY == lastWorldY {
@@ -289,13 +292,28 @@ func renderFactorioTrees(
 			maxTileY := int64(math.Ceil(yAxis.coordinate(py+1))) - 1
 			spanX := max(int64(1), maxTileX-minTileX+1)
 			spanY := max(int64(1), maxTileY-minTileY+1)
-			samplesX := min(spanX, int64(4))
-			samplesY := min(spanY, int64(4))
+			// Forest coverage remains useful at overview zoom. Estimate density
+			// with four stratified world samples instead of sixteen placement
+			// queries, then scale it by the covered world area as below. Sample
+			// positions depend on world pixel bounds, never the image size or
+			// cache tile, so adjacent and panned previews agree.
+			sampleLimit := int64(4)
+			if tilesPerPixel >= fastPreviewOverviewTilesPerPixel {
+				sampleLimit = 2
+			}
+			samplesX := min(spanX, sampleLimit)
+			samplesY := min(spanY, sampleLimit)
 			placed := int64(0)
 			for sampleY := int64(0); sampleY < samplesY; sampleY++ {
 				tileY := minTileY + sampleY*spanY/samplesY
+				if tilesPerPixel >= fastPreviewOverviewTilesPerPixel {
+					tileY += spanY / (2 * samplesY)
+				}
 				for sampleX := int64(0); sampleX < samplesX; sampleX++ {
 					tileX := minTileX + sampleX*spanX/samplesX
+					if tilesPerPixel >= fastPreviewOverviewTilesPerPixel {
+						tileX += spanX / (2 * samplesX)
+					}
 					if evaluator.placedAt(float64(tileX), float64(tileY)) {
 						placed++
 					}

@@ -90,6 +90,9 @@ func (e *factorioSpaceAgeEvaluator) cliffCells(ctx context.Context, x0, y0, x1, 
 }
 
 func (e *factorioSpaceAgeEvaluator) cliffPixels(ctx context.Context, width, height int, x0, y0, tpp float64) ([]bool, error) {
+	if tpp >= fastPreviewOverviewTilesPerPixel {
+		return nil, ctx.Err()
+	}
 	cells, err := e.cliffCells(ctx, x0-4, y0-4, x0+float64(width)*tpp+4, y0+float64(height)*tpp+4)
 	if err != nil {
 		return nil, err

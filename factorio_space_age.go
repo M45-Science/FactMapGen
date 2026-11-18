@@ -87,7 +87,7 @@ func (e *factorioSpaceAgeEvaluator) render(
 	yAxis := newFastPreviewAxis(originY, tilesPerPixel)
 	renderPixel := func(x, y int, wx, wy float64) {
 		offset := y*img.Stride + x*4
-		base := e.colorAt(wx, wy, tilesPerPixel, cliffPixels[y*width+x])
+		base := e.colorAt(wx, wy, tilesPerPixel, len(cliffPixels) > 0 && cliffPixels[y*width+x])
 		if fastOutOfMapBounds(settings, wx, wy) {
 			base = color.RGBA{R: 20, G: 23, B: 20, A: 255}
 		}

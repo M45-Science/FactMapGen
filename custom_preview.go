@@ -654,6 +654,11 @@ func (w *fastPreviewWorld) renderBase(
 	return nil
 }
 
+// LOD is derived only from world tiles per output pixel. Cached base tiles
+// already include the exact tpp bits in fastPreviewTileKey; no independent
+// request or viewport-dependent LOD state may affect their contents.
+const fastPreviewOverviewTilesPerPixel = 16
+
 func (w *fastPreviewWorld) renderOverlays(
 	ctx context.Context,
 	img *image.RGBA,
@@ -828,7 +833,9 @@ func blendFastPreviewEntities(
 	}
 	entityDither := (rocks != nil || resources != nil) &&
 		factorioPreviewEntityDither(wx, wy, tilesPerPixel)
-	if rocks != nil && entityDither {
+	// Individual rock footprints are subpixel at overview zoom; retain ore
+	// patch colors and the separate oil/enemy overview samplers.
+	if rocks != nil && entityDither && tilesPerPixel < fastPreviewOverviewTilesPerPixel {
 		var rock color.RGBA
 		var ok bool
 		if sample != nil {
