@@ -22,7 +22,7 @@ These figures describe the sampled preview images. Results can vary with the see
 
 ## Visual comparison
 
-All five comparisons use seed `123456`. A is Factorio’s preview, B is FactMapGen’s Fast preview, and DIFF marks the pixels that changed. The markers are enlarged so individual differences are visible.
+All five comparisons use seed `123456`. A is Factorio’s preview and B is FactMapGen’s Fast preview. DIFF shows the absolute difference between their red, green, and blue values at each pixel. Identical pixels are black.
 
 ### Nauvis
 
