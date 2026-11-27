@@ -170,29 +170,40 @@ func (p *previewer) renderFastEncoded(ctx context.Context, ref profileRef, mapGe
 	if err := validatePreviewSeedOverride(req.Seed); err != nil {
 		return previewResponse{}, previewEncodedImage{}, invalidPreviewRequest(err)
 	}
-	settings, err := parseFastPreviewSettingsForPlanet(mapGen, req.Seed, planet)
-	if err != nil {
-		return previewResponse{}, previewEncodedImage{}, invalidPreviewRequest(err)
-	}
-	cacheKey, err := fastPreviewCacheKeyForPlanet(mapGen, settings.seed, planet)
-	if err != nil {
-		return previewResponse{}, previewEncodedImage{}, invalidPreviewRequest(err)
-	}
 	tpp := fastTilesPerPixel(zoom)
-	cache := p.fastCache()
-	var img *image.RGBA
-	if standalone && tpp == 1 {
+	framed := standalone && tpp == 1
+	if framed {
 		centerX, centerY = factorioPreviewChunkCenter(centerX), factorioPreviewChunkCenter(centerY)
-		img, err = cache.renderFrame(ctx, cacheKey, settings, size, centerX, centerY)
-	} else {
-		img, err = cache.render(ctx, cacheKey, settings, size, tpp, centerX, centerY)
 	}
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return previewResponse{}, previewEncodedImage{}, err
 	}
-	encoded, err := p.encodePreviewImage(ctx, img, req.Format)
-	if err != nil {
-		return previewResponse{}, previewEncodedImage{}, err
+	var encoder *previewAVIFEncoder
+	var requestKey [32]byte
+	var encoded previewEncodedImage
+	var cached bool
+	if req.Format == "avif" {
+		encoder = p.avifEncoder()
+		requestKey = fastPreviewAVIFRequestKey(mapGen, req.Seed, planet, size, tpp, centerX, centerY, framed)
+		encoded, cached = encoder.getRequest(requestKey)
+	}
+	if !cached {
+		img, err := p.renderFastPixels(ctx, mapGen, req.Seed, planet, size, tpp, centerX, centerY, framed)
+		if err != nil {
+			return previewResponse{}, previewEncodedImage{}, err
+		}
+		if encoder != nil {
+			pixels := previewImagePixelKey(img)
+			encoded, err = encoder.encode(ctx, img, pixels)
+			if err == nil {
+				encoder.storeRequest(requestKey, pixels)
+			}
+		} else {
+			encoded, err = p.encodePreviewImage(ctx, img, req.Format)
+		}
+		if err != nil {
+			return previewResponse{}, previewEncodedImage{}, err
+		}
 	}
 
 	generatedAt := time.Now().UTC().Format(time.RFC3339)
@@ -209,6 +220,22 @@ func (p *previewer) renderFastEncoded(ctx context.Context, ref profileRef, mapGe
 			planet, tpp, centerX, centerY, ref.id(),
 		),
 	}, encoded, nil
+}
+
+func (p *previewer) renderFastPixels(ctx context.Context, mapGen json.RawMessage, seed, planet string, size int, tpp, x, y float64, framed bool) (*image.RGBA, error) {
+	settings, err := parseFastPreviewSettingsForPlanet(mapGen, seed, planet)
+	if err != nil {
+		return nil, invalidPreviewRequest(err)
+	}
+	key, err := fastPreviewCacheKeyForPlanet(mapGen, settings.seed, planet)
+	if err != nil {
+		return nil, invalidPreviewRequest(err)
+	}
+	cache := p.fastCache()
+	if framed {
+		return cache.renderFrame(ctx, key, settings, size, x, y)
+	}
+	return cache.render(ctx, key, settings, size, tpp, x, y)
 }
 
 func normalizeFastPreviewPlanet(value string) (string, error) {
@@ -507,6 +534,9 @@ func (w *fastPreviewWorld) setEntityCacheBudget(bytes int64) {
 		if w.spaceAge.vulcanusChart != nil {
 			w.spaceAge.vulcanusChart.chunks.maxBytes = bytes
 		}
+		if w.spaceAge.aquilo != nil {
+			w.spaceAge.aquilo.chunks.maxBytes = bytes
+		}
 	}
 }
 
@@ -526,6 +556,9 @@ func (w *fastPreviewWorld) shareEntityCaches(owner *fastPreviewWorld) {
 		if w.spaceAge.vulcanusChart != nil {
 			w.spaceAge.vulcanusChart.chunks.shared = &owner.spaceAge.vulcanusChart.chunks
 		}
+		if w.spaceAge.aquilo != nil {
+			w.spaceAge.aquilo.chunks.shared = &owner.spaceAge.aquilo.chunks
+		}
 	}
 }
 
@@ -538,6 +571,12 @@ func (w *fastPreviewWorld) render(
 	img := image.NewRGBA(image.Rect(0, 0, size, size))
 	originX := fastPreviewViewportOrigin(centerX, size, tpp)
 	originY := fastPreviewViewportOrigin(centerY, size, tpp)
+	if tpp == 1 && originX == math.Trunc(originX) && originY == math.Trunc(originY) {
+		if err := w.renderAlignedUnit(ctx, img, int(originX), int(originY)); err != nil {
+			return nil, err
+		}
+		return img, nil
+	}
 	if err := w.renderBase(ctx, img, originX, originY, tpp); err != nil {
 		return nil, err
 	}
@@ -545,6 +584,32 @@ func (w *fastPreviewWorld) render(
 		return nil, err
 	}
 	return img, nil
+}
+
+func (w *fastPreviewWorld) renderAlignedUnit(ctx context.Context, img *image.RGBA, x, y int) error {
+	originX, originY := float64(x), float64(y)
+	if w.spaceAge != nil {
+		return w.spaceAge.render(ctx, img, w.settings, originX, originY, 1)
+	}
+	if w.natural == nil {
+		if err := renderFastNauvisOneTileRows(ctx, img, w.settings, w.nauvis, nil, nil, nil, nil, originX, originY); err != nil {
+			return err
+		}
+		return w.renderOverlays(ctx, img, originX, originY, 1)
+	}
+	width, height := img.Bounds().Dx(), img.Bounds().Dy()
+	raster := &factorioChartRaster{
+		image: img, bounds: image.Rect(x, y, x+width, y+height),
+		skipWaterCliffs: true, settings: w.settings,
+	}
+	if w.cliffs != nil {
+		cells, err := w.cliffs.cellsInViewport(ctx, w.settings, width, height, originX, originY, 1)
+		if err != nil {
+			return err
+		}
+		raster.cliffs = factorioCliffMask(cells, width, height, originX, originY, 1)
+	}
+	return w.natural.render(ctx, img, originX, originY, 1, raster)
 }
 
 func (w *fastPreviewWorld) renderBase(
@@ -600,7 +665,7 @@ func (w *fastPreviewWorld) renderBase(
 			}
 			lastWorldX = wx
 			nauvisPoint := w.nauvis.sample(wx, wy)
-			c := w.nauvis.terrainTile(nauvisPoint, wx, wy).color
+			c := w.nauvis.terrainTileFast(nauvisPoint, wx, wy).color
 			outOfMap := fastOutOfMapBounds(settings, wx, wy)
 			if outOfMap {
 				c = color.RGBA{R: 20, G: 23, B: 20, A: 255}
@@ -696,7 +761,7 @@ func (w *fastPreviewWorld) renderOverlays(
 	}
 	if charts {
 		if w.natural != nil {
-			return w.natural.render(ctx, img, originX, originY, tpp)
+			return w.natural.render(ctx, img, originX, originY, tpp, nil)
 		}
 		return nil
 	}
@@ -779,11 +844,11 @@ func renderFastNauvisOneTileRows(
 	oilMask []bool,
 	originX, originY float64,
 ) error {
-	size := img.Bounds().Dx()
-	return parallelFastPreviewRows(ctx, size, func(y int) {
+	width, height := img.Bounds().Dx(), img.Bounds().Dy()
+	return parallelFastPreviewRows(ctx, height, func(y int) {
 		wy := math.Floor(originY + float64(y))
 		row := y * img.Stride
-		for x := 0; x < size; x++ {
+		for x := 0; x < width; x++ {
 			wx := math.Floor(originX + float64(x))
 			offset := row + x*4
 			sample := nauvis.sample(wx, wy)
@@ -793,7 +858,7 @@ func renderFastNauvisOneTileRows(
 			} else if !factorioPreviewWaterColor(base) {
 				base = blendFastPreviewEntities(
 					trees, rocks, resources, oilMask,
-					base, &sample, wx, wy, y*size+x, 1,
+					base, &sample, wx, wy, y*width+x, 1,
 				)
 			}
 			img.Pix[offset] = base.R
@@ -808,6 +873,25 @@ const (
 	fastPreviewMaxWorkers   = 12
 	fastPreviewRowsPerChunk = 8
 )
+
+func parallelFastPreviewChunks(ctx context.Context, count int, work func(int)) error {
+	workerCount := min(runtime.GOMAXPROCS(0), count, fastPreviewMaxWorkers)
+	run := func(worker int) {
+		for i := worker; i < count && ctx.Err() == nil; i += workerCount {
+			work(i)
+		}
+	}
+	if workerCount <= 1 {
+		run(0)
+		return ctx.Err()
+	}
+	var workers sync.WaitGroup
+	for worker := range workerCount {
+		workers.Go(func() { run(worker) })
+	}
+	workers.Wait()
+	return ctx.Err()
+}
 
 func parallelFastPreviewRows(ctx context.Context, height int, renderRow func(int)) error {
 	workerCount := min(runtime.GOMAXPROCS(0), height, fastPreviewMaxWorkers)

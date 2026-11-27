@@ -41,34 +41,57 @@ func glebaChartTileAllowed(kind int, tile string, restrict bool) bool {
 	}
 }
 
-func (g *factorioGlebaChart) chunk(ctx context.Context, cx, cy int) ([]factorioChartEntity, error) {
+func (g *factorioGlebaChart) chunk(ctx context.Context, cx, cy int, raster *factorioChartRaster) ([]factorioChartEntity, error) {
+	e := g.world
 	key := [2]int{cx, cy}
 	cached, ok := g.chunks.get(key)
 	if ok {
+		if raster != nil {
+			return cached, raster.paintChunk(ctx, cx, cy, func(x, y int) color.RGBA {
+				return e.gleba.sample(float64(x), float64(y)).tile.color
+			})
+		}
 		return cached, nil
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	e := g.world
 	var tiles [38 * 38]string
 	var fields [1024]glebaFeatureSample
-	var samples [1024]factorioGlebaSample
-	var positions [1024]factorioSpotCandidate
-	for dy := -3; dy < 35; dy++ {
+	var enemies [1024][2]float32
+	var enemyValues []float64
+	if g.enemies != nil {
+		var positions [1024]factorioSpotCandidate
+		for i := range positions {
+			positions[i] = factorioSpotCandidate{x: float64(cx*32 + i%32), y: float64(cy*32 + i/32)}
+		}
+		enemyValues = g.enemies.probabilities(positions[:])
+	}
+	baseX, baseY := cx*32, cy*32
+	for dy := 0; dy < 32; dy++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		for dx := -3; dx < 35; dx++ {
-			x, y := float64(cx*32+dx), float64(cy*32+dy)
-			s := e.gleba.sample(x, y)
+		for dx := 0; dx < 32; dx++ {
+			x, y := baseX+dx, baseY+dy
+			s := e.gleba.sample(float64(x), float64(y))
 			tiles[(dy+3)*38+dx+3] = s.tile.name
-			if dx >= 0 && dx < 32 && dy >= 0 && dy < 32 {
-				fields[dy*32+dx] = e.glebaFields.sample(s, x, y)
-				samples[dy*32+dx] = s
-				positions[dy*32+dx] = factorioSpotCandidate{x: x, y: y}
+			i := dy*32 + dx
+			fields[i] = e.glebaFields.sample(s, float64(x), float64(y))
+			if enemyValues != nil {
+				enemies[i] = glebaSpawnerProbabilities(s, enemyValues[i])
+			}
+			if raster != nil {
+				raster.paint(x, y, s.tile.color)
 			}
 		}
+	}
+	tileAt := func(x, y int) string {
+		i := (y-baseY+3)*38 + x - baseX + 3
+		if tiles[i] == "" {
+			tiles[i] = e.gleba.sample(float64(x), float64(y)).tile.name
+		}
+		return tiles[i]
 	}
 	rng := newFactorioTaus88State(max(factorioMinSeedWord, uint32(int64(factorioSpotSeedBase)+7919*int64(cx)+7907*int64(cy))))
 	groups := make([][]int, 0, 14)
@@ -83,12 +106,7 @@ func (g *factorioGlebaChart) chunk(ctx context.Context, cx, cy int) ([]factorioC
 	if fastSpaceAgeControl(e.settings, "gleba_stone").enabled {
 		groups = append(groups, []int{14})
 	}
-	var enemies [1024][2]float32
 	if g.enemies != nil {
-		values := g.enemies.probabilities(positions[:])
-		for i := range enemies {
-			enemies[i] = glebaSpawnerProbabilities(samples[i], values[i])
-		}
 		groups = append(groups, []int{15}, []int{16})
 	}
 	prob := func(i, kind int) float32 {
@@ -132,10 +150,11 @@ func (g *factorioGlebaChart) chunk(ctx context.Context, cx, cy int) ([]factorioC
 				continue
 			}
 			allowed := true
-			for by := int(math.Floor(y + math.Trunc(box[1]*256)/256)); by <= int(math.Floor(y+math.Trunc(box[3]*256)/256)); by++ {
+			for by := int(math.Floor(y + math.Trunc(box[1]*256)/256)); by <= int(math.Floor(y+math.Trunc(box[3]*256)/256)) && allowed; by++ {
 				for bx := int(math.Floor(x + math.Trunc(box[0]*256)/256)); bx <= int(math.Floor(x+math.Trunc(box[2]*256)/256)); bx++ {
-					if !glebaChartTileAllowed(kind, tiles[(by-cy*32+3)*38+bx-cx*32+3], false) {
+					if !glebaChartTileAllowed(kind, tileAt(bx, by), false) {
 						allowed = false
+						break
 					}
 				}
 			}
@@ -148,8 +167,11 @@ func (g *factorioGlebaChart) chunk(ctx context.Context, cx, cy int) ([]factorioC
 	return entities, nil
 }
 
-func (g *factorioGlebaChart) render(ctx context.Context, img *image.RGBA, x0, y0, tpp float64) error {
-	return renderFactorioChartChunks(ctx, img, x0, y0, tpp, g.chunk, func(entities []factorioChartEntity) {
+func (g *factorioGlebaChart) render(ctx context.Context, img *image.RGBA, x0, y0, tpp float64, raster *factorioChartRaster) error {
+	chunk := func(ctx context.Context, cx, cy int) ([]factorioChartEntity, error) {
+		return g.chunk(ctx, cx, cy, raster)
+	}
+	return renderFactorioChartChunks(ctx, img, x0, y0, tpp, chunk, func(entities []factorioChartEntity) {
 		for i := len(entities) - 1; i >= 0; i-- {
 			ent := entities[i]
 			if ent.kind >= 15 {

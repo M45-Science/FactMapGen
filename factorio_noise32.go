@@ -9,7 +9,7 @@ import "math"
 // keeps its existing arithmetic; these kernels round at the game's operation
 // boundaries, including the small 17.17 multioctave offset. See
 // docs/upstream-rendering.md for the measured upstream references.
-func noiseAbs(v float32) float32  { return float32(math.Abs(float64(v))) }
+func noiseAbs(v float32) float32  { return math.Float32frombits(math.Float32bits(v) & 0x7fffffff) }
 func noiseSqrt(v float32) float32 { return float32(math.Sqrt(float64(v))) }
 func noiseBool(v bool) float32 {
 	if v {
@@ -55,29 +55,39 @@ func noiseSliderRescale(s, extent float32) float32 {
 }
 
 func factorioBasisNoise32(x, y float32, tables *factorioBasisTables, grid ...bool) float32 {
+	return factorioBasisNoiseGrid32(x, y, tables, len(grid) != 0 && grid[0])
+}
+
+func factorioBasisNoiseGrid32(x, y float32, tables *factorioBasisTables, grid bool) float32 {
 	ix, iy := int64(math.Floor(float64(x))), int64(math.Floor(float64(y)))
 	fx, fy := x-float32(ix), y-float32(iy)
-	var corners [4]float32
-	for i := range corners {
-		cx, cy := int64(i&1), int64(i>>1)
-		dx, dy := fx-float32(cx), fy-float32(cy)
-		d := float32(dx*dx) + float32(dy*dy)
-		if d >= 1 {
-			continue
-		}
-		t := 1 - d
-		if len(grid) > 0 && grid[0] {
-			t = max(0, float32(1-float32(dy*dy))-float32(dx*dx))
-		}
-		falloff := t * float32(t*t)
-		h := tables.a[uint8(ix+cx)] ^ tables.b[uint8(iy+cy)]
-		dot := float32(dx*factorioGradient32X[tables.sigma[h]]) + float32(dy*factorioGradient32Y[tables.sigma[h]])
-		corners[i] = falloff * dot
+	dx, dy := fx-1, fy-1
+	fx2, fy2 := float32(fx*fx), float32(fy*fy)
+	dx2, dy2 := float32(dx*dx), float32(dy*dy)
+	a0, a1 := tables.a[uint8(ix)], tables.a[uint8(ix+1)]
+	b0, b1 := tables.b[uint8(iy)], tables.b[uint8(iy+1)]
+	t00 := factorioBasisCorner32(fx, fy, fx2, fy2, tables.sigma[a0^b0], grid)
+	t10 := factorioBasisCorner32(dx, fy, dx2, fy2, tables.sigma[a1^b0], grid)
+	t01 := factorioBasisCorner32(fx, dy, fx2, dy2, tables.sigma[a0^b1], grid)
+	t11 := factorioBasisCorner32(dx, dy, dx2, dy2, tables.sigma[a1^b1], grid)
+	if grid {
+		return (t00 + t01) + (t10 + t11)
 	}
-	if len(grid) > 0 && grid[0] {
-		return (corners[0] + corners[2]) + (corners[1] + corners[3])
+	return (t00 + t10) + (t01 + t11)
+}
+
+func factorioBasisCorner32(dx, dy, dx2, dy2 float32, gradient uint8, grid bool) float32 {
+	d := dx2 + dy2
+	if d >= 1 {
+		return 0
 	}
-	return (corners[0] + corners[1]) + (corners[2] + corners[3])
+	t := 1 - d
+	if grid {
+		t = max(0, float32(1-dy2)-dx2)
+	}
+	falloff := t * float32(t*t)
+	dot := float32(dx*factorioGradient32X[gradient]) + float32(dy*factorioGradient32Y[gradient])
+	return falloff * dot
 }
 
 func makeFactorioMultioctaveNoise32(seed, salt uint32, octaves int, persistence, scale, output float32, grid ...bool) func(float32, float32) float32 {
@@ -92,25 +102,41 @@ func makeFactorioMultioctaveNoise32(seed, salt uint32, octaves int, persistence,
 		ratio := (inv2 - 1) / (noiseExp2(float32(noiseLog2(inv2)*float32(octaves))) - 1)
 		amp = float32(math.Sqrt(float64(ratio)) * float64(output))
 	}
-	scales, amps := make([]float32, octaves), make([]float32, octaves)
-	for i := range scales {
-		scales[i], amps[i] = scale, amp
+	type octave struct {
+		scale, amp float32
+		offset     float64
+	}
+	layers := make([]octave, octaves)
+	for i := range layers {
+		layers[i] = octave{scale, amp, float64(i) * 17.17}
 		scale *= 0.5
 		amp *= inv
 	}
+	if len(grid) > 0 && grid[0] {
+		for i := range layers {
+			layers[i].scale = float32(math.Ldexp(1, -i))
+			layers[i].offset /= float64(baseScale)
+		}
+		return func(x, y float32) float32 {
+			cx, cy := float32(math.Floor(float64(x)/32)*32), float32(math.Floor(float64(y)/32)*32)
+			dx, dy := float32(x-cx), float32(y-cy)
+			var sum float32
+			for _, layer := range layers {
+				step := layer.scale
+				origin := float32(layer.offset + float64(float32(cx*step)))
+				nx := float32(float32(dx*step)+origin) * baseScale
+				ny := float32(float32(dy*step)+float32(cy*step)) * baseScale
+				sum += float32(layer.amp * factorioBasisNoiseGrid32(nx, ny, &tables, true))
+			}
+			return sum
+		}
+	}
 	return func(x, y float32) float32 {
 		var sum float32
-		for i, scale := range scales {
-			nx := float32(float64(float32(x*scale)) + float64(i)*17.17)
-			ny := float32(y * scale)
-			if len(grid) > 0 && grid[0] {
-				step := float32(math.Ldexp(1, -i))
-				cx, cy := float32(math.Floor(float64(x)/32)*32), float32(math.Floor(float64(y)/32)*32)
-				origin := float32(float64(i)*17.17/float64(baseScale) + float64(float32(cx*step)))
-				nx = float32(float32(float32(x-cx)*step)+origin) * baseScale
-				ny = float32(float32(float32(y-cy)*step)+float32(cy*step)) * baseScale
-			}
-			sum += float32(amps[i] * factorioBasisNoise32(nx, ny, &tables, grid...))
+		for _, layer := range layers {
+			nx := float32(float64(float32(x*layer.scale)) + layer.offset)
+			ny := float32(y * layer.scale)
+			sum += float32(layer.amp * factorioBasisNoiseGrid32(nx, ny, &tables, false))
 		}
 		return sum
 	}
@@ -156,7 +182,7 @@ func makeFactorioQuickNoise32(seed, salt uint32, octaves int, scale, amplitude, 
 	return func(x, y float32) float32 {
 		var sum float32
 		for i, scale := range scales {
-			sum += float32(amps[i] * factorioBasisNoise32(float32(x+offset)*scale, y*scale, &tables[i], grid))
+			sum += float32(amps[i] * factorioBasisNoiseGrid32(float32(x+offset)*scale, y*scale, &tables[i], grid))
 		}
 		return sum
 	}
@@ -175,7 +201,7 @@ func makeFactorioAmplitudeNoise32(seed, salt uint32, octaves int, scale, offset,
 	return func(x, y float32) float32 {
 		var sum float32
 		for i, scale := range scales {
-			sum += factorioBasisNoise32(float32(x+offset)*scale, y*scale, &tables, grid)
+			sum += factorioBasisNoiseGrid32(float32(x+offset)*scale, y*scale, &tables, grid)
 			if i < len(scales)-1 {
 				sum *= persistence
 			}

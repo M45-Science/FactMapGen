@@ -6,49 +6,44 @@ package main
 import (
 	"image/color"
 	"math"
-	"sync"
 )
 
 type factorioAquiloWellField struct {
 	seed        uint32
 	regionSize  int64
 	count, skip int
-	radius      float32
-	mu          sync.Mutex
-	regions     map[[2]int64][]factorioSelectedSpot
+	reach       float32
+	peak, slope float32
+	quantity    float64
+	regions     factorioSpotRegionCache
 }
 
 func (f *factorioAquiloWellField) spots(rx, ry int64) []factorioSelectedSpot {
-	key := [2]int64{rx, ry}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if spots, ok := f.regions[key]; ok {
+	if spots, ok := f.regions.load(rx, ry); ok {
 		return spots
 	}
-	q := float64(f.radius * f.radius)
-	spots := factorioSelectSpots(factorioSpotRegionKey{seed0: f.seed, seed1: 567, regionX: rx, regionY: ry}, factorioSpotSelectionParams{regionSize: f.regionSize, candidateSpotCount: f.count, spacing: 128, skipSpan: 3, skipOffset: f.skip, density: func(float64, float64) float64 { return 1 }, quantity: func(float64, float64) float64 { return q }, favorability: func(float64, float64) float64 { return 1 }})
-	if len(f.regions) >= 64 {
-		clear(f.regions)
-	}
-	f.regions[key] = spots
+	spots := factorioSelectSpots(factorioSpotRegionKey{seed0: f.seed, seed1: 567, regionX: rx, regionY: ry}, factorioSpotSelectionParams{regionSize: f.regionSize, candidateSpotCount: f.count, spacing: 128, skipSpan: 3, skipOffset: f.skip, density: func(float64, float64) float64 { return 1 }, quantity: func(float64, float64) float64 { return f.quantity }, favorability: func(float64, float64) float64 { return 1 }})
+	f.regions.store(rx, ry, spots)
 	return spots
 }
+
 func (f *factorioAquiloWellField) at(x, y float32) float32 {
-	if f.radius <= 0 {
+	if f.reach <= 0 {
 		return -1
 	}
-	reach := f.radius * 2
+	reach := f.reach
 	half := float64(f.regionSize / 2)
 	index := func(v float32) int64 { return int64(math.Floor((float64(v) + half) / float64(f.regionSize))) }
 	best := float32(-1)
-	peak := float32(float64(f.radius*f.radius) * 3 / (float64(f.radius) * 3.1416 * float64(f.radius)))
-	for ry := index(y - reach); ry <= index(y+reach); ry++ {
-		for rx := index(x - reach); rx <= index(x+reach); rx++ {
+	left, right := index(x-reach), index(x+reach)
+	bottom := index(y + reach)
+	for ry := index(y - reach); ry <= bottom; ry++ {
+		for rx := left; rx <= right; rx++ {
 			for _, p := range f.spots(rx, ry) {
 				dx, dy := x-float32(p.x), y-float32(p.y)
 				d := noiseSqrt(dx*dx + dy*dy)
 				if d <= reach {
-					best = max(best, peak-d*(peak/f.radius))
+					best = max(best, f.peak-d*f.slope)
 				}
 			}
 		}
@@ -64,15 +59,24 @@ type factorioAquiloEvaluator struct {
 	cones                                               [3]factorioNoiseCone
 	tiny                                                factorioNoiseCone
 	wells                                               [3]*factorioAquiloWellField
+	wellChances                                         [3]float32
+	chunks                                              factorioChartChunkCache
 }
 type factorioAquiloSample struct {
-	tile                                      factorioVulcanusTile
-	elevation, aux, ice, variant, islandPeaks float32
-	wells                                     [3]float32
-	iceberg                                   float32
+	tile           factorioVulcanusTile
+	elevation, aux float32
+	land           bool
 }
 
 var factorioAquiloControls = [3]string{"aquilo_crude_oil", "lithium_brine", "fluorine_vent"}
+
+var factorioAquiloTiles = [...]factorioVulcanusTile{
+	{"snow-flat", color.RGBA{190, 194, 197, 255}}, {"snow-crests", color.RGBA{179, 185, 192, 255}},
+	{"snow-lumpy", color.RGBA{166, 174, 185, 255}}, {"snow-patchy", color.RGBA{156, 166, 181, 255}},
+	{"ice-rough", color.RGBA{100, 135, 177, 255}}, {"ice-smooth", color.RGBA{100, 135, 177, 255}},
+	{"brash-ice", color.RGBA{21, 42, 56, 255}}, {"ammoniacal-ocean", color.RGBA{15, 13, 25, 255}},
+	{"ammoniacal-ocean-2", color.RGBA{17, 15, 30, 255}},
+}
 
 func newFactorioAquiloEvaluator(settings fastPreviewSettings, grid bool) *factorioAquiloEvaluator {
 	seed := settings.seed
@@ -95,12 +99,26 @@ func newFactorioAquiloEvaluator(settings fastPreviewSettings, grid bool) *factor
 	for i, name := range factorioAquiloControls {
 		c := fastSpaceAgeControl(settings, name)
 		radius := []float32{30, 36, 45}[i] * noiseSqrt(float32(max(0, c.size)))
-		e.wells[i] = &factorioAquiloWellField{seed: seed, regionSize: int64(float32(600) + float32(400)/float32(positiveOr(c.frequency, 1))), radius: radius, count: 4 - i, skip: i, regions: make(map[[2]int64][]factorioSelectedSpot)}
+		field := &factorioAquiloWellField{seed: seed, regionSize: int64(float32(600) + float32(400)/float32(positiveOr(c.frequency, 1))), reach: radius * 2, count: 4 - i, skip: i, quantity: float64(radius * radius)}
+		if radius > 0 {
+			field.peak = float32(field.quantity * 3 / (float64(radius) * 3.1416 * float64(radius)))
+			field.slope = field.peak / radius
+		}
+		e.wells[i] = field
+		if c.enabled && c.size > 0 && c.richness > 0 {
+			e.wellChances[i] = [...]float32{0.015, 0.012, 0.008}[i]
+		}
 	}
 	return e
 }
+
 func (e *factorioAquiloEvaluator) sample(px, py float64) factorioAquiloSample {
 	x, y := float32(px), float32(py)
+	islands, _ := e.wellFields(x, y, false)
+	return e.terrain(x, y, islands)
+}
+
+func (e *factorioAquiloEvaluator) wellFields(x, y float32, probabilities bool) (float32, [3]float32) {
 	sx, sy := x, y
 	if len(e.settings.startingPositions) > 0 {
 		best := float32(math.MaxFloat32)
@@ -112,16 +130,18 @@ func (e *factorioAquiloEvaluator) sample(px, py float64) factorioAquiloSample {
 			}
 		}
 	}
-	distance := noiseSqrt(sx*sx + sy*sy)
-	startingMask := min(1, max(-1, (distance-300)/40))
+	var startingMask float32
+	if probabilities {
+		distance := noiseSqrt(sx*sx + sy*sy)
+		startingMask = min(1, max(-1, (distance-300)/40))
+	}
 	maxSpot := float32(math.Inf(-1))
 	var wells [3]float32
 	for i := range e.cones {
 		start, spot := e.cones[i].at(sx, sy, 0, 0), e.wells[i].at(x, y)
 		maxSpot = max(maxSpot, start, spot)
-		c := fastSpaceAgeControl(e.settings, factorioAquiloControls[i])
-		if c.enabled && c.size > 0 && c.richness > 0 {
-			wells[i] = max(start*0.02, min(startingMask, spot)*[]float32{0.015, 0.012, 0.008}[i])
+		if chance := e.wellChances[i]; probabilities && chance > 0 {
+			wells[i] = max(start*0.02, min(startingMask, spot)*chance)
 			if i == 2 {
 				wells[i] = max(wells[i], noiseBool(e.tiny.at(sx, sy, 0, 0) > 0))
 			}
@@ -131,6 +151,10 @@ func (e *factorioAquiloEvaluator) sample(px, py float64) factorioAquiloSample {
 	// follow the configured start positions, matching the game's expressions.
 	originDistance := noiseSqrt(x*x + y*y)
 	islands := max(float32(1.7)*(0.3+float32(1-originDistance*0.01)), float32(1.5)*(0.5+maxSpot))
+	return islands, wells
+}
+
+func (e *factorioAquiloEvaluator) terrain(x, y, islands float32) factorioAquiloSample {
 	wx, wy := e.wobbleX(x, y), e.wobbleY(x, y)
 	aux := float32(0.5) + e.aux(x+(wx*300)/1.5, y+(wy*300)/1.5)
 	large, small := e.large.sample(x+wx*2, y+wy*2, false), e.small.sample(x+wx*2, y+wy*2, false)
@@ -151,21 +175,11 @@ func (e *factorioAquiloEvaluator) sample(px, py float64) factorioAquiloSample {
 		base(-1) + ice - noiseAbs(variant+1) - elevation/25 + 1,
 		0.05 * (elevation/5 - aux/3 + 0.75), 0.01 * (aux - 0.5), -0.01 * (aux - 0.5),
 	}
-	tiles := [9]factorioVulcanusTile{
-		{"snow-flat", color.RGBA{190, 194, 197, 255}}, {"snow-crests", color.RGBA{179, 185, 192, 255}},
-		{"snow-lumpy", color.RGBA{166, 174, 185, 255}}, {"snow-patchy", color.RGBA{156, 166, 181, 255}},
-		{"ice-rough", color.RGBA{100, 135, 177, 255}}, {"ice-smooth", color.RGBA{100, 135, 177, 255}},
-		{"brash-ice", color.RGBA{21, 42, 56, 255}}, {"ammoniacal-ocean", color.RGBA{15, 13, 25, 255}}, {"ammoniacal-ocean-2", color.RGBA{17, 15, 30, 255}},
-	}
 	winner := 0
 	for i, score := range scores {
 		if score > scores[winner] {
 			winner = i
 		}
 	}
-	iceberg := float32(0)
-	if winner < 6 {
-		iceberg = max(0, min(1, noiseAbs(e.peaks(x, y)), 2*((elevation/5-aux/3)+1.5)))
-	}
-	return factorioAquiloSample{tile: tiles[winner], elevation: elevation, aux: aux, ice: ice, variant: variant, islandPeaks: islands, wells: wells, iceberg: iceberg}
+	return factorioAquiloSample{tile: factorioAquiloTiles[winner], elevation: elevation, aux: aux, land: winner < 6}
 }

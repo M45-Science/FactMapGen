@@ -6,7 +6,6 @@ import (
 	"image"
 	"image/color"
 	"math"
-	"runtime"
 	"sync"
 	"unsafe"
 )
@@ -18,6 +17,46 @@ const defaultFastPreviewEntityCacheBytes = 256 << 20
 type factorioChartEntity struct {
 	x, y float64
 	kind int
+}
+
+// At unit zoom each interior tile can serve both the chart and the terrain.
+// Chunk workers write disjoint regions before entity footprints are painted.
+type factorioChartRaster struct {
+	image           *image.RGBA
+	bounds          image.Rectangle
+	cliffs          []bool
+	skipWaterCliffs bool
+	settings        fastPreviewSettings
+}
+
+func (r *factorioChartRaster) paint(x, y int, ink color.RGBA) {
+	if !image.Pt(x, y).In(r.bounds) {
+		return
+	}
+	px, py := x-r.bounds.Min.X, y-r.bounds.Min.Y
+	if fastOutOfMapBounds(r.settings, float64(x), float64(y)) {
+		ink = color.RGBA{R: 20, G: 23, B: 20, A: 255}
+	} else if r.cliffs != nil && r.cliffs[py*r.bounds.Dx()+px] && (!r.skipWaterCliffs || !factorioPreviewWaterColor(ink)) {
+		ink = factorioCliffMapColor
+	}
+	i := py*r.image.Stride + px*4
+	r.image.Pix[i+0] = ink.R
+	r.image.Pix[i+1] = ink.G
+	r.image.Pix[i+2] = ink.B
+	r.image.Pix[i+3] = 255
+}
+
+func (r *factorioChartRaster) paintChunk(ctx context.Context, cx, cy int, tile func(int, int) color.RGBA) error {
+	bounds := image.Rect(cx*32, cy*32, cx*32+32, cy*32+32).Intersect(r.bounds)
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r.paint(x, y, tile(x, y))
+		}
+	}
+	return nil
 }
 
 // Keep neighboring views reusable when the cache fills, instead of dropping
@@ -94,6 +133,14 @@ func renderFactorioChartChunks(
 	chunk func(context.Context, int, int) ([]factorioChartEntity, error),
 	draw func([]factorioChartEntity),
 ) error {
+	return renderFactorioChartChunksOrdered(ctx, img, x0, y0, tpp, false, chunk, draw)
+}
+
+func renderFactorioChartChunksOrdered(
+	ctx context.Context, img *image.RGBA, x0, y0, tpp float64, reverse bool,
+	chunk func(context.Context, int, int) ([]factorioChartEntity, error),
+	draw func([]factorioChartEntity),
+) error {
 	minX, minY := int(math.Floor(x0/32)), int(math.Floor(y0/32))
 	maxX := int(math.Ceil((x0 + float64(img.Bounds().Dx())*tpp) / 32))
 	maxY := int(math.Ceil((y0 + float64(img.Bounds().Dy())*tpp) / 32))
@@ -110,23 +157,15 @@ func renderFactorioChartChunks(
 			return err
 		}
 		batch := results[:min(batchSize, count-first)]
-		workerCount := min(runtime.GOMAXPROCS(0), len(batch), fastPreviewMaxWorkers)
-		var workers sync.WaitGroup
-		for worker := range workerCount {
-			workers.Go(func() {
-				for index := worker; index < len(batch); index += workerCount {
-					if err := ctx.Err(); err != nil {
-						batch[index] = result{err: err}
-						return
-					}
-					position := first + index
-					entities, err := chunk(ctx, minX+position%width, minY+position/width)
-					batch[index] = result{entities, err}
-				}
-			})
-		}
-		workers.Wait()
-		if err := ctx.Err(); err != nil {
+		err := parallelFastPreviewChunks(ctx, len(batch), func(index int) {
+			position := first + index
+			if reverse {
+				position = count - 1 - position
+			}
+			entities, err := chunk(ctx, minX+position%width, minY+position/width)
+			batch[index] = result{entities, err}
+		})
+		if err != nil {
 			return err
 		}
 		for _, result := range batch {

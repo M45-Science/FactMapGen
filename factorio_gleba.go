@@ -3,10 +3,7 @@
 
 package main
 
-import (
-	"math"
-	"sync"
-)
+import "math"
 
 // Gleba's terrain expression graph follows Factorio 2.1.23's
 // space-age/prototypes/planet/planet-gleba-map-gen.lua. All dynamic arithmetic
@@ -35,33 +32,28 @@ func glebaRotate(x, y, angle float32) (float32, float32) {
 // Fertile spots are constant-density cones, with a bounded, thread-safe cache.
 type glebaFertileSpots struct {
 	seed    uint32
-	mu      sync.Mutex
-	regions map[[2]int64][]factorioSelectedSpot
+	regions factorioSpotRegionCache
 }
 
 func (f *glebaFertileSpots) region(rx, ry int64) []factorioSelectedSpot {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	key := [2]int64{rx, ry}
-	if s, ok := f.regions[key]; ok {
+	if s, ok := f.regions.load(rx, ry); ok {
 		return s
 	}
 	s := factorioSelectSpots(factorioSpotRegionKey{seed0: f.seed, seed1: 1, regionX: rx, regionY: ry}, factorioSpotSelectionParams{
 		regionSize: 1024, candidateSpotCount: 80, spacing: 128, skipSpan: 1,
 		density: func(float64, float64) float64 { return 80 }, quantity: func(float64, float64) float64 { return 1000 }, favorability: func(float64, float64) float64 { return 60 },
 	})
-	if len(f.regions) >= 128 {
-		clear(f.regions)
-	}
-	f.regions[key] = s
+	f.regions.store(rx, ry, s)
 	return s
 }
 func (f *glebaFertileSpots) at(x, y float32) float32 {
 	best := float32(-0.5)
 	const peak = float32(3000.0 / (32 * 32 * 3.1416))
 	index := func(v float32) int64 { return int64(math.Floor((float64(v) + 512) / 1024)) }
-	for ry := index(y - 128); ry <= index(y+128); ry++ {
-		for rx := index(x - 128); rx <= index(x+128); rx++ {
+	left, right := index(x-128), index(x+128)
+	bottom := index(y + 128)
+	for ry := index(y - 128); ry <= bottom; ry++ {
+		for rx := left; rx <= right; rx++ {
 			for _, p := range f.region(rx, ry) {
 				dx, dy := x-float32(p.x), y-float32(p.y)
 				best = max(best, peak-noiseSqrt(dx*dx+dy*dy)*(peak/32))
@@ -102,7 +94,7 @@ func newFactorioGlebaEvaluator(settings fastPreviewSettings, grid bool) *factori
 		highFrequency: n(1, 3, .7, 1.0/18, 1, true), peaks: n(1000000, 3, .7, float32(1.0/60)*noiseSliderRescale(noiseSliderRescale(wf, 2), 3), 1, false), ridgesSmall: n(1000000, 3, .7, 1.0/60, 1, true),
 		rockpools: n(1000000, 4, .75, 1.0/45, 1, true), rockMask: n(1000000, 3, .7, 1.0/75, 1, true), mudBasins: n(1000000, 3, .7, 1.0/10, 1, true), mudChannels: n(1000000, 3, .5, 1.0/9, 1, true),
 		fertileX: n(3000000, 2, .5, 1.0/20, 1, true), fertileY: n(4000000, 2, .5, 1.0/20, 1, true), fertileSolid: n(2000000, 2, .7, 1.0/16, 1, true),
-		fertile: glebaFertileSpots{seed: settings.seed, regions: make(map[[2]int64][]factorioSelectedSpot)},
+		fertile: glebaFertileSpots{seed: settings.seed},
 	}
 	for i := range e.tri {
 		e.tri[i] = n(uint32(i+1)*10000, 3, .65, float32(1.0/300)*wf, 1, false)
@@ -121,6 +113,10 @@ func newFactorioGlebaEvaluator(settings fastPreviewSettings, grid bool) *factori
 	return e
 }
 func (e *factorioGlebaEvaluator) sample(px, py float64) factorioGlebaSample {
+	return e.sampleTerrain(px, py, false)
+}
+
+func (e *factorioGlebaEvaluator) sampleTerrain(px, py float64, elevationOnly bool) factorioGlebaSample {
 	x, y := float32(px), float32(py)
 	sx, sy := x, y
 	if len(e.settings.startingPositions) > 0 {
@@ -174,6 +170,9 @@ func (e *factorioGlebaEvaluator) sample(px, py float64) factorioGlebaSample {
 	peak := max(0, 1-noiseAbs(contrast-.5)/.5)
 	mud := noiseLerp(-8+16*(1-noiseAbs(e.mudBasins(x, y))), -12+16*noiseAbs(e.mudChannels(x, y)), contrast)*(1+.3*peak) + .1*peak
 	elevation := noiseLerp(common, glebaClamp(common*.5+mud, -1.5, 19.9)+.15*mud, glebaSelect(common, -5, 20, 1, 0, 1))
+	if elevationOnly {
+		return factorioGlebaSample{elevation: elevation, rockpools: rockpools}
+	}
 	pitrock := glebaSelect(rockpools, .05, .6, .05, 0, 1) * noiseBool(elevation > 20)
 	moisture := noiseLerp(glebaClamp(1-min(.25+common/80, .5+(common-20)/400), 0, 1), .35, min(1, pitrock*5))
 	temperature := glebaClamp(.8*e.temperature(x+wx*6, y+wy*6), -1, 1)

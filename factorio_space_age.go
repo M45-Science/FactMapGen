@@ -79,15 +79,47 @@ func (e *factorioSpaceAgeEvaluator) render(
 ) error {
 	width := img.Bounds().Dx()
 	height := img.Bounds().Dy()
-	cliffPixels, err := e.cliffPixels(ctx, width, height, originX, originY, tilesPerPixel)
-	if err != nil {
-		return err
+	var cliffPixels []bool
+	if e.aquilo == nil {
+		var err error
+		cliffPixels, err = e.cliffPixels(ctx, width, height, originX, originY, tilesPerPixel)
+		if err != nil {
+			return err
+		}
 	}
 	xAxis := newFastPreviewAxis(originX, tilesPerPixel)
 	yAxis := newFastPreviewAxis(originY, tilesPerPixel)
+	var aquiloLand factorioAquiloLand
+	if tilesPerPixel == 1 && xAxis.aligned && yAxis.aligned {
+		x, y := int(math.Floor(xAxis.coordinate(0))), int(math.Floor(yAxis.coordinate(0)))
+		bounds := image.Rect(x, y, x+width, y+height)
+		raster := &factorioChartRaster{image: img, bounds: bounds, cliffs: cliffPixels, settings: settings}
+		if e.vulcanusChart != nil {
+			return e.vulcanusChart.render(ctx, img, originX, originY, tilesPerPixel, raster)
+		}
+		if e.glebaChart != nil {
+			return e.glebaChart.render(ctx, img, originX, originY, tilesPerPixel, raster)
+		}
+		if e.fulgoraChart != nil {
+			return e.fulgoraChart.render(ctx, img, originX, originY, tilesPerPixel, raster)
+		}
+		if e.aquilo != nil {
+			aquiloLand = factorioAquiloLand{bounds, make([]bool, width*height)}
+		}
+	}
 	renderPixel := func(x, y int, wx, wy float64) {
 		offset := y*img.Stride + x*4
-		base := e.colorAt(wx, wy, tilesPerPixel, cliffPixels[y*width+x])
+		pixel := y*width + x
+		var base color.RGBA
+		if e.aquilo != nil {
+			sample := e.aquilo.sample(wx, wy)
+			if aquiloLand.pixels != nil {
+				aquiloLand.pixels[pixel] = sample.land
+			}
+			base = sample.tile.color
+		} else {
+			base = e.colorAt(wx, wy, tilesPerPixel, cliffPixels != nil && cliffPixels[pixel])
+		}
 		if fastOutOfMapBounds(settings, wx, wy) {
 			base = color.RGBA{R: 20, G: 23, B: 20, A: 255}
 		}
@@ -107,16 +139,16 @@ func (e *factorioSpaceAgeEvaluator) render(
 			return err
 		}
 		if e.aquilo != nil {
-			return e.aquilo.renderEntities(ctx, img, originX, originY, tilesPerPixel)
+			return e.aquilo.renderEntities(ctx, img, originX, originY, tilesPerPixel, aquiloLand)
 		}
 		if e.glebaChart != nil && tilesPerPixel <= 2 {
-			return e.glebaChart.render(ctx, img, originX, originY, tilesPerPixel)
+			return e.glebaChart.render(ctx, img, originX, originY, tilesPerPixel, nil)
 		}
 		if e.fulgoraChart != nil && tilesPerPixel <= 2 {
-			return e.fulgoraChart.render(ctx, img, originX, originY, tilesPerPixel)
+			return e.fulgoraChart.render(ctx, img, originX, originY, tilesPerPixel, nil)
 		}
 		if e.vulcanusChart != nil && tilesPerPixel <= 2 {
-			return e.vulcanusChart.render(ctx, img, originX, originY, tilesPerPixel)
+			return e.vulcanusChart.render(ctx, img, originX, originY, tilesPerPixel, nil)
 		}
 		return nil
 	}
@@ -146,16 +178,16 @@ func (e *factorioSpaceAgeEvaluator) render(
 		}
 	}
 	if e.aquilo != nil {
-		return e.aquilo.renderEntities(ctx, img, originX, originY, tilesPerPixel)
+		return e.aquilo.renderEntities(ctx, img, originX, originY, tilesPerPixel, aquiloLand)
 	}
 	if e.glebaChart != nil {
-		return e.glebaChart.render(ctx, img, originX, originY, tilesPerPixel)
+		return e.glebaChart.render(ctx, img, originX, originY, tilesPerPixel, nil)
 	}
 	if e.fulgoraChart != nil {
-		return e.fulgoraChart.render(ctx, img, originX, originY, tilesPerPixel)
+		return e.fulgoraChart.render(ctx, img, originX, originY, tilesPerPixel, nil)
 	}
 	if e.vulcanusChart != nil {
-		return e.vulcanusChart.render(ctx, img, originX, originY, tilesPerPixel)
+		return e.vulcanusChart.render(ctx, img, originX, originY, tilesPerPixel, nil)
 	}
 	return nil
 }

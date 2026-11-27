@@ -83,11 +83,8 @@ type factorioNauvisEvaluator struct {
 	specialFinishTables      factorioBasisTables
 	specialSegmentation      float64
 
-	moistureBias             float64
-	startingAreaMoistureSize float64
-	startingAreaMoistureFreq float64
-	auxBias                  float64
-	temperatureBase          float32
+	moistureBias, startingMoistureBias, startingMoistureScale float32
+	auxBias, temperatureBase, cliffScale                      float32
 }
 
 func newFactorioNauvisEvaluator(settings fastPreviewSettings) *factorioNauvisEvaluator {
@@ -106,20 +103,23 @@ func newFactorioNauvisEvaluator(settings fastPreviewSettings) *factorioNauvisEva
 	if len(starts) == 0 {
 		starts = []factorioPoint{{}}
 	}
+	moistureBias := float32(settings.moistureBias)
+	startingBiasChange := noiseSliderLinear(float32(settings.startingAreaMoistureSize), -.5, .5)
 
 	evaluator := &factorioNauvisEvaluator{
-		mapType:                  settings.mapType,
-		segmentation:             segmentation,
-		waterLevel:               10 * math.Log2(waterSize),
-		starts:                   starts,
-		lakes:                    factorioStartingLakePositions(settings.seed, starts),
-		basicAux:                 fastString(settings.propertyExpression["aux"]) == "aux_basic",
-		basicMoisture:            fastString(settings.propertyExpression["moisture"]) == "moisture_basic",
-		moistureBias:             settings.moistureBias,
-		startingAreaMoistureSize: settings.startingAreaMoistureSize,
-		startingAreaMoistureFreq: settings.startingAreaMoistureFrequency,
-		auxBias:                  settings.auxBias,
-		temperatureBase:          15 + float32(settings.temperatureBias),
+		mapType:               settings.mapType,
+		segmentation:          segmentation,
+		waterLevel:            10 * math.Log2(waterSize),
+		starts:                starts,
+		lakes:                 factorioStartingLakePositions(settings.seed, starts),
+		basicAux:              fastString(settings.propertyExpression["aux"]) == "aux_basic",
+		basicMoisture:         fastString(settings.propertyExpression["moisture"]) == "moisture_basic",
+		moistureBias:          moistureBias,
+		startingMoistureBias:  noiseLerp(moistureBias, startingBiasChange, noiseAbs(2*startingBiasChange)*1.1),
+		startingMoistureScale: float32(settings.startingAreaMoistureFrequency) / 400,
+		auxBias:               float32(settings.auxBias),
+		temperatureBase:       15 + float32(settings.temperatureBias),
+		cliffScale:            gridSegmentation / 500,
 	}
 	if settings.mapType == "lakes" || settings.mapType == "island" {
 		evaluator.initSpecialElevation(settings.seed)
@@ -165,28 +165,33 @@ func newFactorioNauvisEvaluator(settings fastPreviewSettings) *factorioNauvisEva
 }
 
 func (e *factorioNauvisEvaluator) sample(x, y float64) factorioNauvisSample {
-	seg := float32(1.5*float32(e.segmentation)) / 500
+	return e.sampleFields(x, y, true)
+}
+
+func (e *factorioNauvisEvaluator) sampleFields(x, y float64, terrain bool) factorioNauvisSample {
 	xf, yf := float32(x), float32(y)
-	cliffLevel := glebaClamp(.65+float32(.6*factorioBasisNoise32(xf*seg, yf*seg, &e.cliffLevelTables, true)), .15, 1.15)
+	cliffLevel := glebaClamp(.65+float32(.6*factorioBasisNoise32(xf*e.cliffScale, yf*e.cliffScale, &e.cliffLevelTables, true)), .15, 1.15)
 	hills := noiseAbs(e.hillsNoise(xf, yf))
 	plateaus := .5 + glebaClamp((hills-cliffLevel)*10, -.5, .5)
 	bridgeBillows := noiseAbs(e.bridgeNoise(xf, yf))
 	forestPathBillows := noiseAbs(e.forestPathNoise(xf, yf))
 	distance := factorioDistanceFromNearestPoint(x, y, e.starts, math.Inf(1))
-	elevation := e.elevationFromShared(x, y, float64(bridgeBillows), distance, float64(float32(.1*hills)+float32(.8*plateaus)))
-	if e.mapType == "lakes" || e.mapType == "island" {
-		elevation = e.specialElevation(x, y, distance)
+	var elevation float64
+	var aux float32
+	if terrain {
+		if e.mapType == "lakes" || e.mapType == "island" {
+			elevation = e.specialElevation(x, y, distance)
+		} else {
+			elevation = e.elevationFromShared(x, y, float64(bridgeBillows), distance, float64(float32(.1*hills)+float32(.8*plateaus)))
+		}
+		auxPlateau := float32(.06 * (plateaus - .4))
+		if e.basicAux {
+			auxPlateau = 0
+		}
+		aux = glebaClamp((.5+e.auxBias)+auxPlateau+e.auxNoise(xf, yf), 0, 1)
 	}
-
-	auxPlateau := float32(.06 * (plateaus - .4))
-	if e.basicAux {
-		auxPlateau = 0
-	}
-	aux := glebaClamp((.5+float32(e.auxBias))+auxPlateau+e.auxNoise(xf, yf), 0, 1)
-	startingBiasChange := noiseSliderLinear(float32(e.startingAreaMoistureSize), -.5, .5)
-	startingBias := noiseLerp(float32(e.moistureBias), startingBiasChange, noiseAbs(2*startingBiasChange)*1.1)
-	startingBiasRegion := glebaClamp(2-float32((float32(e.startingAreaMoistureFreq)/400)*float32(distance)), 0, 1)
-	adjustedBias := noiseLerp(float32(e.moistureBias), startingBias, startingBiasRegion)
+	startingBiasRegion := glebaClamp(2-float32(e.startingMoistureScale*float32(distance)), 0, 1)
+	adjustedBias := noiseLerp(e.moistureBias, e.startingMoistureBias, startingBiasRegion)
 	moistureNoise := e.moistureNoise(xf, yf)
 	moistureMain := glebaClamp((.4+adjustedBias)+moistureNoise-float32(.08*(plateaus-.6)), 0, 1)
 	if e.basicMoisture {

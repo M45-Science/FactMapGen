@@ -15,12 +15,14 @@ type factorioFulgoraEvaluator struct {
 	wobbleX, wobbleY, influence, basis, oil, rock, dunes, scrap, walls, paving, subnoise func(float32, float32) float32
 	cells, spots, roads, structures                                                      factorioVoronoi
 	start, tight, vault                                                                  factorioNoiseCone
+	scrapEnabled                                                                         bool
+	scrapStructureLimit, scrapVaultLimit                                                 float32
 }
 type factorioFulgoraSample struct {
 	distance                                                                                                                    float32
 	tile                                                                                                                        factorioVulcanusTile
 	elevation, cells, pyramids, spots, natural, mixOil, startingMask, vaults, roadPaving, structure, subnoise, scrapProbability float32
-	naturalMask, mesa, artificial, machineDensity, vaultStart, rock, scrap, basisOil, oilMask                                   float32
+	naturalMask, mesa, artificial, machineDensity, vaultStart, rock, scrap, basisOil, oilMask, influence                        float32
 }
 
 func newFactorioFulgoraEvaluator(settings fastPreviewSettings, gridMode ...bool) *factorioFulgoraEvaluator {
@@ -56,10 +58,19 @@ func newFactorioFulgoraEvaluator(settings fastPreviewSettings, gridMode ...bool)
 	e.spots = newFactorioVoronoi(settings.seed, crc32.ChecksumIEEE([]byte("fulgora_cells")), grid, 0.6, voronoiEuclidean)
 	e.roads = newFactorioVoronoi(settings.seed, crc32.ChecksumIEEE([]byte("fulgora_road_cells")), grid/3, 1, voronoiChebyshev)
 	e.structures = newFactorioVoronoi(settings.seed, crc32.ChecksumIEEE([]byte("fulgora_structure_cells")), grid/8, 0.8, voronoiMinkowski)
+	sc := fastSpaceAgeControl(settings, "scrap")
+	e.scrapEnabled = sc.enabled && sc.size > 0 && sc.richness > 0
+	sf := float32(sc.frequency)
+	e.scrapStructureLimit = min(0.1*sf, 0.05+0.05*sf)
+	e.scrapVaultLimit = 1.2 + 0.4*noiseSliderLinear(float32(sc.size), -1, 1)
 	return e
 }
 
 func (e *factorioFulgoraEvaluator) sample(px, py float64) factorioFulgoraSample {
+	return e.sampleTerrain(px, py, false)
+}
+
+func (e *factorioFulgoraEvaluator) sampleTerrain(px, py float64, elevationOnly bool) factorioFulgoraSample {
 	x, y := float32(px), float32(py)
 	wobX, wobY := e.wobbleX(x, y), e.wobbleY(x, y)
 	mask := min(1, max(0, e.influence(x, y)+0.6))
@@ -87,7 +98,7 @@ func (e *factorioFulgoraEvaluator) sample(px, py float64) factorioFulgoraSample 
 	vaults := 1 - noiseBool(cell.id < 0.33) - sprawl - mesa
 	vaultsAndStart := max(vaults, vaultMask)
 	basis, oil := e.basis(wx, wy), e.oil(x+1.5*wobX, y+1.5*wobY)
-	rock, dunes, scrap := float32(0.33)+noiseAbs(e.rock(x, y)), float32(0.66)-noiseAbs(e.dunes(x, y)), e.scrap(x, y)
+	rock := float32(0.33) + noiseAbs(e.rock(x, y))
 	natural := (basis*2)*e.size - 0.85
 	sprawlPyramids := cell.pyramid * (sprawl + mesa*min(1, noiseAbs(0.9-0.2*oil+0.05*rock)))
 	vaultPyramids := max(vaults*cell.pyramid, 0.5*vaultStart, 0.5*start)
@@ -101,6 +112,10 @@ func (e *factorioFulgoraEvaluator) sample(px, py float64) factorioFulgoraSample 
 	mixOil := noiseLerp(mixSpots, min(-0.01, mixSpots-0.4+0.6*oil), oilMask)
 	sandBasins := min(mixOil, 0.6-mixOil)
 	elevation := sandBasins*60 + 80 + (noiseBool(sandBasins > 0)-0.5)*20
+	if elevationOnly {
+		return factorioFulgoraSample{elevation: elevation, influence: mask}
+	}
+	dunes, scrap := float32(0.66)-noiseAbs(e.dunes(x, y)), e.scrap(x, y)
 	s := factorioFulgoraSample{elevation: elevation, cells: cell.id, pyramids: cell.pyramid, spots: spots, natural: natural, mixOil: mixOil, startingMask: startingMask, vaults: vaultsAndStart, vaultStart: vaultStart, rock: rock, scrap: scrap, basisOil: oil, oilMask: oilMask, mesa: mesa, distance: noiseSqrt(sx*sx + sy*sy)}
 	// Factorio scores the four ocean tiles before the eight land tiles in a
 	// single competition. Strict comparisons skip NaN and retain the first tie.
@@ -178,11 +193,9 @@ func (e *factorioFulgoraEvaluator) sample(px, py float64) factorioFulgoraSample 
 	s.roadPaving = paving2
 	s.structure = structure.id
 	s.subnoise = subnoise
-	c := fastSpaceAgeControl(e.settings, "scrap")
-	if c.enabled && c.size > 0 && c.richness > 0 {
-		frequency := float32(c.frequency)
-		structural := noiseBool(structure.id < min(0.1*frequency, 0.05+0.05*frequency)) * (1 + subnoise) * noiseBool(elevation > 90) * artificial
-		vault := noiseBool(preband < 1.2+0.4*noiseSliderLinear(float32(c.size), -1, 1)) * vaultsAndStart * 10
+	if e.scrapEnabled {
+		structural := noiseBool(structure.id < e.scrapStructureLimit) * (1 + subnoise) * noiseBool(elevation > 90) * artificial
+		vault := noiseBool(preband < e.scrapVaultLimit) * vaultsAndStart * 10
 		s.scrapProbability = (1 - startingMask) * min(structural+vault, 0.5) * (1 - paving2)
 	}
 	return s

@@ -235,7 +235,7 @@ func (e *factorioTreeEvaluator) placedAt(x, y float64) bool {
 	tileY := int64(math.Floor(y))
 	return e.placedAtSample(
 		float64(tileX), float64(tileY),
-		e.nauvis.sample(float64(tileX), float64(tileY)),
+		e.nauvis.sampleFields(float64(tileX), float64(tileY), false),
 	)
 }
 

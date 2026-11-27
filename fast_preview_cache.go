@@ -150,8 +150,30 @@ func (c *fastPreviewCache) render(
 	tilesPerPixel float64,
 	centerX, centerY float64,
 ) (*image.RGBA, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	entry := c.acquireWorld(key, settings)
 	defer c.releaseWorld(entry)
+
+	centerPixelX, alignedX := fastPreviewRasterCoordinate(centerX, tilesPerPixel)
+	centerPixelY, alignedY := fastPreviewRasterCoordinate(centerY, tilesPerPixel)
+	cacheable := entry.retained && size%2 == 0 && alignedX && alignedY
+	startX, startY := centerPixelX-int64(size/2), centerPixelY-int64(size/2)
+	var uses []fastPreviewTileUse
+	var missing []int
+	if cacheable {
+		uses, missing = c.viewportTiles(key, size, tilesPerPixel, startX, startY)
+	}
+	if cacheable && tilesPerPixel == 1 && size <= 512 && len(missing) == 0 {
+		// Unit-zoom raster tiles already contain every overlay. Serving
+		// them does not require a renderer or a spot in the render queue.
+		result := assembleFastPreviewTiles(uses, size, startX, startY)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
 
 	if err := entry.acquireRender(ctx); err != nil {
 		return nil, err
@@ -161,52 +183,19 @@ func (c *fastPreviewCache) render(
 		return nil, err
 	}
 	defer releaseFastPreviewGate(c.renderGate)
+	if len(missing) > 0 {
+		missing = c.refreshPreviewTiles(uses, missing)
+	}
 	// Each admitted render owns its mutable evaluator state. Tile pixels and
 	// the synchronized entity LRU remain shared across those evaluators.
 	world := entry.takeRenderWorld()
 	defer entry.returnRenderWorld(world)
 	defer world.trimSpatialCaches()
 
-	if !entry.retained {
+	if !cacheable {
 		return world.render(ctx, size, tilesPerPixel, centerX, centerY)
 	}
 
-	centerPixelX, alignedX := fastPreviewRasterCoordinate(centerX, tilesPerPixel)
-	centerPixelY, alignedY := fastPreviewRasterCoordinate(centerY, tilesPerPixel)
-	if size%2 != 0 || !alignedX || !alignedY {
-		return world.render(ctx, size, tilesPerPixel, centerX, centerY)
-	}
-
-	startX := centerPixelX - int64(size/2)
-	startY := centerPixelY - int64(size/2)
-	endX := startX + int64(size)
-	endY := startY + int64(size)
-	firstTileX := fastPreviewFloorDiv(startX, fastPreviewTileEdge)
-	firstTileY := fastPreviewFloorDiv(startY, fastPreviewTileEdge)
-	lastTileX := fastPreviewFloorDiv(endX-1, fastPreviewTileEdge)
-	lastTileY := fastPreviewFloorDiv(endY-1, fastPreviewTileEdge)
-
-	tileCount := int((lastTileX - firstTileX + 1) * (lastTileY - firstTileY + 1))
-	uses := make([]fastPreviewTileUse, 0, tileCount)
-	missing := make([]int, 0, tileCount)
-	for tileY := firstTileY; tileY <= lastTileY; tileY++ {
-		for tileX := firstTileX; tileX <= lastTileX; tileX++ {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			use := fastPreviewTileUse{key: fastPreviewTileKey{
-				world:         key,
-				tilesPerPixel: math.Float64bits(tilesPerPixel),
-				rasterTileX:   tileX,
-				rasterTileY:   tileY,
-			}, x: tileX, y: tileY}
-			use.image, _ = c.getTile(use.key)
-			uses = append(uses, use)
-			if use.image == nil {
-				missing = append(missing, len(uses)-1)
-			}
-		}
-	}
 	if len(missing) > 0 {
 		if tilesPerPixel == 1 && size%fastPreviewTileEdge == 0 && len(missing) == len(uses) && startX%fastPreviewTileEdge == 0 && startY%fastPreviewTileEdge == 0 {
 			img, err := world.render(ctx, size, 1, centerX, centerY)
@@ -218,30 +207,80 @@ func (c *fastPreviewCache) render(
 			}
 			return img, nil
 		}
-		prepareFastPreviewCacheTiles(world, uses, missing, tilesPerPixel)
+		if tilesPerPixel != 1 {
+			prepareFastPreviewCacheTiles(world, uses, missing, tilesPerPixel)
+		}
 		if err := c.renderMissingTiles(ctx, entry, world, uses, missing, tilesPerPixel); err != nil {
 			return nil, err
 		}
 	}
 
-	result := image.NewRGBA(image.Rect(0, 0, size, size))
-	for _, use := range uses {
-		copyFastPreviewTile(result, use.image, startX, startY, use.x, use.y)
-	}
-
-	// At one tile per pixel the cached pixels include all chart overlays.
-	if tilesPerPixel == 1 {
-		if err := ctx.Err(); err != nil {
+	result := assembleFastPreviewTiles(uses, size, startX, startY)
+	if tilesPerPixel != 1 {
+		originX, originY := float64(startX)*tilesPerPixel, float64(startY)*tilesPerPixel
+		if err := world.renderOverlays(ctx, result, originX, originY, tilesPerPixel); err != nil {
 			return nil, err
 		}
-		return result, nil
 	}
-	originX := float64(startX) * tilesPerPixel
-	originY := float64(startY) * tilesPerPixel
-	if err := world.renderOverlays(ctx, result, originX, originY, tilesPerPixel); err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+func (c *fastPreviewCache) viewportTiles(key fastPreviewWorldKey, size int, tpp float64, x, y int64) ([]fastPreviewTileUse, []int) {
+	firstTileX := fastPreviewFloorDiv(x, fastPreviewTileEdge)
+	firstTileY := fastPreviewFloorDiv(y, fastPreviewTileEdge)
+	lastTileX := fastPreviewFloorDiv(x+int64(size)-1, fastPreviewTileEdge)
+	lastTileY := fastPreviewFloorDiv(y+int64(size)-1, fastPreviewTileEdge)
+	count := int((lastTileX - firstTileX + 1) * (lastTileY - firstTileY + 1))
+	uses := make([]fastPreviewTileUse, 0, count)
+	var missing []int
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for ty := firstTileY; ty <= lastTileY; ty++ {
+		for tx := firstTileX; tx <= lastTileX; tx++ {
+			tileKey := fastPreviewTileKey{world: key, tilesPerPixel: math.Float64bits(tpp), rasterTileX: tx, rasterTileY: ty}
+			use := fastPreviewTileUse{key: tileKey, x: tx, y: ty}
+			if tile := c.tiles[tileKey]; tile != nil {
+				c.hits++
+				c.tileLRU.MoveToFront(tile.element)
+				use.image = tile.image
+			} else {
+				c.misses++
+				if missing == nil {
+					missing = make([]int, 0, count)
+				}
+				missing = append(missing, len(uses))
+			}
+			uses = append(uses, use)
+		}
+	}
+	return uses, missing
+}
+
+// Another admitted request may have filled a miss while we waited.
+func (c *fastPreviewCache) refreshPreviewTiles(uses []fastPreviewTileUse, missing []int) []int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	remaining := missing[:0]
+	for _, i := range missing {
+		if tile := c.tiles[uses[i].key]; tile != nil {
+			c.tileLRU.MoveToFront(tile.element)
+			uses[i].image = tile.image
+		} else {
+			remaining = append(remaining, i)
+		}
+	}
+	return remaining
+}
+
+func assembleFastPreviewTiles(uses []fastPreviewTileUse, size int, x, y int64) *image.RGBA {
+	img := image.NewRGBA(image.Rect(0, 0, size, size))
+	for _, use := range uses {
+		copyFastPreviewTile(img, use.image, x, y, use.x, use.y)
+	}
+	return img
 }
 
 // Include the native missing-neighbor mask in the world key so standalone
@@ -273,20 +312,20 @@ func (c *fastPreviewCache) storeAlignedTileBatch(
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		tile := image.NewRGBA(image.Rect(0, 0, fastPreviewTileEdge, fastPreviewTileEdge))
-		sourceX := int(use.x*fastPreviewTileEdge - startX)
-		sourceY := int(use.y*fastPreviewTileEdge - startY)
-		for y := 0; y < fastPreviewTileEdge; y++ {
-			sourceOffset := (sourceY+y)*img.Stride + sourceX*4
-			destinationOffset := y * tile.Stride
-			copy(
-				tile.Pix[destinationOffset:destinationOffset+tile.Stride],
-				img.Pix[sourceOffset:sourceOffset+tile.Stride],
-			)
-		}
+		tile := sliceFastPreviewTile(img, use.x*fastPreviewTileEdge-startX, use.y*fastPreviewTileEdge-startY)
 		c.storeTile(entry, use.key, tile)
 	}
 	return nil
+}
+
+func sliceFastPreviewTile(img *image.RGBA, sourceX, sourceY int64) *image.RGBA {
+	tile := image.NewRGBA(image.Rect(0, 0, fastPreviewTileEdge, fastPreviewTileEdge))
+	for y := 0; y < fastPreviewTileEdge; y++ {
+		sourceOffset := (int(sourceY)+y)*img.Stride + int(sourceX)*4
+		destinationOffset := y * tile.Stride
+		copy(tile.Pix[destinationOffset:destinationOffset+tile.Stride], img.Pix[sourceOffset:sourceOffset+tile.Stride])
+	}
+	return tile
 }
 
 func prepareFastPreviewCacheTiles(
@@ -321,6 +360,11 @@ func (c *fastPreviewCache) renderMissingTiles(
 	missing []int,
 	tilesPerPixel float64,
 ) error {
+	if tilesPerPixel == 1 && len(missing) > 1 {
+		if done, err := c.renderUnitTileRectangle(ctx, entry, world, uses, missing); done || err != nil {
+			return err
+		}
+	}
 	renderOne := func(index int) error {
 		use := &uses[index]
 		tile, err := renderFastPreviewCacheTile(ctx, world, use.x, use.y, tilesPerPixel)
@@ -374,6 +418,34 @@ func (c *fastPreviewCache) renderMissingTiles(
 	return firstError
 }
 
+// A horizontal or vertical pan often reveals a strip of adjacent tiles.
+// Rendering it together shares chart and cliff work across its edges.
+func (c *fastPreviewCache) renderUnitTileRectangle(ctx context.Context, entry *fastPreviewWorldCache, world *fastPreviewWorld, uses []fastPreviewTileUse, missing []int) (bool, error) {
+	first := uses[missing[0]]
+	left, top, right, bottom := first.x, first.y, first.x, first.y
+	for _, i := range missing[1:] {
+		u := uses[i]
+		left, top, right, bottom = min(left, u.x), min(top, u.y), max(right, u.x), max(bottom, u.y)
+	}
+	width, height := right-left+1, bottom-top+1
+	if width*height != int64(len(missing)) {
+		return false, nil
+	}
+	img := image.NewRGBA(image.Rect(0, 0, int(width)*fastPreviewTileEdge, int(height)*fastPreviewTileEdge))
+	if err := world.renderAlignedUnit(ctx, img, int(left)*fastPreviewTileEdge, int(top)*fastPreviewTileEdge); err != nil {
+		return true, err
+	}
+	for _, i := range missing {
+		if err := ctx.Err(); err != nil {
+			return true, err
+		}
+		u := &uses[i]
+		u.image = sliceFastPreviewTile(img, (u.x-left)*fastPreviewTileEdge, (u.y-top)*fastPreviewTileEdge)
+		c.storeTile(entry, u.key, u.image)
+	}
+	return true, nil
+}
+
 func renderFastPreviewCacheTile(
 	ctx context.Context,
 	world *fastPreviewWorld,
@@ -399,13 +471,10 @@ func renderFastPreviewCacheTile(
 	); err != nil {
 		return nil, err
 	}
-	tile := image.NewRGBA(image.Rect(0, 0, fastPreviewTileEdge, fastPreviewTileEdge))
-	for y := 0; y < fastPreviewTileEdge; y++ {
-		sourceOffset := (y+padding)*scratch.Stride + padding*4
-		destinationOffset := y * tile.Stride
-		copy(tile.Pix[destinationOffset:destinationOffset+tile.Stride], scratch.Pix[sourceOffset:sourceOffset+tile.Stride])
+	if padding == 0 {
+		return scratch, nil
 	}
-	return tile, nil
+	return sliceFastPreviewTile(scratch, int64(padding), int64(padding)), nil
 }
 
 func fastPreviewTileHistoryPadding(tilesPerPixel float64) int {
@@ -591,19 +660,6 @@ func (c *fastPreviewCache) removeWorldLocked(entry *fastPreviewWorldCache) {
 		}
 		c.removeTileLocked(key, tile)
 	}
-}
-
-func (c *fastPreviewCache) getTile(key fastPreviewTileKey) (*image.RGBA, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	tile, ok := c.tiles[key]
-	if !ok {
-		c.misses++
-		return nil, false
-	}
-	c.hits++
-	c.tileLRU.MoveToFront(tile.element)
-	return tile.image, true
 }
 
 func (c *fastPreviewCache) storeTile(

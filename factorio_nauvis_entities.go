@@ -99,39 +99,64 @@ func (e *factorioTreeEvaluator) probabilitiesAtSample(x, y float64, s factorioNa
 	return values
 }
 
-func (e *factorioNauvisNaturalEvaluator) chunk(ctx context.Context, cx, cy int) ([]factorioChartEntity, error) {
+func (e *factorioNauvisNaturalEvaluator) chunk(ctx context.Context, cx, cy int, raster *factorioChartRaster) ([]factorioChartEntity, error) {
 	key := [2]int{cx, cy}
 	cached, ok := e.chunks.get(key)
 	if ok {
+		if raster != nil {
+			return cached, raster.paintChunk(ctx, cx, cy, func(x, y int) color.RGBA {
+				wx, wy := float64(x), float64(y)
+				return e.nauvis.terrainTileFast(e.nauvis.sample(wx, wy), wx, wy).color
+			})
+		}
 		return cached, nil
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	var water [40 * 40]bool
+	const (
+		unknown = iota
+		water
+		land
+	)
+	var terrain [40 * 40]uint8
+	baseX, baseY := cx*32, cy*32
 	probabilities := factorioNauvisProbabilityPool.Get().(*factorioNauvisProbabilities)
 	defer factorioNauvisProbabilityPool.Put(probabilities)
 	clear(probabilities[:])
 	var richness [1024][6]float64
 	var positions [1024]factorioSpotCandidate
-	for dy := -4; dy < 36; dy++ {
+	for dy := 0; dy < 32; dy++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		for dx := -4; dx < 36; dx++ {
-			x, y := float64(cx*32+dx), float64(cy*32+dy)
-			s := e.nauvis.sample(x, y)
-			// Both water probabilities are negative infinity above sea level.
-			wet := fastOutOfMapBounds(e.settings, x, y) ||
-				(!(s.elevation > 0) && e.nauvis.terrainTileFast(s, x, y).water)
-			water[(dy+4)*40+dx+4] = wet
-			if dx >= 0 && dx < 32 && dy >= 0 && dy < 32 {
-				positions[dy*32+dx] = factorioSpotCandidate{x: x, y: y}
-			}
-			if wet || dx < 0 || dx >= 32 || dy < 0 || dy >= 32 {
+		for dx := 0; dx < 32; dx++ {
+			i := dy*32 + dx
+			x, y := float64(baseX+dx), float64(baseY+dy)
+			positions[i] = factorioSpotCandidate{x: x, y: y}
+			tileIndex := (dy+4)*40 + dx + 4
+			if fastOutOfMapBounds(e.settings, x, y) {
+				terrain[tileIndex] = water
+				if raster != nil {
+					raster.paint(baseX+dx, baseY+dy, color.RGBA{})
+				}
 				continue
 			}
-			p := &probabilities[dy*32+dx]
+			s := e.nauvis.sample(x, y)
+			// Both water probabilities are negative infinity above sea level.
+			var tile factorioTerrainTile
+			if raster != nil || !(s.elevation > 0) {
+				tile = e.nauvis.terrainTileFast(s, x, y)
+			}
+			if raster != nil {
+				raster.paint(baseX+dx, baseY+dy, tile.color)
+			}
+			if !(s.elevation > 0) && tile.water {
+				terrain[tileIndex] = water
+				continue
+			}
+			terrain[tileIndex] = land
+			p := &probabilities[i]
 			if e.trees != nil {
 				v := e.trees.probabilitiesAtSample(x, y, s)
 				copy(p[3:], v[:])
@@ -145,6 +170,23 @@ func (e *factorioNauvisNaturalEvaluator) chunk(ctx context.Context, cx, cy int) 
 				p[2] = .1 * e.settings.rocks.size * (sand + density - 1.6)
 			}
 		}
+	}
+	isWater := func(x, y int) bool {
+		i := (y-baseY+4)*40 + x - baseX + 4
+		if terrain[i] == unknown {
+			wx, wy := float64(x), float64(y)
+			wet := fastOutOfMapBounds(e.settings, wx, wy)
+			if !wet {
+				s := e.nauvis.sample(wx, wy)
+				wet = !(s.elevation > 0) && e.nauvis.terrainTileFast(s, wx, wy).water
+			}
+			if wet {
+				terrain[i] = water
+			} else {
+				terrain[i] = land
+			}
+		}
+		return terrain[i] == water
 	}
 	if e.enemies != nil {
 		e.enemyMu.Lock()
@@ -175,7 +217,9 @@ func (e *factorioNauvisNaturalEvaluator) chunk(ctx context.Context, cx, cy int) 
 		var shared [1024]factorioResourceSharedPoint
 		if len(e.resources.fields) > 0 {
 			for i, p := range positions {
-				shared[i] = e.resources.fields[0].regular.sharedPointAt(p.x, p.y)
+				if terrain[(i/32+4)*40+i%32+4] == land {
+					shared[i] = e.resources.fields[0].regular.sharedPointAt(p.x, p.y)
+				}
 			}
 		}
 		for j := range e.resources.fields {
@@ -187,6 +231,9 @@ func (e *factorioNauvisNaturalEvaluator) chunk(ctx context.Context, cx, cy int) 
 				later = append(later, kind)
 			}
 			for i, p := range positions {
+				if terrain[(i/32+4)*40+i%32+4] == water {
+					continue
+				}
 				v := f.fieldAtShared(p.x, p.y, shared[i])
 				probabilities[i][kind] = clampFloat(v, 0, 1)
 				richness[i][kind-29] = v * f.regular.control.richness
@@ -203,7 +250,7 @@ func (e *factorioNauvisNaturalEvaluator) chunk(ctx context.Context, cx, cy int) 
 	// Fish has an empty order, is restricted to water, and is aligned to the grid.
 	if e.settings.fish {
 		for i := 1023; i >= 0; i-- {
-			if water[(i/32+4)*40+i%32+4] {
+			if terrain[(i/32+4)*40+i%32+4] == water {
 				rng.next()
 			}
 		}
@@ -229,7 +276,7 @@ func (e *factorioNauvisNaturalEvaluator) chunk(ctx context.Context, cx, cy int) 
 	var entities []factorioChartEntity
 	for _, group := range groups {
 		for i := 1023; i >= 0; i-- {
-			if water[(i/32+4)*40+i%32+4] {
+			if terrain[(i/32+4)*40+i%32+4] == water {
 				continue
 			}
 			kind := group[0]
@@ -254,10 +301,11 @@ func (e *factorioNauvisNaturalEvaluator) chunk(ctx context.Context, cx, cy int) 
 				continue
 			}
 			allowed := true
-			for by := int(math.Floor(y + math.Trunc(box[1]*256)/256)); by <= int(math.Floor(y+math.Trunc(box[3]*256)/256)); by++ {
+			for by := int(math.Floor(y + math.Trunc(box[1]*256)/256)); by <= int(math.Floor(y+math.Trunc(box[3]*256)/256)) && allowed; by++ {
 				for bx := int(math.Floor(x + math.Trunc(box[0]*256)/256)); bx <= int(math.Floor(x+math.Trunc(box[2]*256)/256)); bx++ {
-					if water[(by-cy*32+4)*40+bx-cx*32+4] {
+					if isWater(bx, by) {
 						allowed = false
+						break
 					}
 				}
 			}
@@ -270,11 +318,14 @@ func (e *factorioNauvisNaturalEvaluator) chunk(ctx context.Context, cx, cy int) 
 	return entities, nil
 }
 
-func (e *factorioNauvisNaturalEvaluator) render(ctx context.Context, img *image.RGBA, originX, originY, tpp float64) error {
+func (e *factorioNauvisNaturalEvaluator) render(ctx context.Context, img *image.RGBA, originX, originY, tpp float64, raster *factorioChartRaster) error {
 	// Keep only accepted enemy markers for the final layer. A second traversal
 	// would regenerate chunks when the viewport exceeds the chunk-cache limit.
 	var enemies []factorioChartEntity
-	err := renderFactorioChartChunks(ctx, img, originX, originY, tpp, e.chunk, func(entities []factorioChartEntity) {
+	chunk := func(ctx context.Context, cx, cy int) ([]factorioChartEntity, error) {
+		return e.chunk(ctx, cx, cy, raster)
+	}
+	err := renderFactorioChartChunks(ctx, img, originX, originY, tpp, chunk, func(entities []factorioChartEntity) {
 		var accepted [][4]float64
 		for i := len(entities) - 1; i >= 0; i-- {
 			ent := entities[i]

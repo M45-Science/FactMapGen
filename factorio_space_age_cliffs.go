@@ -10,6 +10,18 @@ import (
 func (e *factorioSpaceAgeEvaluator) cliffField() func(float64, float64) factorioCliffCorner {
 	s := e.settings
 	richness := float32(s.cliffRichness * s.cliffs.size)
+	if f := e.fulgora; f != nil {
+		scale := 8 * noiseSliderRescale(richness, 20)
+		return func(x, y float64) factorioCliffCorner {
+			xf, yf := float32(x), float32(y)
+			v := f.sampleTerrain(x, y, true)
+			start := factorioNearestStart(s.startingPositions, x, y)
+			sx, sy := xf-float32(start.x), yf-float32(start.y)
+			safe := noiseBool(sx < f.grid && sx > -f.grid && sy < 5 && sy > -5)
+			cliffy := scale*(f.roads.sample(xf, yf, true).pyramid-.1+max(0, 1-10*v.influence)) - 1000*safe
+			return factorioCliffCorner{elevation: float64(v.elevation), cliffiness: float64(cliffy)}
+		}
+	}
 	term := float32(.5 * math.Log2(float64(richness)))
 	quick := makeFactorioQuickNoise32(s.seed, 123, 2, 1.0/32, 1, 1.0/3, 1, 0, false)
 	return func(x, y float64) factorioCliffCorner {
@@ -17,19 +29,10 @@ func (e *factorioSpaceAgeEvaluator) cliffField() func(float64, float64) factorio
 		basic := glebaClamp(term+quick(xf, yf), 0, 1) + .5
 		switch s.planet {
 		case fastPreviewPlanetVulcanus:
-			return factorioCliffCorner{elevation: e.vulcanus.sampleWithStep(x, y, 4).elevation, cliffiness: float64(basic)}
+			return factorioCliffCorner{elevation: e.vulcanus.sampleWithStep(x, y, 4, true).elevation, cliffiness: float64(basic)}
 		case fastPreviewPlanetGleba:
-			v := e.gleba.sample(x, y)
+			v := e.gleba.sampleTerrain(x, y, true)
 			return factorioCliffCorner{elevation: float64(v.elevation), cliffiness: float64(max(.95*basic, .99*noiseBool(v.rockpools > 0)))}
-		case fastPreviewPlanetFulgora:
-			f := e.fulgora
-			v := f.sample(x, y)
-			mask := glebaClamp(f.influence(xf, yf)+.6, 0, 1)
-			start := factorioNearestStart(s.startingPositions, x, y)
-			sx, sy := xf-float32(start.x), yf-float32(start.y)
-			safe := noiseBool(sx < f.grid && sx > -f.grid && sy < 5 && sy > -5)
-			cliffy := 8*noiseSliderRescale(richness, 20)*(f.roads.sample(xf, yf, true).pyramid-.1+max(0, 1-10*mask)) - 1000*safe
-			return factorioCliffCorner{elevation: float64(v.elevation), cliffiness: float64(cliffy)}
 		}
 		return factorioCliffCorner{}
 	}
@@ -71,6 +74,9 @@ func (e *factorioSpaceAgeEvaluator) cliffCells(ctx context.Context, x0, y0, x1, 
 		if factorioPreviewExcludesEntity(s.entityBounds, c.x, c.y, box) {
 			return true
 		}
+		if s.planet == fastPreviewPlanetFulgora {
+			return false
+		}
 		for y := int(math.Floor(c.y + box[1])); y <= int(math.Floor(c.y+box[3])); y++ {
 			for x := int(math.Floor(c.x + box[0])); x <= int(math.Floor(c.x+box[2])); x++ {
 				if len(tileCache) > 4096 {
@@ -97,17 +103,5 @@ func (e *factorioSpaceAgeEvaluator) cliffPixels(ctx context.Context, width, heig
 	if err != nil {
 		return nil, err
 	}
-	pixels := make([]bool, width*height)
-	for _, c := range cells {
-		func(l, t, r, b float64) {
-			lx, hx := factorioCliffPixelSpan(l, r, x0, tpp)
-			ly, hy := factorioCliffPixelSpan(t, b, y0, tpp)
-			for y := max(0, ly); y <= min(height-1, hy); y++ {
-				for x := max(0, lx); x <= min(width-1, hx); x++ {
-					pixels[y*width+x] = true
-				}
-			}
-		}(factorioCliffChartRect(c))
-	}
-	return pixels, nil
+	return factorioCliffMask(cells, width, height, x0, y0, tpp), nil
 }

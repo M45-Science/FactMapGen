@@ -3,10 +3,7 @@
 
 package main
 
-import (
-	"math"
-	"sync"
-)
+import "math"
 
 var factorioVulcanusResourceNames = [4]string{"tungsten_ore", "vulcanus_coal", "calcite", "sulfuric_acid_geyser"}
 
@@ -17,8 +14,7 @@ type factorioVulcanusResourceField struct {
 	regionSize  int64
 	count, skip int
 	size        float64
-	mu          sync.Mutex
-	regions     map[[2]int64][]factorioSelectedSpot
+	regions     factorioSpotRegionCache
 }
 type factorioVulcanusResources struct {
 	fields [4]*factorioVulcanusResourceField
@@ -33,7 +29,7 @@ func (e *factorioVulcanusEvaluator) initResources() {
 		c := fastSpaceAgeControl(e.settings, name)
 		sizes[i] = float64(noiseSliderRescale(float32(c.size), 2))
 		base := []float64{500, 400, 400, 450}[i]
-		r.fields[i] = &factorioVulcanusResourceField{evaluator: e, index: i, seed: []uint32{789, 782349, 749, 759}[i], regionSize: int64(base + base/positiveOr(c.frequency, 1)), count: []int{15, 12, 12, 9}[i], skip: []int{2, 1, 1, 0}[i], size: sizes[i], regions: make(map[[2]int64][]factorioSelectedSpot)}
+		r.fields[i] = &factorioVulcanusResourceField{evaluator: e, index: i, seed: []uint32{789, 782349, 749, 759}[i], regionSize: int64(base + base/positiveOr(c.frequency, 1)), count: []int{15, 12, 12, 9}[i], skip: []int{2, 1, 1, 0}[i], size: sizes[i]}
 	}
 	// Factorio narrows the shared constant before computing each cone's distance.
 	radius := float32(factorioVulcanusStartingAreaRadius)
@@ -78,10 +74,7 @@ func (f *factorioVulcanusResourceField) radiusAt(x, y float64) float64 {
 	return f.size * min(1.2, max(1, d/4000)) * 25
 }
 func (f *factorioVulcanusResourceField) spots(rx, ry int64) []factorioSelectedSpot {
-	key := [2]int64{rx, ry}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if spots, ok := f.regions[key]; ok {
+	if spots, ok := f.regions.load(rx, ry); ok {
 		return spots
 	}
 	spots := factorioSelectSpots(factorioSpotRegionKey{seed0: f.evaluator.seed, seed1: f.seed, regionX: rx, regionY: ry}, factorioSpotSelectionParams{
@@ -95,10 +88,7 @@ func (f *factorioVulcanusResourceField) spots(rx, ry int64) []factorioSelectedSp
 			return 0
 		},
 	})
-	if len(f.regions) >= 64 {
-		clear(f.regions)
-	}
-	f.regions[key] = spots
+	f.regions.store(rx, ry, spots)
 	return spots
 }
 func (f *factorioVulcanusResourceField) at(x, y float64) float64 {
@@ -108,8 +98,10 @@ func (f *factorioVulcanusResourceField) at(x, y float64) float64 {
 	half := float64(f.regionSize / 2)
 	idx := func(v float64) int64 { return int64(math.Floor((v + half) / float64(f.regionSize))) }
 	best := float32(-1)
-	for ry := idx(y - 128); ry <= idx(y+128); ry++ {
-		for rx := idx(x - 128); rx <= idx(x+128); rx++ {
+	left, right := idx(x-128), idx(x+128)
+	bottom := idx(y + 128)
+	for ry := idx(y - 128); ry <= bottom; ry++ {
+		for rx := left; rx <= right; rx++ {
 			for _, p := range f.spots(rx, ry) {
 				dx, dy := x-p.x, y-p.y
 				d2 := dx*dx + dy*dy

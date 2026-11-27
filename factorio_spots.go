@@ -3,6 +3,7 @@ package main
 import (
 	"math"
 	"sort"
+	"sync/atomic"
 )
 
 const (
@@ -31,6 +32,27 @@ type factorioSelectedSpot struct {
 	y         float64
 	quantity  float64
 	coneScale float64
+}
+
+// A field owns a bounded cache of immutable, deterministic spot selections.
+// Concurrent misses may build the same region, but reads need no lock.
+type factorioSpotRegionCache [128]atomic.Pointer[factorioSpotRegion]
+
+type factorioSpotRegion struct {
+	x, y  int64
+	spots []factorioSelectedSpot
+}
+
+func (c *factorioSpotRegionCache) load(x, y int64) ([]factorioSelectedSpot, bool) {
+	region := c[(uint64(x)+17*uint64(y))%uint64(len(c))].Load()
+	if region == nil || region.x != x || region.y != y {
+		return nil, false
+	}
+	return region.spots, true
+}
+
+func (c *factorioSpotRegionCache) store(x, y int64, spots []factorioSelectedSpot) {
+	c[(uint64(x)+17*uint64(y))%uint64(len(c))].Store(&factorioSpotRegion{x, y, spots})
 }
 
 type factorioSpotSelectionParams struct {

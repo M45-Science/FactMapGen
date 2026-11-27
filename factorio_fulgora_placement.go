@@ -39,26 +39,55 @@ func fulgoraEntityProbabilities(s factorioFulgoraSample, x, y float32) [13]float
 	}
 }
 
-func (g *factorioFulgoraChart) chunk(ctx context.Context, cx, cy int) ([]factorioChartEntity, error) {
+func (g *factorioFulgoraChart) chunk(ctx context.Context, cx, cy int, raster *factorioChartRaster) ([]factorioChartEntity, error) {
+	e := g.world.fulgora
 	key := [2]int{cx, cy}
 	cached, ok := g.chunks.get(key)
 	if ok {
+		if raster != nil {
+			return cached, raster.paintChunk(ctx, cx, cy, func(x, y int) color.RGBA {
+				return e.sample(float64(x), float64(y)).tile.color
+			})
+		}
 		return cached, nil
 	}
-	var water [46 * 46]bool
+	const (
+		unknown = iota
+		water
+		land
+	)
+	var terrain [46 * 46]uint8
 	var probabilities [1024][13]float32
-	for dy := -7; dy < 39; dy++ {
+	baseX, baseY := cx*32, cy*32
+	for dy := 0; dy < 32; dy++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		for dx := -7; dx < 39; dx++ {
-			x, y := float64(cx*32+dx), float64(cy*32+dy)
-			s := g.world.fulgora.sample(x, y)
-			water[(dy+7)*46+dx+7] = strings.HasPrefix(s.tile.name, "oil-ocean")
-			if dx >= 0 && dx < 32 && dy >= 0 && dy < 32 {
-				probabilities[dy*32+dx] = fulgoraEntityProbabilities(s, float32(x), float32(y))
+		for dx := 0; dx < 32; dx++ {
+			x, y := baseX+dx, baseY+dy
+			s := e.sample(float64(x), float64(y))
+			if strings.HasPrefix(s.tile.name, "oil-ocean") {
+				terrain[(dy+7)*46+dx+7] = water
+			} else {
+				terrain[(dy+7)*46+dx+7] = land
+			}
+			probabilities[dy*32+dx] = fulgoraEntityProbabilities(s, float32(x), float32(y))
+			if raster != nil {
+				raster.paint(x, y, s.tile.color)
 			}
 		}
+	}
+	isWater := func(x, y int) bool {
+		i := (y-baseY+7)*46 + x - baseX + 7
+		if terrain[i] == unknown {
+			s := e.sample(float64(x), float64(y))
+			if strings.HasPrefix(s.tile.name, "oil-ocean") {
+				terrain[i] = water
+			} else {
+				terrain[i] = land
+			}
+		}
+		return terrain[i] == water
 	}
 	rng := newFactorioTaus88State(max(factorioMinSeedWord, uint32(int64(factorioSpotSeedBase)+7919*int64(cx)+7907*int64(cy))))
 	var entities []factorioChartEntity
@@ -68,7 +97,7 @@ func (g *factorioFulgoraChart) chunk(ctx context.Context, cx, cy int) ([]factori
 		}
 		for i := 1023; i >= 0; i-- {
 			sunk := kind == 10 || kind == 11
-			if !sunk && water[(i/32+7)*46+i%32+7] {
+			if !sunk && terrain[(i/32+7)*46+i%32+7] == water {
 				continue
 			}
 			if float64(rng.next())/4294967296 >= float64(probabilities[i][kind]) {
@@ -87,10 +116,11 @@ func (g *factorioFulgoraChart) chunk(ctx context.Context, cx, cy int) ([]factori
 			hx, hy := math.Trunc(half[0]*256)/256, math.Trunc(half[1]*256)/256
 			allowed := true
 			if !sunk {
-				for by := int(math.Floor(y - hy)); by <= int(math.Floor(y+hy)); by++ {
+				for by := int(math.Floor(y - hy)); by <= int(math.Floor(y+hy)) && allowed; by++ {
 					for bx := int(math.Floor(x - hx)); bx <= int(math.Floor(x+hx)); bx++ {
-						if water[(by-cy*32+7)*46+bx-cx*32+7] {
+						if isWater(bx, by) {
 							allowed = false
+							break
 						}
 					}
 				}
@@ -103,8 +133,11 @@ func (g *factorioFulgoraChart) chunk(ctx context.Context, cx, cy int) ([]factori
 	g.chunks.store(key, entities)
 	return entities, nil
 }
-func (g *factorioFulgoraChart) render(ctx context.Context, img *image.RGBA, x0, y0, tpp float64) error {
-	return renderFactorioChartChunks(ctx, img, x0, y0, tpp, g.chunk, func(entities []factorioChartEntity) {
+func (g *factorioFulgoraChart) render(ctx context.Context, img *image.RGBA, x0, y0, tpp float64, raster *factorioChartRaster) error {
+	chunk := func(ctx context.Context, cx, cy int) ([]factorioChartEntity, error) {
+		return g.chunk(ctx, cx, cy, raster)
+	}
+	return renderFactorioChartChunks(ctx, img, x0, y0, tpp, chunk, func(entities []factorioChartEntity) {
 		for i := len(entities) - 1; i >= 0; i-- {
 			ent := entities[i]
 			if ent.kind == 9 && !factorioPreviewEntityDither(ent.x, ent.y, 1) {

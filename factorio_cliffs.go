@@ -207,23 +207,8 @@ func renderFactorioCliffs(
 	evaluator *factorioCliffEvaluator,
 	originX, originY, tilesPerPixel float64,
 ) error {
-	if !evaluator.enabled {
-		return nil
-	}
 	bounds := img.Bounds()
-	queryPadding := 4.0
-	cells, err := factorioPlaceCliffs(
-		ctx,
-		originX-queryPadding,
-		originY-queryPadding,
-		originX+float64(bounds.Dx())*tilesPerPixel+queryPadding,
-		originY+float64(bounds.Dy())*tilesPerPixel+queryPadding,
-		evaluator.elevation0, evaluator.interval, evaluator.smoothing, evaluator.cornerAt,
-		func(c factorioCliffCell) bool {
-			box := factorioCliffCollisionBoxes[factorioCliffCellCode(c.left, c.right, c.top, c.bottom)]
-			return factorioPreviewExcludesEntity(settings.entityBounds, c.x, c.y, box)
-		},
-	)
+	cells, err := evaluator.cellsInViewport(ctx, settings, bounds.Dx(), bounds.Dy(), originX, originY, tilesPerPixel)
 	if err != nil {
 		return err
 	}
@@ -258,6 +243,36 @@ func renderFactorioCliffs(
 		paintRect(factorioCliffChartRect(cell))
 	}
 	return nil
+}
+
+func (e *factorioCliffEvaluator) cellsInViewport(ctx context.Context, settings fastPreviewSettings, width, height int, x0, y0, tpp float64) ([]factorioCliffCell, error) {
+	if !e.enabled {
+		return nil, nil
+	}
+	const padding = 4
+	return factorioPlaceCliffs(ctx, x0-padding, y0-padding, x0+float64(width)*tpp+padding, y0+float64(height)*tpp+padding,
+		e.elevation0, e.interval, e.smoothing, e.cornerAt, func(c factorioCliffCell) bool {
+			box := factorioCliffCollisionBoxes[factorioCliffCellCode(c.left, c.right, c.top, c.bottom)]
+			return factorioPreviewExcludesEntity(settings.entityBounds, c.x, c.y, box)
+		})
+}
+
+func factorioCliffMask(cells []factorioCliffCell, width, height int, x0, y0, tpp float64) []bool {
+	if len(cells) == 0 {
+		return nil
+	}
+	pixels := make([]bool, width*height)
+	for _, c := range cells {
+		l, t, r, b := factorioCliffChartRect(c)
+		lx, hx := factorioCliffPixelSpan(l, r, x0, tpp)
+		ly, hy := factorioCliffPixelSpan(t, b, y0, tpp)
+		for y := max(0, ly); y <= min(height-1, hy); y++ {
+			for x := max(0, lx); x <= min(width-1, hx); x++ {
+				pixels[y*width+x] = true
+			}
+		}
+	}
+	return pixels
 }
 
 func factorioCliffPixelSpan(lower, upperExclusive, origin, tilesPerPixel float64) (int, int) {

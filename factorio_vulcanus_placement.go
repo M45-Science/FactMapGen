@@ -24,7 +24,7 @@ var vulcanusChartBoxes = [...][4]float64{
 
 func (g *factorioVulcanusChart) probabilities(s factorioVulcanusSample, x, y float64) [14]float32 {
 	aux, moisture, ash, mountain := float32(s.aux), float32(s.moisture), float32(s.ashlandsBiome), float32(s.mountainsBiome)
-	rock := float32(g.world.vulcanus.rockNoise(x, y))
+	rock := float32(s.rock)
 	knockout := g.knockout(float32(x), float32(y))
 	common := -2.3 + 1.2*min(aux, 1-moisture) + rock - .5*knockout
 	main := 2*(mountain-.5) + common
@@ -54,26 +54,54 @@ func (g *factorioVulcanusChart) probabilities(s factorioVulcanusSample, x, y flo
 	}
 	return p
 }
-func (g *factorioVulcanusChart) chunk(ctx context.Context, cx, cy int) ([]factorioChartEntity, error) {
+func (g *factorioVulcanusChart) chunk(ctx context.Context, cx, cy int, raster *factorioChartRaster) ([]factorioChartEntity, error) {
+	e := g.world.vulcanus
 	key := [2]int{cx, cy}
 	cached, ok := g.chunks.get(key)
 	if ok {
+		if raster != nil {
+			bounds := image.Rect(cx*32, cy*32, cx*32+32, cy*32+32).Intersect(raster.bounds)
+			return cached, e.sampleChunk(ctx, bounds, func(x, y int, s factorioVulcanusSample) {
+				raster.paint(x, y, s.tile.color)
+			})
+		}
 		return cached, nil
 	}
-	var water [36 * 36]bool
+	const (
+		unknown = iota
+		water
+		land
+	)
+	var terrain [36 * 36]uint8
 	var probs [1024][14]float32
-	for dy := -2; dy < 34; dy++ {
-		if err := ctx.Err(); err != nil {
-			return nil, err
+	baseX, baseY := cx*32, cy*32
+	bounds := image.Rect(baseX, baseY, baseX+32, baseY+32)
+	err := e.sampleChunk(ctx, bounds, func(x, y int, s factorioVulcanusSample) {
+		dx, dy := x-baseX, y-baseY
+		if strings.HasPrefix(s.tile.name, "lava") {
+			terrain[(dy+2)*36+dx+2] = water
+		} else {
+			terrain[(dy+2)*36+dx+2] = land
+			probs[dy*32+dx] = g.probabilities(s, float64(x), float64(y))
 		}
-		for dx := -2; dx < 34; dx++ {
-			x, y := float64(cx*32+dx), float64(cy*32+dy)
-			s := g.world.vulcanus.sample(x, y)
-			water[(dy+2)*36+dx+2] = strings.HasPrefix(s.tile.name, "lava")
-			if dx >= 0 && dx < 32 && dy >= 0 && dy < 32 {
-				probs[dy*32+dx] = g.probabilities(s, x, y)
+		if raster != nil {
+			raster.paint(x, y, s.tile.color)
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	isWater := func(x, y int) bool {
+		i := (y-baseY+2)*36 + x - baseX + 2
+		if terrain[i] == unknown {
+			s := e.sample(float64(x), float64(y))
+			if strings.HasPrefix(s.tile.name, "lava") {
+				terrain[i] = water
+			} else {
+				terrain[i] = land
 			}
 		}
+		return terrain[i] == water
 	}
 	rng := newFactorioTaus88State(max(factorioMinSeedWord, uint32(int64(factorioSpotSeedBase)+7919*int64(cx)+7907*int64(cy))))
 	groups := [][]int{{13}, {0}, {1}, {2}, {3}, {4}, {5}, {6}, {7, 8, 9}, {10}, {11}, {12}}
@@ -83,7 +111,7 @@ func (g *factorioVulcanusChart) chunk(ctx context.Context, cx, cy int) ([]factor
 			continue
 		}
 		for i := 1023; i >= 0; i-- {
-			if water[(i/32+2)*36+i%32+2] {
+			if terrain[(i/32+2)*36+i%32+2] == water {
 				continue
 			}
 			kind := group[0]
@@ -106,10 +134,11 @@ func (g *factorioVulcanusChart) chunk(ctx context.Context, cx, cy int) ([]factor
 				continue
 			}
 			allowed := true
-			for by := int(math.Floor(y + math.Trunc(box[1]*256)/256)); by <= int(math.Floor(y+math.Trunc(box[3]*256)/256)); by++ {
+			for by := int(math.Floor(y + math.Trunc(box[1]*256)/256)); by <= int(math.Floor(y+math.Trunc(box[3]*256)/256)) && allowed; by++ {
 				for bx := int(math.Floor(x + math.Trunc(box[0]*256)/256)); bx <= int(math.Floor(x+math.Trunc(box[2]*256)/256)); bx++ {
-					if water[(by-cy*32+2)*36+bx-cx*32+2] {
+					if isWater(bx, by) {
 						allowed = false
+						break
 					}
 				}
 			}
@@ -121,8 +150,11 @@ func (g *factorioVulcanusChart) chunk(ctx context.Context, cx, cy int) ([]factor
 	g.chunks.store(key, entities)
 	return entities, nil
 }
-func (g *factorioVulcanusChart) render(ctx context.Context, img *image.RGBA, x0, y0, tpp float64) error {
-	return renderFactorioChartChunks(ctx, img, x0, y0, tpp, g.chunk, func(entities []factorioChartEntity) {
+func (g *factorioVulcanusChart) render(ctx context.Context, img *image.RGBA, x0, y0, tpp float64, raster *factorioChartRaster) error {
+	chunk := func(ctx context.Context, cx, cy int) ([]factorioChartEntity, error) {
+		return g.chunk(ctx, cx, cy, raster)
+	}
+	return renderFactorioChartChunks(ctx, img, x0, y0, tpp, chunk, func(entities []factorioChartEntity) {
 		for i := len(entities) - 1; i >= 0; i-- {
 			ent := entities[i]
 			ink := factorioRockMapColor

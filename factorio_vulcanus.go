@@ -1,9 +1,10 @@
 package main
 
 import (
+	"context"
+	"image"
 	"image/color"
 	"math"
-	"sync"
 )
 
 const (
@@ -31,6 +32,7 @@ type factorioVulcanusSample struct {
 	ashlandsBiome        float64
 	basaltsBiome         float64
 	mountainVolcanoSpots float64
+	rock                 float64
 }
 
 type factorioVulcanusWobbles struct {
@@ -67,10 +69,15 @@ type factorioVulcanusCrackSample struct {
 	floodBasalt float64
 }
 
+type factorioVulcanusBasaltSample struct {
+	cracks factorioVulcanusCrackSample
+	lakes  float64
+}
+
 // factorioVulcanusEvaluator is a topological port of Factorio 2.1.12's
 // default Vulcanus terrain expression graph. settings.seed must already be the
 // effective surface seed; all state is immutable except the bounded,
-// mutex-protected volcano and resource region caches.
+// volcano and resource region caches.
 type factorioVulcanusEvaluator struct {
 	settings  fastPreviewSettings
 	seed      uint32
@@ -78,15 +85,17 @@ type factorioVulcanusEvaluator struct {
 	resources *factorioVulcanusResources
 	starts    []factorioPoint
 
-	scaleMultiplier   float64
-	startingDirection float64
-	ashlandsAngle     float64
-	mountainsAngle    float64
-	basaltsAngle      float64
-	volcanism         float64
-	volcanoRadius     float64
-	volcanoSpacing    float64
-	volcanismSquared  float64
+	scaleMultiplier                             float64
+	startingDirection                           float64
+	ashlandsAngle                               float64
+	mountainsAngle                              float64
+	basaltsAngle                                float64
+	volcanism                                   float64
+	volcanoRadius                               float64
+	volcanoSpacing                              float64
+	volcanismSquared                            float64
+	ashlandsStart, basaltsStart, mountainsStart factorioNoiseCone
+	volcanoStart, volcanoProtector              factorioNoiseCone
 
 	wobbleX      func(float64, float64) float64
 	wobbleY      func(float64, float64) float64
@@ -126,8 +135,7 @@ type factorioVulcanusEvaluator struct {
 	mountainLavaPlasma func(float64, float64) float64
 	rockNoise          func(float64, float64) float64
 
-	regionMu    sync.RWMutex
-	regionSpots map[[2]int64][]factorioSelectedSpot
+	regionSpots factorioSpotRegionCache
 }
 
 func newFactorioVulcanusEvaluator(settings fastPreviewSettings, gridMode ...bool) *factorioVulcanusEvaluator {
@@ -160,8 +168,13 @@ func newFactorioVulcanusEvaluator(settings fastPreviewSettings, gridMode ...bool
 		volcanoRadius:     factorioFloat32(200 * volcanism),
 		volcanoSpacing:    1500 * volcanism,
 		volcanismSquared:  volcanism * volcanism,
-		regionSpots:       make(map[[2]int64][]factorioSelectedSpot),
 	}
+	r := factorioVulcanusStartingAreaRadius
+	e.ashlandsStart = newFactorioNoiseCone(float32(e.ashlandsAngle), float32(170*r), float32(350*r))
+	e.basaltsStart = newFactorioNoiseCone(float32(e.basaltsAngle), 250, float32(550*r))
+	e.mountainsStart = newFactorioNoiseCone(float32(e.mountainsAngle), float32(250*r), float32(500*r))
+	e.volcanoStart = newFactorioNoiseCone(float32(e.mountainsAngle), float32(400*r), 200)
+	e.volcanoProtector = newFactorioNoiseCone(float32(e.mountainsAngle+180*e.startingDirection), float32((400*r)/2), float32(800*r))
 
 	e.wobbleX = e.detailNoise(10, 1.0/8, 2, 4)
 	e.wobbleY = e.detailNoise(1010, 1.0/8, 2, 4)
@@ -305,15 +318,6 @@ func (e *factorioVulcanusEvaluator) relativeToNearestStart(
 	return math.Sqrt(bestSquared), xFromStart, yFromStart
 }
 
-func factorioVulcanusStartingSpotAtAngle(
-	angle, distance, radius,
-	xDistortion, yDistortion,
-	xFromStart, yFromStart float64,
-) float64 {
-	cone := newFactorioNoiseCone(float32(angle), float32(distance), float32(radius))
-	return float64(cone.at(float32(xFromStart), float32(yFromStart), float32(xDistortion), float32(yDistortion)))
-}
-
 func (e *factorioVulcanusEvaluator) spawnAt(
 	x, y float64,
 	wobbles factorioVulcanusWobbles,
@@ -322,33 +326,11 @@ func (e *factorioVulcanusEvaluator) spawnAt(
 	distance, xFromStart, yFromStart := e.relativeToNearestStart(x, y)
 	wobbleXSum := wobbles.x + wobbles.largeX + wobbles.hugeX
 	wobbleYSum := wobbles.y + wobbles.largeY + wobbles.hugeY
-	ashlandsStart := 4 * factorioVulcanusStartingSpotAtAngle(
-		e.ashlandsAngle,
-		170*r,
-		350*r,
-		0.1*r*wobbleXSum,
-		0.1*r*wobbleYSum,
-		xFromStart,
-		yFromStart,
-	)
-	basaltsStart := 2 * factorioVulcanusStartingSpotAtAngle(
-		e.basaltsAngle,
-		250,
-		550*r,
-		0.1*r*wobbleXSum,
-		0.1*r*wobbleYSum,
-		xFromStart,
-		yFromStart,
-	)
-	mountainsStart := 2 * factorioVulcanusStartingSpotAtAngle(
-		e.mountainsAngle,
-		250*r,
-		500*r,
-		0.05*r*wobbleXSum,
-		0.05*r*wobbleYSum,
-		xFromStart,
-		yFromStart,
-	)
+	sx, sy := float32(xFromStart), float32(yFromStart)
+	dx, dy := float32(0.1*r*wobbleXSum), float32(0.1*r*wobbleYSum)
+	ashlandsStart := 4 * float64(e.ashlandsStart.at(sx, sy, dx, dy))
+	basaltsStart := 2 * float64(e.basaltsStart.at(sx, sy, dx, dy))
+	mountainsStart := 2 * float64(e.mountainsStart.at(sx, sy, float32(0.05*r*wobbleXSum), float32(0.05*r*wobbleYSum)))
 	return factorioVulcanusSpawnSample{
 		distance:       distance,
 		xFromStart:     xFromStart,
@@ -412,13 +394,9 @@ func factorioVulcanusRegionIndex(coordinate float64) int64 {
 func (e *factorioVulcanusEvaluator) spotsForRegion(
 	regionX, regionY int64,
 ) []factorioSelectedSpot {
-	key := [2]int64{regionX, regionY}
-	e.regionMu.RLock()
-	if spots, ok := e.regionSpots[key]; ok {
-		e.regionMu.RUnlock()
+	if spots, ok := e.regionSpots.load(regionX, regionY); ok {
 		return spots
 	}
-	e.regionMu.RUnlock()
 
 	quantity := factorioFloat32(e.volcanoRadius * e.volcanoRadius)
 	spots := factorioSelectSpots(
@@ -443,18 +421,7 @@ func (e *factorioVulcanusEvaluator) spotsForRegion(
 		},
 	)
 
-	e.regionMu.Lock()
-	defer e.regionMu.Unlock()
-	if cached, ok := e.regionSpots[key]; ok {
-		return cached
-	}
-	if len(e.regionSpots) >= fastPreviewMaxRegionsPerField {
-		for oldKey := range e.regionSpots {
-			delete(e.regionSpots, oldKey)
-			break
-		}
-	}
-	e.regionSpots[key] = spots
+	e.regionSpots.store(regionX, regionY, spots)
 	return spots
 }
 
@@ -487,37 +454,12 @@ func (e *factorioVulcanusEvaluator) mountainVolcanoSpotsAt(
 	x, y float64,
 	pre factorioVulcanusPreVolcanoSample,
 ) float64 {
-	r := factorioVulcanusStartingAreaRadius
 	wobbleX, largeX, hugeX := float32(pre.wobbles.x)/2, float32(pre.wobbles.largeX)/12, float32(pre.wobbles.hugeX)/80
 	wobbleY, largeY, hugeY := float32(pre.wobbles.y)/2, float32(pre.wobbles.largeY)/12, float32(pre.wobbles.hugeY)/80
-	offX := float64(wobbleX + largeX + hugeX)
-	offY := float64(wobbleY + largeY + hugeY)
-	startingProtector := clampFloat(
-		factorioVulcanusStartingSpotAtAngle(
-			e.mountainsAngle+180*e.startingDirection,
-			(400*r)/2,
-			800*r,
-			offX,
-			offY,
-			pre.spawn.xFromStart,
-			pre.spawn.yFromStart,
-		),
-		0,
-		1,
-	)
-	startingVolcanoSpot := clampFloat(
-		factorioVulcanusStartingSpotAtAngle(
-			e.mountainsAngle,
-			400*r,
-			200,
-			offX,
-			offY,
-			pre.spawn.xFromStart,
-			pre.spawn.yFromStart,
-		),
-		0,
-		1,
-	)
+	offX, offY := wobbleX+largeX+hugeX, wobbleY+largeY+hugeY
+	sx, sy := float32(pre.spawn.xFromStart), float32(pre.spawn.yFromStart)
+	startingProtector := clampFloat(float64(e.volcanoProtector.at(sx, sy, offX, offY)), 0, 1)
+	startingVolcanoSpot := clampFloat(float64(e.volcanoStart.at(sx, sy, offX, offY)), 0, 1)
 	qx := float32(x) + wobbleX + largeX + hugeX
 	qy := float32(y) + wobbleY + largeY + hugeY
 	rawSpots := e.rawVolcanoSpotsAt(float64(qx), float64(qy))
@@ -557,32 +499,68 @@ func factorioVulcanusThreshold(value, threshold float64) float64 {
 	return (value - (1 - threshold)) * (1 / threshold)
 }
 
-func (e *factorioVulcanusEvaluator) basaltLakesAt(x, y float64) float64 {
+func (e *factorioVulcanusEvaluator) basaltAt(x, y float64) factorioVulcanusBasaltSample {
 	cracks := e.cracksAt(x, y)
-	return e.basaltLakesFromCracks(x, y, cracks)
+	return factorioVulcanusBasaltSample{cracks, e.basaltLakesFromCracks(x, y, cracks)}
 }
 
 func (e *factorioVulcanusEvaluator) basaltLakesFromCracks(
 	x, y float64,
 	cracks factorioVulcanusCrackSample,
 ) float64 {
-	resourceCutout := clampFloat(
-		factorioVulcanusContrast(e.basaltDetail837(x, y), 0.95)*
-			factorioVulcanusContrast(e.basaltDetail234(x, y), 0.95)*
-			e.basaltDetail643(x, y),
-		0,
-		3,
-	)
+	resourceCutout := factorioVulcanusContrast(e.basaltDetail837(x, y), 0.95)
+	if resourceCutout > 0 {
+		resourceCutout *= factorioVulcanusContrast(e.basaltDetail234(x, y), 0.95)
+		if resourceCutout > 0 {
+			resourceCutout = clampFloat(resourceCutout*e.basaltDetail643(x, y), 0, 3)
+		}
+	}
 	return min(1, -0.2+cracks.floodBasalt-0.35*resourceCutout)
 }
 
 func (e *factorioVulcanusEvaluator) sample(x, y float64) factorioVulcanusSample {
-	return e.sampleWithStep(x, y, 1)
+	return e.sampleWithStep(x, y, 1, false)
 }
 
 // Multisample offsets use the consuming generator's lattice spacing: tiles
 // use one world tile, whereas cliff corners use four.
-func (e *factorioVulcanusEvaluator) sampleWithStep(x, y, step float64) factorioVulcanusSample {
+func (e *factorioVulcanusEvaluator) sampleWithStep(x, y, step float64, elevationOnly bool) factorioVulcanusSample {
+	center := e.basaltAt(x, y)
+	lakes := min(center.lakes, e.basaltAt(x+step, y).lakes, e.basaltAt(x, y+step).lakes, e.basaltAt(x+step, y+step).lakes)
+	return e.sampleWithBasalt(x, y, center.cracks, lakes, elevationOnly)
+}
+
+// A tile uses its own basalt sample and those of its east, south, and
+// southeast neighbors. Two rolling rows let a chunk evaluate each once.
+func (e *factorioVulcanusEvaluator) sampleChunk(ctx context.Context, bounds image.Rectangle, use func(int, int, factorioVulcanusSample)) error {
+	if bounds.Empty() {
+		return nil
+	}
+	var rows [2][33]factorioVulcanusBasaltSample
+	current, next := &rows[0], &rows[1]
+	fill := func(row *[33]factorioVulcanusBasaltSample, y int) {
+		for dx := 0; dx <= bounds.Dx(); dx++ {
+			row[dx] = e.basaltAt(float64(bounds.Min.X+dx), float64(y))
+		}
+	}
+	fill(current, bounds.Min.Y)
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		fill(next, y+1)
+		for dx := 0; dx < bounds.Dx(); dx++ {
+			x := bounds.Min.X + dx
+			center := current[dx]
+			lakes := min(center.lakes, current[dx+1].lakes, next[dx].lakes, next[dx+1].lakes)
+			use(x, y, e.sampleWithBasalt(float64(x), float64(y), center.cracks, lakes, false))
+		}
+		current, next = next, current
+	}
+	return nil
+}
+
+func (e *factorioVulcanusEvaluator) sampleWithBasalt(x, y float64, cracks factorioVulcanusCrackSample, basaltLakesMultisample float64, elevationOnly bool) factorioVulcanusSample {
 	pre := e.preVolcanoAt(x, y)
 	mountainVolcanoSpots := e.mountainVolcanoSpotsAt(x, y, pre)
 	mountainsRawVolcano := 0.5*pre.mountainsRawPreVolcano + max(
@@ -608,12 +586,9 @@ func (e *factorioVulcanusEvaluator) sampleWithStep(x, y, step float64) factorioV
 		1,
 	)
 
-	cracks := e.cracksAt(x, y)
 	auxNoise := noiseAbs(float32(e.auxNoise(x, y)))
 	auxLimit := 0.3 - float32(0.6*float32(cracks.floodPaths))
 	aux := float64(max(0, min(1, auxNoise, auxLimit)))
-	moistureBase := 1 - noiseAbs(float32(e.moistureNoiseA(x, y))) - noiseAbs(float32(e.moistureNoiseB(x, y)))
-	moisture := float64(min(max(moistureBase-float32(0.2*float32(cracks.floodA)), 0), 1))
 
 	mountainPlasma := e.mountainPlasma(x, y)
 	mountainBasis := e.mountainBasisNoise(x, y)
@@ -630,18 +605,17 @@ func (e *factorioVulcanusEvaluator) sampleWithStep(x, y, step float64) factorioV
 	) + 200*(aux-0.5)*(mountainVolcanoSpots+0.5)
 	ashlandsBasis := e.ashlandsBasisNoise(x, y)
 	ashlandsFunc := 300 + 0.001*min(ashlandsBasis, ashlandsBasis)
-	basaltLakesMultisample := min(
-		e.basaltLakesFromCracks(x, y, cracks),
-		e.basaltLakesAt(x+step, y),
-		e.basaltLakesAt(x, y+step),
-		e.basaltLakesAt(x+step, y+step),
-	)
 	mountainsBlend := lerpFloat(
 		120*basaltLakesMultisample,
 		20+mountainsFunc*1.5,
 		mountainsBiome,
 	)
 	elevation := lerpFloat(mountainsBlend, ashlandsFunc, ashlandsBiome)
+	if elevationOnly {
+		return factorioVulcanusSample{elevation: max(-500, elevation)}
+	}
+	moistureBase := 1 - noiseAbs(float32(e.moistureNoiseA(x, y))) - noiseAbs(float32(e.moistureNoiseB(x, y)))
+	moisture := float64(min(max(moistureBase-float32(0.2*float32(cracks.floodA)), 0), 1))
 	temperature := 100 + 100*e.settings.temperatureBias -
 		min(elevation, elevation/100) -
 		2*moisture -
@@ -667,6 +641,7 @@ func (e *factorioVulcanusEvaluator) sampleWithStep(x, y, step float64) factorioV
 	)
 
 	regions, metal, sulfurRegion := e.resourceRegions(x, y, pre, [3]float64{mountainsBiomeFull, ashlandsBiomeFull, basaltsBiomeFull}, mountainVolcanoSpots, cracks.hairline)
+	rock := e.rockNoise(x, y)
 	tile := factorioResolveVulcanusTile(factorioVulcanusTileFields{
 		elevation:            elevation,
 		aux:                  aux,
@@ -676,7 +651,7 @@ func (e *factorioVulcanusEvaluator) sampleWithStep(x, y, step float64) factorioV
 		basaltsBiome:         basaltsBiome,
 		mountainVolcanoSpots: mountainVolcanoSpots,
 		mountainLavaSpots:    mountainLavaSpots,
-		rockNoise:            e.rockNoise(x, y),
+		rockNoise:            rock,
 		distance:             pre.spawn.distance,
 		metal:                metal, calcite: regions[2], sulfur: regions[3],
 	})
@@ -692,6 +667,7 @@ func (e *factorioVulcanusEvaluator) sampleWithStep(x, y, step float64) factorioV
 		ashlandsBiome:        ashlandsBiome,
 		basaltsBiome:         basaltsBiome,
 		mountainVolcanoSpots: mountainVolcanoSpots,
+		rock:                 rock,
 	}
 }
 

@@ -200,6 +200,93 @@ func TestPreviewAVIFCacheIsBounded(t *testing.T) {
 	}
 }
 
+func TestFastPreviewAVIFRepeatSkipsRasterCache(t *testing.T) {
+	installPreviewAVIFStub(t, `printf '0000ftypavif' > "$output"`)
+	p := &previewer{}
+	raw := json.RawMessage(`{"seed":123456}`)
+	req := previewRequest{Size: 256, Planet: "aquilo", Format: "avif"}
+	ctx := context.Background()
+	ref := profileRef{Source: profileSourceDefault, Name: "Default"}
+	_, first, err := p.renderFastImage(ctx, ref, raw, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := p.fastCache().stats()
+	_, repeat, err := p.renderFastImage(ctx, ref, raw, req)
+	if err != nil || !bytes.Equal(first.data, repeat.data) || p.fastCache().stats() != before {
+		t.Fatalf("repeat tile used the raster cache or changed bytes: %v", err)
+	}
+	req.CenterX = 128
+	if _, _, err := p.renderFastImage(ctx, ref, raw, req); err != nil {
+		t.Fatal(err)
+	}
+	if p.fastCache().stats() == before {
+		t.Fatal("different center reused the repeat tile")
+	}
+}
+
+func TestPreviewAVIFConcurrentRequestsShareEncode(t *testing.T) {
+	count := filepath.Join(t.TempDir(), "encoder-calls")
+	t.Setenv("FACTMAPGEN_TEST_ENCODER_CALLS", count)
+	installPreviewAVIFStub(t, `printf x >> "$FACTMAPGEN_TEST_ENCODER_CALLS"
+/bin/sleep .05
+printf '0000ftypavif' > "$output"`)
+	p := &previewer{}
+	img := image.NewRGBA(image.Rect(0, 0, 64, 64))
+	const requests = 8
+	start := make(chan struct{})
+	errs := make(chan error, requests)
+	for range requests {
+		go func() {
+			<-start
+			_, err := p.encodePreviewImage(context.Background(), img, "avif")
+			errs <- err
+		}()
+	}
+	close(start)
+	for range requests {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	calls, err := os.ReadFile(count)
+	if err != nil || string(calls) != "x" {
+		t.Fatalf("encoder calls: %q, error: %v", calls, err)
+	}
+}
+
+func TestPreviewAVIFWaiterRetriesCanceledEncode(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "first-encode")
+	t.Setenv("FACTMAPGEN_TEST_FIRST_ENCODE", marker)
+	installPreviewAVIFStub(t, `if [ ! -e "$FACTMAPGEN_TEST_FIRST_ENCODE" ]; then
+    : > "$FACTMAPGEN_TEST_FIRST_ENCODE"
+    exec /bin/sleep 2
+fi
+printf '0000ftypavif' > "$output"`)
+	p := &previewer{}
+	img := image.NewRGBA(image.Rect(0, 0, 64, 64))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first := make(chan error, 1)
+	go func() {
+		_, err := p.encodePreviewImage(ctx, img, "avif")
+		first <- err
+	}()
+	waitForFastPreviewCondition(t, func() bool {
+		_, err := os.Stat(marker)
+		return err == nil
+	}, "initial encode did not start")
+	timer := time.AfterFunc(50*time.Millisecond, cancel)
+	defer timer.Stop()
+	encoded, err := p.encodePreviewImage(context.Background(), img, "avif")
+	if err != nil || encoded.contentType != "image/avif" {
+		t.Fatalf("waiting encode type=%s err=%v", encoded.contentType, err)
+	}
+	if err := <-first; err != context.Canceled {
+		t.Fatalf("initial encode returned %v", err)
+	}
+}
+
 func TestSignedInDirectPreviewCanSelectPNG(t *testing.T) {
 	auth, password := newTestAuthStore(t)
 	user, err := auth.authenticate("admin", password)

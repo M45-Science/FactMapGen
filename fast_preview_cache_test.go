@@ -144,6 +144,32 @@ func TestFastPreviewTileCacheAlignedStandardColdAndWarm(t *testing.T) {
 	assertFastPreviewImagesEqual(t, stitched, direct)
 }
 
+func TestFastPreviewMatchedTilesBypassRenderAdmission(t *testing.T) {
+	_, _, _, settings := benchmarkPreviewSettings()
+	cache := newFastPreviewCache(8<<20, 2)
+	key := fastPreviewWorldKey{0x32}
+	want, err := cache.render(context.Background(), key, settings, 256, 1, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range cap(cache.renderGate) {
+		cache.renderGate <- struct{}{}
+	}
+	defer func() {
+		for range cap(cache.renderGate) {
+			<-cache.renderGate
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	got, err := cache.render(ctx, key, settings, 256, 1, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFastPreviewImagesEqual(t, got, want)
+}
+
 func TestFastPreviewClientTilesStitchToStandardView(t *testing.T) {
 	_, _, _, settings := benchmarkPreviewSettings()
 	const (

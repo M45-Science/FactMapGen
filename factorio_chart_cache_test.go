@@ -190,9 +190,9 @@ func TestFastPreviewEntityCacheBudgetConfiguration(t *testing.T) {
 	p := &previewer{fastPreviewEntityCacheBytes: 7 << 20}
 	cache := p.fastCache()
 	_, _, _, settings := benchmarkPreviewSettings()
-	for _, planet := range []string{"nauvis", "gleba", "fulgora", "vulcanus"} {
+	for i, planet := range []string{"nauvis", "gleba", "fulgora", "vulcanus", "aquilo"} {
 		settings.planet = planet
-		entry := cache.acquireWorld(fastPreviewWorldKey{byte(len(planet))}, settings)
+		entry := cache.acquireWorld(fastPreviewWorldKey{byte(i)}, settings)
 		var chunks *factorioChartChunkCache
 		switch planet {
 		case "nauvis":
@@ -203,6 +203,8 @@ func TestFastPreviewEntityCacheBudgetConfiguration(t *testing.T) {
 			chunks = &entry.world.spaceAge.fulgoraChart.chunks
 		case "vulcanus":
 			chunks = &entry.world.spaceAge.vulcanusChart.chunks
+		case "aquilo":
+			chunks = &entry.world.spaceAge.aquilo.chunks
 		}
 		if chunks.maxBytes != 7<<20 {
 			t.Fatalf("%s entity budget = %d, want 7 MiB", planet, chunks.maxBytes)
