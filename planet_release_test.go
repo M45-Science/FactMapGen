@@ -96,16 +96,15 @@ func TestPlanetReleaseAccuracy(t *testing.T) {
 							t.Errorf("enemy pixels differ at %d interior positions", changed)
 						}
 					}
-					t.Logf("%s: %.5f%% different, max delta %d", layer, stats.ChangedPercent, stats.MaxChannelDelta)
-					// Measured regression ceilings, not claims of parity. The zero ceilings
-					// deliberately require exact matches for these captured cases.
-					limits := map[string]map[string]float64{
-						"terrain": {"nauvis": .002, "vulcanus": .15, "gleba": 0, "fulgora": 0, "aquilo": 0},
-						"cliffs":  {"nauvis": .003, "vulcanus": .274, "gleba": .028, "fulgora": .027, "aquilo": 0},
-						"full":    {"nauvis": .071, "vulcanus": .38, "gleba": .047, "fulgora": .055, "aquilo": .0043},
+					t.Logf("%s: total RGB error %d, average %.6f", layer, stats.TotalAbsDelta, stats.MeanAbsDelta)
+					// Bound total RGB error for the captured cases. Zero requires exact agreement.
+					limits := map[string]map[string]int64{
+						"terrain": {"nauvis": 125, "vulcanus": 48_000, "gleba": 0, "fulgora": 0, "aquilo": 0},
+						"cliffs":  {"nauvis": 1_000, "vulcanus": 118_000, "gleba": 10_500, "fulgora": 9_500, "aquilo": 0},
+						"full":    {"nauvis": 8_900, "vulcanus": 171_000, "gleba": 13_100, "fulgora": 22_500, "aquilo": 1_400},
 					}
-					if stats.ChangedPercent > limits[layer][c.Planet] {
-						t.Errorf("%s regression: %.5f%% exceeds %.5f%%", layer, stats.ChangedPercent, limits[layer][c.Planet])
+					if limit := limits[layer][c.Planet]; stats.TotalAbsDelta > limit {
+						t.Errorf("%s total RGB error %d exceeds %d", layer, stats.TotalAbsDelta, limit)
 					}
 					if os.Getenv("FACTMAPGEN_ACCURACY_ARTIFACTS") == "1" {
 						dir := filepath.Join("test-output", "accuracy-2.1.23", fmt.Sprint(seed))

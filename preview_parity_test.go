@@ -41,6 +41,7 @@ type previewDiffStats struct {
 	TotalPixels             int     `json:"totalPixels"`
 	ChangedPercent          float64 `json:"changedPercent"`
 	MaxChannelDelta         int     `json:"maxChannelDelta"`
+	TotalAbsDelta           int64   `json:"totalAbsDelta"`
 	MeanAbsDelta            float64 `json:"meanAbsDelta"`
 }
 
@@ -220,6 +221,9 @@ func TestPreviewDiffArtifacts(t *testing.T) {
 	}
 	if stats.ChangedPixels != 1 || stats.TotalPixels != 2 || stats.MaxChannelDelta != 5 {
 		t.Fatalf("diff stats = %#v, want one changed pixel and max delta 5", stats)
+	}
+	if stats.TotalAbsDelta != 10 || stats.MeanAbsDelta != 10.0/6 {
+		t.Fatalf("diff stats = %#v, want total delta 10 across six channels", stats)
 	}
 	dir := writePreviewDiffArtifacts(t, "artifact-smoke", want, actual, diff, stats)
 	defer os.RemoveAll(filepath.Join("test-output", "preview-diffs", safeArtifactName(t.Name())))
@@ -469,7 +473,6 @@ func previewImageDiff(want, actual image.Image) (previewDiffStats, *image.RGBA, 
 
 	diff := image.NewRGBA(image.Rect(0, 0, width, height))
 	stats := previewDiffStats{Width: width, Height: height, TotalPixels: width * height}
-	var totalDelta int64
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
 			wr, wg, wb, _ := want.At(wantBounds.Min.X+x, wantBounds.Min.Y+y).RGBA()
@@ -482,7 +485,7 @@ func previewImageDiff(want, actual image.Image) (previewDiffStats, *image.RGBA, 
 				stats.ChangedPixels++
 			}
 			stats.MaxChannelDelta = maxInt(stats.MaxChannelDelta, maxDelta)
-			totalDelta += int64(dr + dg + db)
+			stats.TotalAbsDelta += int64(dr + dg + db)
 			diff.SetRGBA(x, y, color.RGBA{
 				R: uint8(clampInt(dr*5, 0, 255)),
 				G: uint8(clampInt(dg*5, 0, 255)),
@@ -493,7 +496,7 @@ func previewImageDiff(want, actual image.Image) (previewDiffStats, *image.RGBA, 
 	}
 	if stats.TotalPixels > 0 {
 		stats.ChangedPercent = float64(stats.ChangedPixels) * 100 / float64(stats.TotalPixels)
-		stats.MeanAbsDelta = float64(totalDelta) / float64(stats.TotalPixels*3)
+		stats.MeanAbsDelta = float64(stats.TotalAbsDelta) / float64(stats.TotalPixels*3)
 	}
 	same := wantBounds.Dx() == actualBounds.Dx() && wantBounds.Dy() == actualBounds.Dy() && stats.ChangedPixels == 0
 	return stats, diff, same

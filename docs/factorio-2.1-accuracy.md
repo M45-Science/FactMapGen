@@ -4,15 +4,15 @@ We compared FactMapGen’s Fast previews with Factorio 2.1.23 Space Age previews
 
 ## Results by planet
 
-The table shows the percentage of pixels that differed. Each cell lists seed `123456` first and seed `987654321` second. Full previews include features such as resources, plants, and enemies.
+Total RGB error adds up the absolute differences in red, green, and blue across the whole image. A small color change contributes less than a large one. Each cell lists seed `123456` first and seed `987654321` second. Full previews include features such as resources, plants, and enemies.
 
 | Planet | Terrain only | Terrain and cliffs | Full preview |
 | --- | ---: | ---: | ---: |
-| Nauvis | 0.00114% / 0.00114% | 0.00114% / 0.00267% | 0.04005% / 0.07057% |
-| Vulcanus | 0.03853% / 0.14381% | 0.18806% / 0.27313% | 0.24223% / 0.37918% |
-| Gleba | 0% / 0% | 0.02747% / 0.02480% | 0.04616% / 0.03357% |
-| Fulgora | 0% / 0% | 0.02289% / 0.02670% | 0.04997% / 0.05455% |
-| Aquilo | 0% / 0% | 0% / 0% | 0.00420% / 0.00229% |
+| Nauvis | 111 / 66 | 111 / 914 | 4,181 / 8,844 |
+| Vulcanus | 5,626 / 47,665 | 85,611 / 117,365 | 109,635 / 170,039 |
+| Gleba | 0 / 0 | 9,415 / 10,494 | 12,903 / 11,688 |
+| Fulgora | 0 / 0 | 8,125 / 9,489 | 12,814 / 22,172 |
+| Aquilo | 0 / 0 | 0 / 0 | 754 / 1,362 |
 
 Fulgora’s terrain also matched a separate 1024×1024 reference pixel for pixel. Aquilo’s full-preview differences were all within two pixels of the image edge. Vulcanus had the largest differences of the five planets, including visible differences in terrain and cliffs.
 
@@ -26,23 +26,23 @@ All five comparisons use seed `123456`. A is Factorio’s preview and B is FactM
 
 ### Nauvis
 
-![Nauvis A/B/DIFF comparison. 105 pixels differ, mostly along the image edges.](accuracy-demo/nauvis.png)
+![Nauvis A/B/DIFF comparison. Total RGB error is 4,181, mostly along the image edges.](accuracy-demo/nauvis.png)
 
 ### Vulcanus
 
-![Vulcanus A/B/DIFF comparison. 635 pixels differ, the most of the five samples.](accuracy-demo/vulcanus.png)
+![Vulcanus A/B/DIFF comparison. Total RGB error is 109,635, the highest of the five samples.](accuracy-demo/vulcanus.png)
 
 ### Gleba
 
-![Gleba A/B/DIFF comparison. 121 pixels differ.](accuracy-demo/gleba.png)
+![Gleba A/B/DIFF comparison. Total RGB error is 12,903.](accuracy-demo/gleba.png)
 
 ### Fulgora
 
-![Fulgora A/B/DIFF comparison. 131 pixels differ.](accuracy-demo/fulgora.png)
+![Fulgora A/B/DIFF comparison. Total RGB error is 12,814.](accuracy-demo/fulgora.png)
 
 ### Aquilo
 
-![Aquilo A/B/DIFF comparison. All 11 differing pixels are near the image edges.](accuracy-demo/aquilo.png)
+![Aquilo A/B/DIFF comparison. Total RGB error is 754, all near the image edges.](accuracy-demo/aquilo.png)
 
 ## Run the comparison
 
@@ -52,4 +52,4 @@ From the repository root, run the five-planet test against the [saved Factorio p
 FACTMAPGEN_ACCURACY_ARTIFACTS=1 go test -run '^TestPlanetReleaseAccuracy$' -v .
 ```
 
-The test writes comparison images to `test-output/accuracy-2.1.23/`. For capture commands, renderer changes, and additional checks, see the [original technical audit](https://github.com/M45-Science/FactMapGen/blob/ea36c1a6e5ba9b65e749bb5ac9b58cd00c926ff4/docs/factorio-2.1-accuracy.md).
+The test logs total and average RGB error and writes comparison images to `test-output/accuracy-2.1.23/`. For capture commands, renderer changes, and additional checks, see the [original technical audit](https://github.com/M45-Science/FactMapGen/blob/ea36c1a6e5ba9b65e749bb5ac9b58cd00c926ff4/docs/factorio-2.1-accuracy.md).
