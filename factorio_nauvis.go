@@ -74,7 +74,7 @@ type factorioNauvisEvaluator struct {
 	startingLakeNoise        func(float64, float64) float64
 	auxNoise                 func(float64, float64) float64
 	moistureNoise            func(float64, float64) float64
-	temperatureNoise         func(float64, float64) float64
+	temperatureNoise         func(float32, float32) float32
 	terrainNoise             [19]func(float64, float64) float64
 	specialPersistenceNoise  func(float64, float64) float64
 	specialTerrainNoise      func(float64, float64, float64) float64
@@ -87,7 +87,7 @@ type factorioNauvisEvaluator struct {
 	startingAreaMoistureSize float64
 	startingAreaMoistureFreq float64
 	auxBias                  float64
-	temperatureBias          float64
+	temperatureBase          float32
 }
 
 func newFactorioNauvisEvaluator(settings fastPreviewSettings) *factorioNauvisEvaluator {
@@ -118,7 +118,7 @@ func newFactorioNauvisEvaluator(settings fastPreviewSettings) *factorioNauvisEva
 		startingAreaMoistureSize: settings.startingAreaMoistureSize,
 		startingAreaMoistureFreq: settings.startingAreaMoistureFrequency,
 		auxBias:                  settings.auxBias,
-		temperatureBias:          settings.temperatureBias,
+		temperatureBase:          15 + float32(settings.temperatureBias),
 	}
 	if settings.mapType == "lakes" || settings.mapType == "island" {
 		evaluator.initSpecialElevation(settings.seed)
@@ -176,13 +176,8 @@ func newFactorioNauvisEvaluator(settings fastPreviewSettings) *factorioNauvisEva
 		octaveInputScaleMultiplier:  3,
 	})
 	temperatureFrequency := positiveOr(settings.temperatureFreq, 1)
-	evaluator.temperatureNoise = makeFactorioQuickMultioctaveNoise(factorioQuickMultioctaveParams{
-		seed0: settings.seed, seed1: 5, octaves: 4,
-		inputScale: temperatureFrequency / 32, outputScale: 1.0 / 20,
-		offsetX:                     40000 / temperatureFrequency,
-		octaveOutputScaleMultiplier: 3,
-		octaveInputScaleMultiplier:  1.0 / 3,
-	})
+	evaluator.temperatureNoise = makeFactorioQuickNoise32(settings.seed, 5, 4,
+		float32(temperatureFrequency/32), 1.0/20, 1.0/3, 3, float32(40000/temperatureFrequency), false)
 	for i, seed1 := range factorioTerrainNoiseSeeds {
 		evaluator.terrainNoise[i] = makeFactorioMultioctaveNoise(factorioMultioctaveParams{
 			seed0: settings.seed, seed1: seed1, octaves: 4, persistence: 0.7,
@@ -246,10 +241,10 @@ func (e *factorioNauvisEvaluator) sample(x, y float64) factorioNauvisSample {
 			moistureMain-0.2*max(0, 1-forestPathCutout*1.5),
 		)
 	}
-	temperature := clampFloat(15+e.temperatureBias+e.temperatureNoise(x, y), -20, 50)
+	temperature := max(-20, min(50, e.temperatureBase+e.temperatureNoise(float32(x), float32(y))))
 
 	return factorioNauvisSample{
-		elevation: elevation, aux: aux, moisture: moisture, temperature: temperature,
+		elevation: elevation, aux: aux, moisture: moisture, temperature: float64(temperature),
 		hills: hills, bridge: bridgeBillows, forestPath: forestPathBillows,
 	}
 }

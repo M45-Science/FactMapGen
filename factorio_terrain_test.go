@@ -17,6 +17,20 @@ type factorioTerrainOracle struct {
 	TileNames []string `json:"tileNames"`
 }
 
+func TestFactorioNauvisTemperatureMatchesGame(t *testing.T) {
+	e := newFactorioNauvisEvaluator(defaultFactorioTerrainSettings(123456))
+	// Factorio 2.1.11 point values from FactorioMapWebUI's temperature fixture.
+	for _, point := range []struct{ x, y, temperature float64 }{
+		{-10.5, -12.75, 16.31048011779785},
+		{0.5, 0.25, 16.48914337158203},
+		{0.49609375, -3299.75, 16.20909881591797},
+	} {
+		if got := e.sample(point.x, point.y).temperature; got != point.temperature {
+			t.Errorf("temperature at (%g, %g) = %g, want %g", point.x, point.y, got, point.temperature)
+		}
+	}
+}
+
 func TestFactorioTerrainTilesMatchReferenceOracles(t *testing.T) {
 	paths, err := filepath.Glob(filepath.Join("testdata", "terrain-oracles", "oracle-tile-names.*.json"))
 	if err != nil {

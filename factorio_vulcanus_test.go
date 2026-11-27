@@ -76,6 +76,19 @@ func TestFactorioVulcanusClimateAndCracksMatchGame(t *testing.T) {
 	}
 }
 
+func TestFactorioVulcanusStartingCoalMatchesGame(t *testing.T) {
+	e := newFactorioVulcanusEvaluator(defaultFactorioTerrainSettings(123456))
+	// Factorio 2.1.12 points from FactorioMapWebUI where starting coal sets the region value.
+	for _, point := range []struct{ x, y, coal float64 }{
+		{-29.5, -39.75, -0.6359423398971558},
+		{0.5, -136.75, -0.5176130533218384},
+	} {
+		if got := e.sample(point.x, point.y).resources[1]; got != point.coal {
+			t.Errorf("coal region at (%g, %g) = %g, want %g", point.x, point.y, got, point.coal)
+		}
+	}
+}
+
 func TestFactorioVulcanusTerrainMatchesReferenceOracle(t *testing.T) {
 	path := filepath.Join(
 		"testdata",

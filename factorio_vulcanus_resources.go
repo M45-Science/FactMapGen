@@ -35,16 +35,17 @@ func (e *factorioVulcanusEvaluator) initResources() {
 		base := []float64{500, 400, 400, 450}[i]
 		r.fields[i] = &factorioVulcanusResourceField{evaluator: e, index: i, seed: []uint32{789, 782349, 749, 759}[i], regionSize: int64(base + base/positiveOr(c.frequency, 1)), count: []int{15, 12, 12, 9}[i], skip: []int{2, 1, 1, 0}[i], size: sizes[i], regions: make(map[[2]int64][]factorioSelectedSpot)}
 	}
-	radius := float64(factorioVulcanusStartingAreaRadius)
+	// Factorio narrows the shared constant before computing each cone's distance.
+	radius := float32(factorioVulcanusStartingAreaRadius)
 	angle := func(base, offset float64) float32 {
 		return float32(base + float64(float32(offset*e.startingDirection)))
 	}
 	r.cones = [5]factorioNoiseCone{
-		newFactorioNoiseCone(angle(e.basaltsAngle, -10), float32(450*radius), 20),
-		newFactorioNoiseCone(angle(e.ashlandsAngle, 15), float32(180*radius), float32(30*sizes[1])),
-		newFactorioNoiseCone(angle(e.mountainsAngle, -20), float32(350*radius), float32(float64(float32(35.0/1.5))*sizes[2])),
-		newFactorioNoiseCone(angle(e.mountainsAngle, 10), float32(590*radius), 30),
-		newFactorioNoiseCone(angle(e.mountainsAngle, 30), float32(200*radius), float32(25*sizes[3])),
+		newFactorioNoiseCone(angle(e.basaltsAngle, -10), 450*radius, 20),
+		newFactorioNoiseCone(angle(e.ashlandsAngle, 15), 180*radius, float32(30*sizes[1])),
+		newFactorioNoiseCone(angle(e.mountainsAngle, -20), 350*radius, float32(float64(float32(35.0/1.5))*sizes[2])),
+		newFactorioNoiseCone(angle(e.mountainsAngle, 10), 590*radius, 30),
+		newFactorioNoiseCone(angle(e.mountainsAngle, 30), 200*radius, float32(25*sizes[3])),
 	}
 	r.patch = e.multioctaveNoise(factorioMultioctaveParams{seed0: e.seed, seed1: 21000, octaves: 2, persistence: 0.7, inputScale: 1.0 / 3, outputScale: 1})
 	e.resources = r
@@ -144,13 +145,14 @@ func (e *factorioVulcanusEvaluator) resourceRegions(x, y float64, p factorioVulc
 			}
 			placed = min(placed, spot)
 		}
-		weight := 0.5
+		weight := float32(0.5)
 		if i == 3 {
 			weight = 0.75
 		}
-		start := float64(r.cones[i].at(float32(x), float32(y), float32(weight*wx), float32(weight*wy)))
+		dx, dy := float32(weight*float32(wx)), float32(weight*float32(wy))
+		start := float64(r.cones[i].at(float32(x), float32(y), dx, dy))
 		if i == 3 {
-			start = max(start, float64(r.cones[4].at(float32(x), float32(y), float32(weight*wx), float32(weight*wy))))
+			start = max(start, float64(r.cones[4].at(float32(x), float32(y), dx, dy)))
 		}
 		regions[i] = max(start, min(1-startingCircle, placed))
 	}
