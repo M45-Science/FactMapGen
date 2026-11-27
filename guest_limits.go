@@ -11,7 +11,7 @@ type guestLimits struct {
 	MaxPreviewSize int  `json:"maxPreviewSize"`
 	MaxViewSize    int  `json:"maxViewSize"`
 	AllowZoom      bool `json:"allowZoom"`
-	AllowExact     bool `json:"allowExact"`
+	AllowExact     bool `json:"allowExact"` // Retained for existing settings clients.
 	AllowPNG       bool `json:"allowPNG"`
 }
 
@@ -33,6 +33,7 @@ func (s *server) loadGuestLimits() (guestLimits, error) {
 		return limits, err
 	}
 	err = json.Unmarshal([]byte(raw), &limits)
+	limits.AllowExact = false
 	return limits, err
 }
 
@@ -64,6 +65,7 @@ func (s *server) handleGuestLimits(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "maximum guest view size must be between 512 and 262144 tiles per side")
 			return
 		}
+		limits.AllowExact = false
 		raw, err := json.Marshal(limits)
 		if err == nil {
 			_, err = s.auth.db.Exec(`INSERT INTO app_settings(key, value) VALUES ('guest_limits', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, string(raw))

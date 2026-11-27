@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"errors"
 	"path/filepath"
 	"testing"
 )
@@ -177,11 +176,11 @@ func TestRenderPreviewUsesFastEngineWithoutFactorio(t *testing.T) {
 		CenterX: 12.4,
 		CenterY: -8.6,
 	}
-	resp, err := srv.renderPreview(
-		context.Background(), "default:Default", req, previewPriorityGuest,
+	resp, err := srv.renderFastPreview(
+		context.Background(), "default:Default", req,
 	)
 	if err != nil {
-		t.Fatalf("renderPreview fast fallback: %v", err)
+		t.Fatalf("renderFastPreview: %v", err)
 	}
 	if resp.Engine != previewEngineFast {
 		t.Fatalf("preview engine = %q, want %q", resp.Engine, previewEngineFast)
@@ -208,21 +207,13 @@ func TestRenderPreviewUsesFastEngineWithoutFactorio(t *testing.T) {
 	}
 
 	before := srv.previewer.fastCache().stats()
-	if _, err := srv.renderPreview(
-		context.Background(), "default:Default", req, previewPriorityGuest,
+	if _, err := srv.renderFastPreview(
+		context.Background(), "default:Default", req,
 	); err != nil {
 		t.Fatalf("repeat cached preview: %v", err)
 	}
 	after := srv.previewer.fastCache().stats()
 	if after.Hits <= before.Hits || after.Misses != before.Misses {
 		t.Fatalf("repeat cache stats = %#v after %#v, want hits without misses", after, before)
-	}
-}
-
-func TestRenderPreviewExactEngineStillRequiresFactorio(t *testing.T) {
-	srv := &server{previewer: &previewer{}}
-	_, err := srv.renderPreview(context.Background(), "Default", previewRequest{Engine: previewEngineFactorio, Size: 256, Planet: "nauvis"}, previewPriorityGuest)
-	if !errors.Is(err, errPreviewUnavailable) {
-		t.Fatalf("renderPreview exact error = %v, want errPreviewUnavailable", err)
 	}
 }

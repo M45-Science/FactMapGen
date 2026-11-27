@@ -129,11 +129,7 @@
                   <input id="autoRefreshPreview" type="checkbox" checked />
                   <span>Auto-refresh</span>
                 </label>
-                <select id="previewEngine" title="Fast renders all five planets in Go. Exact uses Factorio." aria-label="Preview engine">
-                  <option value="fast" selected>Fast</option>
-                  <option value="factorio">Exact</option>
-                </select>
-                <select id="previewPlanet" title="Preview surface for Fast or Exact rendering." aria-label="Preview surface">
+                <select id="previewPlanet" title="Planet to preview." aria-label="Preview surface">
                   <option value="nauvis" selected>Nauvis</option>
                   <option value="vulcanus">Vulcanus</option>
                   <option value="gleba">Gleba</option>
@@ -143,17 +139,6 @@
                 <select id="previewFormat" title="AVIF reduces download size. PNG preserves every pixel." aria-label="Preview image format" hidden>
                   <option value="avif" selected>AVIF (smaller)</option>
                   <option value="png">PNG (lossless)</option>
-                </select>
-                <select id="previewSize" title="Preview image size in pixels. Auto uses the largest square that fits without scrollbars." aria-label="Preview size">
-                  <option value="auto" selected>Autosize</option>
-                  <option value="256">Tiny</option>
-                  <option value="512">Small</option>
-                  <option value="768">Normal</option>
-                  <option value="1024">Large</option>
-                  <option value="1536">Huge</option>
-                  <option value="2048">2K</option>
-                  <option value="3072">3K</option>
-                  <option value="4096">4K</option>
                 </select>
                 <div id="previewScaleField" class="preview-scale-field" role="group" aria-label="Map zoom">
                   <button id="previewZoomOut" type="button" title="Zoom out" aria-label="Zoom out" disabled>−</button>
@@ -366,7 +351,6 @@
               <input id="guestMaxViewSize" type="number" min="512" max="262144" step="1" required value="8192" />
             </label>
             <label class="check-field"><input id="guestAllowZoom" type="checkbox" /><span>Allow zoom</span></label>
-            <label class="check-field"><input id="guestAllowExact" type="checkbox" /><span>Allow Exact Factorio previews</span></label>
             <label class="check-field"><input id="guestAllowPNG" type="checkbox" /><span>Allow lossless PNG output</span></label>
             <p>Applies to guest preview requests immediately. Open browsers pick up changes when reloaded. Server preset changes still require sign-in.</p>
             <button type="submit">Save guest limitations</button>
@@ -396,6 +380,6 @@
     <script src="/share-link.js"></script>
     <script src="/tile-viewer.js"></script>
     <script src="/preview-grid.js"></script>
-    <script src="/app.js"></script>
+    <script src="/app.js?v=fast-only"></script>
   </body>
 </html>

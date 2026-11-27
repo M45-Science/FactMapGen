@@ -5,7 +5,6 @@ const {
   inferPreviewPlanet,
   knownPlanetName,
   knownPlanets,
-  preferredPreviewEngine,
 } = require("./preview-source.js");
 
 test("all supported preview planets retain their identity", () => {
@@ -51,20 +50,6 @@ test("planet inference recognizes bundled elevation and cliff markers", () => {
   assert.equal(inferPreviewPlanet({ cliff_settings: { name: "cliff-fulgora" } }), "fulgora");
   assert.equal(inferPreviewPlanet({ property_expression_names: { elevation: "aquilo_elevation" } }), "aquilo");
   assert.equal(inferPreviewPlanet({ property_expression_names: {} }), "nauvis");
-});
-
-test("Every planet honors Fast and explicit Exact selections", () => {
-  for (const planet of knownPlanets.slice(1)) {
-    assert.equal(preferredPreviewEngine("fast", planet, true, true), "fast");
-    assert.equal(preferredPreviewEngine("factorio", planet, true, true), "factorio");
-  }
-});
-
-test("Gleba can render in Go when Exact is unavailable", () => {
-  assert.equal(preferredPreviewEngine("fast", "nauvis", true, true), "fast");
-  assert.equal(preferredPreviewEngine("factorio", "nauvis", true, true), "factorio");
-  assert.equal(preferredPreviewEngine("fast", "gleba", false, true), "fast");
-  assert.equal(preferredPreviewEngine("factorio", "gleba", false, true), "fast");
 });
 
 test("image format changes invalidate the tile source", () => {

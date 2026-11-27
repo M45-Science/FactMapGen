@@ -36,7 +36,6 @@ const clientPreviewCacheMiB = 512;
 const decodedPreviewTileBytes = previewTileSize * previewTileSize * 4;
 const maxClientPreviewTiles = Math.floor(clientPreviewCacheMiB * 1024 * 1024 / decodedPreviewTileBytes);
 const maxConcurrentPreviewTileRequests = 8;
-const safePreviewSizes = [256, 512, 768, 1024, 1536, 2048, 3072, 4096];
 const maxPreviewSeed = 4294967295;
 const minAutoplaceFrequency = 0.1;
 const maxProfileNameLength = 64;
@@ -381,8 +380,6 @@ const els = {
   cancelRenameBtn: $("#cancelRenameBtn"),
   renameProfileName: $("#renameProfileName"),
   previewBtn: $("#previewBtn"),
-  previewEngine: $("#previewEngine"),
-  previewSize: $("#previewSize"),
   previewFormat: $("#previewFormat"),
   mapgenBody: $(".mapgen-body"),
   previewPlanet: $("#previewPlanet"),
@@ -442,7 +439,6 @@ const els = {
   guestPreviewSize: $("#guestPreviewSize"),
   guestMaxViewSize: $("#guestMaxViewSize"),
   guestAllowZoom: $("#guestAllowZoom"),
-  guestAllowExact: $("#guestAllowExact"),
   guestAllowPNG: $("#guestAllowPNG"),
   closeAdminBtn: $("#closeAdminBtn"),
   userCreateForm: $("#userCreateForm"),
@@ -529,18 +525,7 @@ async function init() {
   els.saveBtn.addEventListener("click", saveProfile);
   els.shareBtn.addEventListener("click", sharePreview);
   els.previewBtn.addEventListener("click", () => generatePreview());
-  els.previewEngine.addEventListener("change", () => {
-    renderPreviewEngineControls();
-    renderPreviewScaleControl(Boolean(state.selected));
-    updatePreviewViewControls();
-    renderPreview();
-    scheduleAutoPreview();
-  });
   els.previewFormat.addEventListener("change", () => scheduleAutoPreview());
-  els.previewSize.addEventListener("change", () => {
-    updatePreviewFrameSize();
-    scheduleAutoPreview();
-  });
   window.addEventListener("resize", () => {
     const changed = updatePreviewFrameSize();
     if (!changed) return;
@@ -548,7 +533,7 @@ async function init() {
       const displayed = displayedPreviewForCurrentProfile();
       setFastTileView(displayed.centerX, displayed.centerY, displayed.tilesPerPixel, currentPreviewSize());
       refreshVisibleFastTiles();
-    } else if (previewSizeIsAuto()) {
+    } else {
       scheduleAutoPreview();
     }
   });
@@ -986,7 +971,6 @@ async function refreshAdminPanel() {
     els.guestPreviewSize.value = limits.maxPreviewSize;
     els.guestMaxViewSize.value = limits.maxViewSize;
     els.guestAllowZoom.checked = limits.allowZoom;
-    els.guestAllowExact.checked = limits.allowExact;
     els.guestAllowPNG.checked = limits.allowPNG;
     applyFactorioStatus(factorioStatus);
     renderUsers(usersBody.users || []);
@@ -1007,7 +991,6 @@ async function saveGuestLimits(event) {
         maxPreviewSize: Number(els.guestPreviewSize.value),
         maxViewSize: Number(els.guestMaxViewSize.value),
         allowZoom: els.guestAllowZoom.checked,
-        allowExact: els.guestAllowExact.checked,
         allowPNG: els.guestAllowPNG.checked,
       }),
     });
@@ -1148,7 +1131,7 @@ function factorioReleaseChannelLabel(status = currentFactorioStatus()) {
 function applyFactorioStatus(status) {
   if (!status) return;
   state.config.factorio = status;
-  state.config.previewEnabled = Boolean(state.config.fastPreviewEnabled || status.previewEnabled);
+  state.config.previewEnabled = fastPreviewAvailable();
   state.config.factorioBin = status.bin || "";
   renderFactorioStatus(status);
   renderFactorioAdmin(status);
@@ -1274,7 +1257,7 @@ async function loadConfig() {
       && warmSeed <= maxPreviewSeed
     ) state.previewSeeds["default:Default"] = String(warmSeed);
     state.config.fastPreviewEnabled = state.config.fastPreviewEnabled !== false;
-    state.config.previewEnabled = Boolean(state.config.fastPreviewEnabled || state.config.factorio?.previewEnabled);
+    state.config.previewEnabled = fastPreviewAvailable();
     renderFactorioStatus();
     notifyFactorioUpdate();
   } catch (error) {
@@ -1340,7 +1323,7 @@ async function loadProfile(name) {
     ensureRandomSeedDefault();
     state.dirty = false;
     renderAll();
-    if (!canUseDefaultCachedPreview()) scheduleAutoPreview();
+    scheduleAutoPreview();
   } catch (error) {
     showToast(error.message, true);
   }
@@ -1559,7 +1542,7 @@ async function renameProfile(event) {
     closeRenameDialog();
 
     await loadProfiles(true);
-    if (!canUseDefaultCachedPreview()) scheduleAutoPreview();
+    scheduleAutoPreview();
     showToast("Preset renamed.");
   } catch (error) {
     showToast(error.message, true);
@@ -1669,7 +1652,6 @@ async function openSharedPreview() {
     const doc = localProfileDocument(name, body.mapGen, body.mapSettings);
     state.previewViews[doc.id] = { centerX: shared.centerX, centerY: shared.centerY };
     state.previewPlanets[doc.id] = shared.planet;
-    els.previewEngine.value = "fast";
     els.previewZoom.value = String(canUsePreviewZoom() ? shared.scale : 1);
     state.profiles = [localProfileSummary(doc), ...state.profiles.filter((profile) => profile.source !== "local")].sort(compareProfiles);
     selectLocalProfile(doc);
@@ -1735,8 +1717,7 @@ async function copyTextToClipboard(text) {
 }
 
 function selectedPreviewAvailable() {
-  return state.config.previewEnabled && (currentPreviewEngine() === "fast"
-    ? fastPreviewAvailable() : guestsCan("allowExact") && factorioPreviewAvailable());
+  return state.config.previewEnabled && fastPreviewAvailable();
 }
 
 function canAutoRefreshPreview() {
@@ -1810,7 +1791,7 @@ async function generatePreview(options = {}) {
     const seed = previewSeedOverride();
     const view = previewViewForCurrentProfile();
     const payload = {
-      engine: currentPreviewEngine(),
+      engine: "fast",
       format: guestsCan("allowPNG") ? els.previewFormat.value : "avif",
       size,
       planet,
@@ -1820,37 +1801,9 @@ async function generatePreview(options = {}) {
       mapGen: previewMapGenPayload(),
     };
     if (seed) payload.seed = seed;
-    if (payload.engine === "fast") {
-      await showFastTilePreview(previewProfile, payload, requestRevision);
-      if (!automatic) showToast("Preview generated.");
-      return true;
-    }
-    const body = await api(`/api/profiles/${encodeURIComponent(previewProfile)}/preview`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-    if (!previewRequestIsCurrent(previewProfile, requestRevision)) return true;
-    if (String(body.planet || "") !== planet) {
-      throw new Error("preview response did not use the selected planet");
-    }
-    if (body.engine && body.engine !== payload.engine) {
-      throw new Error("preview response did not use the selected engine");
-    }
-    const renderedSize = positivePreviewNumber(body.size, size);
-    const renderedScale = positivePreviewNumber(body.tilesPerPixel, Number(payload.zoom));
-    const renderedCenterX = finitePreviewNumber(body.centerX, payload.centerX);
-    const renderedCenterY = finitePreviewNumber(body.centerY, payload.centerY);
-    updatePreviewFrameSize(renderedSize);
-    showPreviewImage(body.url, {
-      profile: previewProfile,
-      engine: body.engine || payload.engine,
-      planet: body.planet,
-      size: renderedSize,
-      tilesPerPixel: renderedScale,
-      centerX: renderedCenterX,
-      centerY: renderedCenterY,
-    }, { revision: requestRevision });
+    await showFastTilePreview(previewProfile, payload, requestRevision);
     if (!automatic) showToast("Preview generated.");
+    return true;
   } catch (error) {
     if (!previewRequestIsCurrent(previewProfile, requestRevision)) return true;
     clearPreviewPanTransform();
@@ -2020,20 +1973,8 @@ function canDuplicateSelectedProfile() {
   return Boolean(state.selected && state.mapGen && state.mapSettings);
 }
 
-function maxPreviewSizeForSession() {
-  return state.session ? maxPreviewSizePx : (state.config.guestLimits?.maxPreviewSize ?? guestMaxPreviewSize);
-}
-
-function factorioPreviewAvailable() {
-  return Boolean(currentFactorioStatus().previewEnabled);
-}
-
 function fastPreviewAvailable() {
   return state.config.fastPreviewEnabled !== false;
-}
-
-function currentPreviewEngine() {
-  return els.previewEngine?.value === "factorio" ? "factorio" : "fast";
 }
 
 function fastTileViewerActive() {
@@ -2162,13 +2103,6 @@ function resetPreviewView() {
   view.centerY = 0;
   els.previewZoom.value = "1";
   updatePreviewViewControls();
-  if (canUseDefaultCachedPreview()) {
-    invalidatePreviewResponse();
-    clearPreviewWheelTimer();
-    autoPreviewPending = false;
-    showDefaultCachedPreview();
-    return;
-  }
   if (fastTileViewerActive()) {
     setFastTileView(0, 0, 1, displayedPreview.size);
     refreshVisibleFastTiles();
@@ -2280,10 +2214,10 @@ function finishPreviewPan(event) {
   const gesture = previewPanGesture;
   if (!gesture || gesture.pointerID !== event.pointerId) return;
   const moved = Math.hypot(gesture.dx, gesture.dy) >= 2;
-  const retainExactTranslation = moved && !fastTileViewerActive() && canAutoRefreshPreview();
+  const retainImageTranslation = moved && !fastTileViewerActive() && canAutoRefreshPreview();
   previewPanGesture = null;
   els.previewFrame.classList.remove("preview-panning");
-  if (!retainExactTranslation) els.previewImage.style.removeProperty("transform");
+  if (!retainImageTranslation) els.previewImage.style.removeProperty("transform");
   if (els.previewFrame.hasPointerCapture(event.pointerId)) {
     els.previewFrame.releasePointerCapture(event.pointerId);
   }
@@ -2484,63 +2418,17 @@ function setControlsEnabled(enabled) {
   els.seedRerollBtn.disabled = !enabled || !state.mapGen || !isRandomSeed(state.mapGen.seed);
   els.autoRefreshPreview.disabled = !enabled || !state.config.previewEnabled;
   renderPreviewButtonState();
-  renderPreviewEngineControls();
-  const maxPreviewSize = maxPreviewSizeForSession();
-  const previousSize = els.previewSize.value;
-  for (const option of els.previewSize.querySelectorAll('[data-guest-limit]')) option.remove();
-  if (!Array.from(els.previewSize.options).some((option) => Number(option.value) === maxPreviewSize)) {
-    const option = new Option(String(maxPreviewSize), String(maxPreviewSize));
-    option.dataset.guestLimit = "true";
-    els.previewSize.add(option);
-  }
-  if (Array.from(els.previewSize.options).some((option) => option.value === previousSize)) els.previewSize.value = previousSize;
-  for (const option of els.previewSize.options) {
-    const optionSize = Number(option.value);
-    option.disabled = Number.isFinite(optionSize) && optionSize > maxPreviewSize;
-  }
-  const selectedPreviewSize = Number(els.previewSize.value);
-  if (Number.isFinite(selectedPreviewSize) && selectedPreviewSize > maxPreviewSize) els.previewSize.value = String(maxPreviewSize);
-
+  renderPreviewFormatControl();
   renderPreviewScaleControl(enabled);
 
-  els.previewSize.disabled = !enabled || !state.config.previewEnabled;
   els.previewPlanet.disabled = !enabled || !state.config.previewEnabled;
   updatePreviewViewControls();
 }
 
-function renderPreviewEngineControls() {
-  if (!els.previewEngine) return;
-  const exactOption = Array.from(els.previewEngine.options).find((option) => option.value === "factorio");
-  const fastOption = Array.from(els.previewEngine.options).find((option) => option.value === "fast");
-  const exactAllowed = guestsCan("allowExact");
-  els.previewFormat.hidden = !guestsCan("allowPNG");
-  if (!guestsCan("allowPNG")) els.previewFormat.value = "avif";
-  const exactAvailable = exactAllowed && factorioPreviewAvailable();
-  const fastAvailable = fastPreviewAvailable();
-  const planet = previewPlanetForCurrentProfile();
-  els.previewEngine.value = previewSource.preferredPreviewEngine(
-    els.previewEngine.value,
-    planet,
-    exactAvailable,
-    fastAvailable,
-  );
-  if (fastOption) {
-    fastOption.disabled = !fastAvailable;
-    fastOption.title = "Fast uses the built-in Go renderer.";
-  }
-  if (exactOption) {
-    exactOption.hidden = !exactAllowed;
-    exactOption.disabled = !exactAvailable;
-  }
-  els.previewEngine.hidden = !exactAllowed;
-  els.previewEngine.disabled = !state.selected || !state.config.previewEnabled;
-
-  const fast = currentPreviewEngine() === "fast";
-  els.previewSize.hidden = fast;
-  for (const option of els.previewPlanet.options) option.disabled = false;
-  els.previewPlanet.title = fast
-    ? "Fast renders all five planets in Go."
-    : "Preview surface. Space Age planets require a Space Age-capable Factorio install.";
+function renderPreviewFormatControl() {
+  const allowPNG = guestsCan("allowPNG");
+  els.previewFormat.hidden = !allowPNG;
+  if (!allowPNG) els.previewFormat.value = "avif";
 }
 
 function clearVisualControls() {
@@ -2848,43 +2736,10 @@ function validAutoplaceFrequency(value) {
   return Math.max(minAutoplaceFrequency, factorioScaleValue(value, 1));
 }
 
-function canUseDefaultCachedPreview() {
-  const preview = state.config.defaultPreview;
-  const view = previewViewForCurrentProfile();
-  return Boolean(
-    preview?.url
-    && currentPreviewEngine() === "factorio"
-    && currentPreviewScale() === "1"
-    && view.centerX === 0
-    && view.centerY === 0
-    && state.selected === "default:Default"
-    && !state.dirty
-    && previewPlanetForCurrentProfile() === "nauvis"
-  );
-}
-
-function showDefaultCachedPreview() {
-  if (!canUseDefaultCachedPreview()) return false;
-  const preview = state.config.defaultPreview;
-  const size = positivePreviewNumber(preview.size, guestMaxPreviewSize);
-  updatePreviewFrameSize(size);
-  showPreviewImage(preview.url, {
-    profile: state.selected,
-    engine: preview.engine || "factorio",
-    planet: preview.planet || "nauvis",
-    size,
-    tilesPerPixel: 1,
-    centerX: 0,
-    centerY: 0,
-  });
-  return true;
-}
-
 function renderPreview() {
   invalidatePreviewResponse();
   cancelPreviewPan();
   updatePreviewViewControls();
-  if (showDefaultCachedPreview()) return;
   if (!state.selected) {
     hidePreview("No preview image");
     return;
@@ -2896,20 +2751,11 @@ function renderPreview() {
 }
 
 function previewUnavailableMessage() {
-  return currentPreviewEngine() === "factorio" ? "Exact preview binary unavailable." : "Preview renderer unavailable.";
-}
-
-function previewSizeIsAuto() {
-  return els.previewSize.value === "auto";
+  return "Preview renderer unavailable."
 }
 
 function currentPreviewSize() {
-  if (currentPreviewEngine() === "fast" || previewSizeIsAuto()) {
-    return clampPreviewSize(autoPreviewSize());
-  }
-  const size = Number(els.previewSize.value || defaultPreviewSize);
-  if (!Number.isFinite(size)) return defaultPreviewSize;
-  return clampPreviewSize(size);
+  return clampPreviewSize(autoPreviewSize());
 }
 
 function autoPreviewSize() {
@@ -2925,15 +2771,7 @@ function autoPreviewSize() {
   const availableHeight = pane.clientHeight - usedHeight;
   const fit = Math.min(availableWidth, availableHeight);
   if (!Number.isFinite(fit) || fit <= 0) return defaultPreviewSize;
-  if (currentPreviewEngine() === "fast") return Math.round(fit);
-  return largestSafePreviewSize(fit);
-}
-
-function largestSafePreviewSize(fit) {
-  for (let i = safePreviewSizes.length - 1; i >= 0; i--) {
-    if (safePreviewSizes[i] <= fit) return safePreviewSizes[i];
-  }
-  return safePreviewSizes[0];
+  return Math.round(fit);
 }
 
 function outerBlockSize(element, dimension) {
@@ -2951,8 +2789,7 @@ function numericCSSPixels(value) {
 }
 
 function clampPreviewSize(size) {
-  const maximum = currentPreviewEngine() === "fast" ? maxPreviewSizePx : maxPreviewSizeForSession();
-  return Math.min(maximum, Math.max(minPreviewSize, Math.round(size)));
+  return Math.min(maxPreviewSizePx, Math.max(minPreviewSize, Math.round(size)));
 }
 
 function updatePreviewFrameSize(size = currentPreviewSize()) {
@@ -3132,7 +2969,7 @@ function showPreviewImage(url, metadata = {}, options = {}) {
   const nextPreview = {
     profile: metadata.profile || state.selected,
     url,
-    engine: metadata.engine || currentPreviewEngine(),
+    engine: metadata.engine || "fast",
     planet: knownPlanetName(metadata.planet || previewPlanetForCurrentProfile()),
     size: positivePreviewNumber(metadata.size, currentPreviewSize()),
     tilesPerPixel: positivePreviewNumber(metadata.tilesPerPixel, Number(currentPreviewScale())),
@@ -3915,7 +3752,6 @@ function setPreviewPlanet(planetKey) {
   els.previewPlanet.value = planetKey;
   if (state.selected) state.previewPlanets[state.selected] = planetKey;
   if (previous === planetKey) return false;
-  renderPreviewEngineControls();
   renderPreviewScaleControl(Boolean(state.selected));
   invalidatePreviewForPlanetChange();
   return true;

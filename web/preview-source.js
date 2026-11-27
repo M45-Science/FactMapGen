@@ -35,18 +35,10 @@
     });
   }
 
-  function preferredPreviewEngine(requested, planet, exactAvailable, fastAvailable = true) {
-    if (requested === "factorio" && exactAvailable) return "factorio";
-    if (fastAvailable) return "fast";
-    if (exactAvailable) return "factorio";
-    return requested === "factorio" ? "factorio" : "fast";
-  }
-
   return {
     fastTileSourceKey,
     inferPreviewPlanet,
     knownPlanetName,
     knownPlanets,
-    preferredPreviewEngine,
   };
 });

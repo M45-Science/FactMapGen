@@ -61,7 +61,7 @@ func TestGuestLimitsPersistencePermissionsAndConfig(t *testing.T) {
 	t.Cleanup(func() { _ = reopened.close() })
 	restarted := &server{auth: reopened}
 	limits, err = restarted.loadGuestLimits()
-	if err != nil || limits != (guestLimits{MaxPreviewSize: 2048, MaxViewSize: 16384, AllowZoom: true, AllowExact: true, AllowPNG: true}) {
+	if err != nil || limits != (guestLimits{MaxPreviewSize: 2048, MaxViewSize: 16384, AllowZoom: true, AllowPNG: true}) {
 		t.Fatalf("saved limits: %+v, %v", limits, err)
 	}
 	rec := httptest.NewRecorder()
@@ -88,19 +88,19 @@ func TestGuestLimitsPersistencePermissionsAndConfig(t *testing.T) {
 }
 
 func TestPreviewRequestConfigurableGuestLimits(t *testing.T) {
-	req := previewRequest{Engine: previewEngineFactorio, Size: 4096, Zoom: "4", Format: "png"}
+	req := previewRequest{Engine: previewEngineFast, Size: 4096, Zoom: "4", Format: "png"}
 	for _, tc := range []struct {
-		limits               guestLimits
-		engine, zoom, format string
+		limits       guestLimits
+		zoom, format string
 	}{
-		{defaultGuestLimits(), previewEngineFast, "1", "avif"},
-		{guestLimits{MaxPreviewSize: 1024, MaxViewSize: 8192, AllowZoom: true, AllowExact: false, AllowPNG: false}, previewEngineFast, "4", "avif"},
-		{guestLimits{MaxPreviewSize: 1024, MaxViewSize: 8192, AllowZoom: false, AllowExact: true, AllowPNG: false}, previewEngineFactorio, "1", "avif"},
-		{guestLimits{MaxPreviewSize: 1024, MaxViewSize: 8192, AllowZoom: false, AllowExact: false, AllowPNG: true}, previewEngineFast, "1", "png"},
-		{guestLimits{MaxPreviewSize: 1024, MaxViewSize: 8192, AllowZoom: true, AllowExact: true, AllowPNG: true}, previewEngineFactorio, "4", "png"},
+		{defaultGuestLimits(), "1", "avif"},
+		{guestLimits{MaxPreviewSize: 1024, MaxViewSize: 8192, AllowZoom: true, AllowPNG: false}, "4", "avif"},
+		{guestLimits{MaxPreviewSize: 1024, MaxViewSize: 8192, AllowZoom: false, AllowPNG: false}, "1", "avif"},
+		{guestLimits{MaxPreviewSize: 1024, MaxViewSize: 8192, AllowZoom: false, AllowPNG: true}, "1", "png"},
+		{guestLimits{MaxPreviewSize: 1024, MaxViewSize: 8192, AllowZoom: true, AllowPNG: true}, "4", "png"},
 	} {
 		got := previewRequestWithLimits(req, nil, tc.limits)
-		if got.Size != tc.limits.MaxPreviewSize || got.Engine != tc.engine || got.Zoom != tc.zoom || got.Format != tc.format {
+		if got.Size != tc.limits.MaxPreviewSize || got.Engine != previewEngineFast || got.Zoom != tc.zoom || got.Format != tc.format {
 			t.Fatalf("limits=%+v request=%+v", tc.limits, got)
 		}
 		if got := previewRequestWithLimits(req, &authUser{}, tc.limits); !reflect.DeepEqual(got, req) {

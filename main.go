@@ -31,7 +31,6 @@ import (
 
 const (
 	guestMaxPreviewSize        = 512
-	defaultCachedPreviewSize   = 512
 	defaultFastPreviewWarmSize = 1024
 	defaultFastPreviewWarmSeed = "123456"
 	mapGenFile                 = "map-gen-settings.json"
@@ -56,12 +55,11 @@ const (
 var embedded embed.FS
 
 type server struct {
-	store        *store
-	previewer    *previewer
-	previewQueue *previewQueue
-	auth         *authStore
-	factorio     *factorioManager
-	config       appConfig
+	store     *store
+	previewer *previewer
+	auth      *authStore
+	factorio  *factorioManager
+	config    appConfig
 }
 
 type store struct {
@@ -77,7 +75,6 @@ type previewer struct {
 	images                      map[string]previewImage
 	imageBytes                  int64
 	imageByteLimit              int64
-	defaultPreview              *previewResponse
 	fastCacheOnce               sync.Once
 	fastPreviewCacheBytes       int64
 	fastPreviewEntityCacheBytes int64
@@ -93,16 +90,15 @@ type previewImage struct {
 }
 
 type appConfig struct {
-	GuestLimits         guestLimits      `json:"guestLimits"`
-	PresetDir           string           `json:"presetDir"`
-	DefaultPresetDir    string           `json:"defaultPresetDir"`
-	CustomPresetDir     string           `json:"customPresetDir"`
-	PreviewEnabled      bool             `json:"previewEnabled"`
-	FastPreviewEnabled  bool             `json:"fastPreviewEnabled"`
-	FastPreviewWarmSeed string           `json:"fastPreviewWarmSeed,omitempty"`
-	DefaultPreview      *previewResponse `json:"defaultPreview,omitempty"`
-	FactorioBin         string           `json:"factorioBin,omitempty"`
-	Factorio            factorioStatus   `json:"factorio"`
+	GuestLimits         guestLimits    `json:"guestLimits"`
+	PresetDir           string         `json:"presetDir"`
+	DefaultPresetDir    string         `json:"defaultPresetDir"`
+	CustomPresetDir     string         `json:"customPresetDir"`
+	PreviewEnabled      bool           `json:"previewEnabled"`
+	FastPreviewEnabled  bool           `json:"fastPreviewEnabled"`
+	FastPreviewWarmSeed string         `json:"fastPreviewWarmSeed,omitempty"`
+	FactorioBin         string         `json:"factorioBin,omitempty"`
+	Factorio            factorioStatus `json:"factorio"`
 }
 
 type createProfileRequest struct {
@@ -220,7 +216,7 @@ func main() {
 	factorioDir := flag.String("factorio-dir", "tools/factorio", "directory used to discover Factorio headless")
 	factorioChannelFlag := flag.String("factorio-channel", string(factorioDefaultReleaseChannel), "Factorio release channel for managed installs: stable or experimental")
 	previewTimeout := flag.Duration("preview-timeout", 60*time.Second, "maximum time allowed for one map preview render")
-	previewQueueSize := flag.Int("preview-queue", 8, "maximum number of queued map preview jobs")
+	previewQueueSize := flag.Int("preview-queue", 8, "deprecated compatibility option for native preview jobs")
 	fastPreviewCacheMiB := flag.Int64("fast-preview-cache-mib", defaultFastPreviewCacheBytes>>20, "Fast preview tile-cache budget in MiB")
 	fastPreviewEntityCacheMiB := flag.Int64("fast-preview-entity-cache-mib", defaultFastPreviewEntityCacheBytes>>20, "Fast preview entity-chunk cache budget per world in MiB (up to five retained worlds)")
 	authDB := flag.String("auth-db", "factmapgen-auth.db", "SQLite database path for users, sessions, and audit logs")
@@ -285,11 +281,10 @@ func main() {
 
 	factorio.auth = auth
 	srv := &server{
-		store:        st,
-		previewer:    p,
-		previewQueue: newPreviewQueue(*previewQueueSize),
-		auth:         auth,
-		factorio:     factorio,
+		store:     st,
+		previewer: p,
+		auth:      auth,
+		factorio:  factorio,
 		config: appConfig{
 			PresetDir:           customPresetDir,
 			DefaultPresetDir:    defaultPresetDir,
@@ -302,10 +297,6 @@ func main() {
 	}
 	log.Printf("Warming Default Fast preview cache at %dx%d with seed %s...", defaultFastPreviewWarmSize, defaultFastPreviewWarmSize, defaultFastPreviewWarmSeed)
 	srv.warmDefaultFastPreviewCache(context.Background())
-	if p.factorioBin != "" {
-		log.Printf("Warming default Exact preview response...")
-		srv.warmDefaultPreview(context.Background())
-	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/config", srv.handleConfig)
 	mux.HandleFunc("/api/admin/guest-limits", srv.handleGuestLimits)
@@ -454,18 +445,12 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg.GuestLimits = limits
 	cfg.FastPreviewEnabled = true
+	cfg.PreviewEnabled = true
 	if s.factorio != nil {
 		cfg.Factorio = s.factorio.status(r.Context(), true)
-		cfg.PreviewEnabled = cfg.FastPreviewEnabled || cfg.Factorio.PreviewEnabled
 		cfg.FactorioBin = cfg.Factorio.Bin
 	} else if s.previewer != nil {
 		cfg.FactorioBin = s.previewer.factorioBinary()
-		cfg.PreviewEnabled = cfg.FastPreviewEnabled || cfg.FactorioBin != ""
-	}
-	if s.previewer != nil {
-		if preview, ok := s.previewer.defaultCachedPreview(); ok {
-			cfg.DefaultPreview = &preview
-		}
 	}
 	writeJSON(w, http.StatusOK, cfg)
 }
@@ -620,14 +605,19 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		req.Engine = s.previewEngineForPlanet(req.Engine, req.Planet)
+		switch strings.ToLower(strings.TrimSpace(req.Engine)) {
+		case "", previewEngineFast, "custom", "go":
+			req.Engine = previewEngineFast
+		case "exact", previewEngineFactorio:
+			writeError(w, http.StatusForbidden, "Exact previews are disabled")
+			return
+		default:
+			writeError(w, http.StatusBadRequest, "preview engine must be fast")
+			return
+		}
 		limits, err := s.loadGuestLimits()
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if user == nil && !limits.AllowExact && exactPreviewRequested(req.Engine) {
-			writeError(w, http.StatusForbidden, "exact previews require sign-in")
 			return
 		}
 		if req.Format != "" && req.Format != "avif" && req.Format != "png" {
@@ -636,10 +626,6 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		req = previewRequestWithLimits(req, user, limits)
 		if parts[1] == "preview-image" {
-			if req.Engine != previewEngineFast {
-				writeError(w, http.StatusBadRequest, "direct image requests require the Fast renderer")
-				return
-			}
 			if s.previewer == nil {
 				writeStoreError(w, errPreviewUnavailable)
 				return
@@ -665,7 +651,7 @@ func (s *server) handleProfile(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write(img.data)
 			return
 		}
-		resp, err := s.renderPreview(r.Context(), name, req, previewPriorityForUser(user))
+		resp, err := s.renderFastPreview(r.Context(), name, req)
 		if err != nil {
 			writeStoreError(w, err)
 			return
@@ -1349,21 +1335,6 @@ func (s *store) seedDefaultProfiles() error {
 	return nil
 }
 
-func (p *previewer) defaultCachedPreview() (previewResponse, bool) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	if p.defaultPreview == nil {
-		return previewResponse{}, false
-	}
-	return *p.defaultPreview, true
-}
-
-func (p *previewer) setDefaultCachedPreview(resp previewResponse) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.defaultPreview = &resp
-}
-
 func (s *server) warmDefaultFastPreviewCache(ctx context.Context) {
 	if s.previewer == nil {
 		return
@@ -1391,27 +1362,6 @@ func (s *server) warmDefaultFastPreviewCache(ctx context.Context) {
 	log.Printf("Default Fast preview cache warmed")
 }
 
-func (s *server) warmDefaultPreview(ctx context.Context) {
-	if s.previewer == nil || s.previewer.factorioBinary() == "" {
-		return
-	}
-	ref := profileRef{Source: profileSourceDefault, Name: "Default"}
-	mapGenPath := absolutePath(filepath.Join(s.store.profileDir(ref), mapGenFile))
-	req := previewRequest{
-		Size:   defaultCachedPreviewSize,
-		Planet: "nauvis",
-		Seed:   defaultFastPreviewWarmSeed,
-		Zoom:   "1",
-	}
-	resp, err := s.previewer.render(ctx, ref, mapGenPath, req, true)
-	if err != nil {
-		log.Printf("Default preview cache warm failed: %v", err)
-		return
-	}
-	s.previewer.setDefaultCachedPreview(resp)
-	log.Printf("Default preview cache warmed: %s", resp.URL)
-}
-
 func previewRequestForUser(req previewRequest, user *authUser) previewRequest {
 	return previewRequestWithLimits(req, user, defaultGuestLimits())
 }
@@ -1421,9 +1371,6 @@ func previewRequestWithLimits(req previewRequest, user *authUser, limits guestLi
 		req.Format = "avif"
 	}
 	if user == nil {
-		if !limits.AllowExact {
-			req.Engine = previewEngineFast
-		}
 		if !limits.AllowZoom {
 			req.Zoom = "1"
 		}
@@ -1443,62 +1390,6 @@ func previewRequestWithLimits(req previewRequest, user *authUser, limits guestLi
 	return req
 }
 
-func exactPreviewRequested(engine string) bool {
-	switch strings.ToLower(strings.TrimSpace(engine)) {
-	case "exact", previewEngineFactorio:
-		return true
-	default:
-		return false
-	}
-}
-
-func previewPriorityForUser(user *authUser) int {
-	if user == nil {
-		return previewPriorityGuest
-	}
-	if user.IsAdmin {
-		return previewPriorityAdmin
-	}
-	return previewPriorityUser
-}
-
-func (s *server) renderPreview(ctx context.Context, name string, req previewRequest, priority int) (previewResponse, error) {
-	engine := s.previewEngineForPlanet(req.Engine, req.Planet)
-	if engine == previewEngineFast {
-		return s.renderFastPreview(ctx, name, req)
-	}
-	if engine != previewEngineFactorio {
-		return previewResponse{}, invalidPreviewRequest(errors.New("preview engine must be fast or factorio"))
-	}
-	if s.previewer == nil || s.previewer.factorioBinary() == "" {
-		return previewResponse{}, errPreviewUnavailable
-	}
-	run := func(ctx context.Context) (previewResponse, error) {
-		return s.renderPreviewNow(ctx, name, req)
-	}
-	if s.previewQueue == nil {
-		return run(ctx)
-	}
-	return s.previewQueue.submit(ctx, priority, run)
-}
-
-// All built-in planets support Go terrain rendering; Exact remains opt-in and
-// retains its existing authorization requirement.
-func (s *server) previewEngineForPlanet(value, planet string) string {
-	return s.previewEngine(value)
-}
-
-func (s *server) previewEngine(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", previewEngineFast, "custom", "go":
-		return previewEngineFast
-	case "exact", previewEngineFactorio:
-		return previewEngineFactorio
-	default:
-		return value
-	}
-}
-
 func (s *server) renderFastPreview(ctx context.Context, name string, req previewRequest) (previewResponse, error) {
 	if s.previewer == nil {
 		return previewResponse{}, errPreviewUnavailable
@@ -1512,19 +1403,6 @@ func (s *server) renderFastPreview(ctx context.Context, name string, req preview
 		return previewResponse{}, err
 	}
 	return s.previewer.renderFast(ctx, ref, mapGen, req)
-}
-
-func (s *server) renderPreviewNow(ctx context.Context, name string, req previewRequest) (previewResponse, error) {
-	ref, err := s.previewRenderRef(name, req)
-	if err != nil {
-		return previewResponse{}, err
-	}
-	mapGenPath, cleanup, err := s.previewMapGenPath(ref, req)
-	if err != nil {
-		return previewResponse{}, err
-	}
-	defer cleanup()
-	return s.previewer.render(ctx, ref, mapGenPath, req, false)
 }
 
 func (s *server) previewRenderRef(name string, req previewRequest) (profileRef, error) {

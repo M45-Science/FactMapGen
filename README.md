@@ -16,7 +16,7 @@ Standalone Fast previews matched Factorio 2.1.23 pixel for pixel on all five pla
 | Fulgora | 0 |
 | Aquilo | 0 |
 
-Fast previews are available to guests. Exact previews use Factorio itself and are available when enabled by the server.
+Fast previews are available for all five planets without signing in.
 
 ![FactMapGen preview of Nauvis](docs/preview.png)
 

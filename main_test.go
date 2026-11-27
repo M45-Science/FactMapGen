@@ -628,14 +628,6 @@ func TestPreviewRequestForUserLimitsGuestPreviewOptions(t *testing.T) {
 	if fastGuest.Zoom != "1" {
 		t.Fatalf("fast guest preview zoom = %q, want 1", fastGuest.Zoom)
 	}
-	exactGuest := previewRequestForUser(previewRequest{Engine: previewEngineFactorio, Size: 512, Zoom: "2.75"}, nil)
-	if exactGuest.Engine != previewEngineFast {
-		t.Fatalf("exact guest preview engine = %q, want fast", exactGuest.Engine)
-	}
-	if exactGuest.Zoom != "1" {
-		t.Fatalf("exact guest preview zoom = %q, want normal", exactGuest.Zoom)
-	}
-
 	defaultSizedGuest := previewRequestForUser(previewRequest{}, nil)
 	if defaultSizedGuest.Size != guestMaxPreviewSize {
 		t.Fatalf("default guest preview size = %d, want %d", defaultSizedGuest.Size, guestMaxPreviewSize)
@@ -647,17 +639,41 @@ func TestPreviewRequestForUserLimitsGuestPreviewOptions(t *testing.T) {
 	}
 }
 
-func TestGuestExactPreviewRequestIsForbidden(t *testing.T) {
-	srv := &server{store: newTestStore(t)}
-	req := httptest.NewRequest(
-		http.MethodPost,
-		"/api/profiles/default:Default/preview",
-		strings.NewReader(`{"engine":"factorio","size":512,"planet":"nauvis"}`),
-	)
-	rec := httptest.NewRecorder()
-	srv.handleProfile(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("guest Exact preview status = %d body=%s, want 403", rec.Code, rec.Body.String())
+func TestExactPreviewRequestsAreForbidden(t *testing.T) {
+	auth, password, err := openAuthStore(filepath.Join(t.TempDir(), "auth.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer auth.close()
+	admin, err := auth.authenticate("admin", password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _, err := auth.createSession(admin.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.db.Exec(`INSERT INTO app_settings(key, value) VALUES ('guest_limits', '{"allowExact":true}')`); err != nil {
+		t.Fatal(err)
+	}
+	srv := &server{store: newTestStore(t), auth: auth}
+	for _, account := range []struct{ name, token string }{{"guest", ""}, {"admin", token}} {
+		for _, endpoint := range []string{"preview", "preview-image"} {
+			for _, engine := range []string{"exact", "factorio"} {
+				t.Run(account.name+"/"+endpoint+"/"+engine, func(t *testing.T) {
+					body := fmt.Sprintf(`{"engine":%q,"size":512,"planet":"nauvis"}`, engine)
+					req := httptest.NewRequest(http.MethodPost, "/api/profiles/default:Default/"+endpoint, strings.NewReader(body))
+					if account.token != "" {
+						req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: account.token})
+					}
+					rec := httptest.NewRecorder()
+					srv.handleProfile(rec, req)
+					if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "Exact previews are disabled") {
+						t.Fatalf("status = %d body=%s, want 403 for disabled Exact", rec.Code, rec.Body.String())
+					}
+				})
+			}
+		}
 	}
 }
 
@@ -1671,45 +1687,24 @@ func TestFactorioInstallManagedDetection(t *testing.T) {
 	}
 }
 
-func TestGlebaSupportsPublicGoAndAuthenticatedExact(t *testing.T) {
+func TestGlebaSupportsPublicFastPreview(t *testing.T) {
 	srv := &server{store: newTestStore(t), previewer: &previewer{}}
-	for _, engine := range []string{"", "fast", "go", "factorio"} {
+	for _, engine := range []string{"", "fast", "go", "custom"} {
 		t.Run(engine, func(t *testing.T) {
-			wantEngine := previewEngineFast
-			if engine == "factorio" {
-				wantEngine = previewEngineFactorio
-			}
-			if got := srv.previewEngineForPlanet(engine, " GLEBA "); got != wantEngine {
-				t.Fatalf("engine = %q, want %q", got, wantEngine)
-			}
 			body := fmt.Sprintf(`{"engine":%q,"planet":"gleba","size":256,"seed":"123456","mapGen":{"seed":123456}}`, engine)
 			req := httptest.NewRequest(http.MethodPost, "/api/profiles/default:Default/preview", strings.NewReader(body))
 			rec := httptest.NewRecorder()
 			srv.handleProfile(rec, req)
-			wantStatus := http.StatusOK
-			if engine == "factorio" {
-				wantStatus = http.StatusForbidden
+			if rec.Code != http.StatusOK {
+				t.Fatalf("guest status = %d, want 200: %s", rec.Code, rec.Body.String())
 			}
-			if rec.Code != wantStatus {
-				t.Fatalf("guest status = %d, want %d: %s", rec.Code, wantStatus, rec.Body.String())
+			var response previewResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
 			}
-			if engine != "factorio" {
-				var response previewResponse
-				if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-					t.Fatal(err)
-				}
-				if response.Engine != previewEngineFast || response.Planet != fastPreviewPlanetGleba {
-					t.Fatalf("unexpected response: %+v", response)
-				}
+			if response.Engine != previewEngineFast || response.Planet != fastPreviewPlanetGleba {
+				t.Fatalf("unexpected response: %+v", response)
 			}
 		})
-	}
-	for _, planet := range fastPreviewTestPlanets {
-		if got := srv.previewEngineForPlanet("", planet); got != previewEngineFast {
-			t.Fatalf("%s default engine = %q", planet, got)
-		}
-		if got := srv.previewEngineForPlanet("factorio", planet); got != previewEngineFactorio {
-			t.Fatalf("%s Exact engine = %q", planet, got)
-		}
 	}
 }
