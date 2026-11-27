@@ -2031,9 +2031,10 @@ func isPreviewImageName(filename string) bool {
 		return false
 	}
 	stem := strings.TrimPrefix(filename, "preview-")
-	switch {
-	case strings.HasSuffix(stem, ".png"):
-		stem = strings.TrimSuffix(stem, ".png")
+	ext := filepath.Ext(stem)
+	switch ext {
+	case ".png", ".avif":
+		stem = strings.TrimSuffix(stem, ext)
 	default:
 		return false
 	}

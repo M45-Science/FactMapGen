@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"image"
 	"image/png"
 	"net/http"
@@ -44,6 +45,27 @@ func TestDirectPreviewImageReturnsPixelsWithoutImageStore(t *testing.T) {
 	}
 	if len(p.images) != 0 {
 		t.Fatal("direct tile response retained a transient URL")
+	}
+}
+
+func TestStoredAVIFPreviewCanBeRetrieved(t *testing.T) {
+	const avif = "0000ftypavif"
+	installPreviewAVIFStub(t, `printf '0000ftypavif' > "$output"`)
+	srv := &server{store: newTestStore(t), previewer: &previewer{}}
+	response := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/profiles/default:Default/preview", strings.NewReader(`{"size":256,"seed":"123456"}`))
+	srv.handleProfile(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("create preview: status=%d body=%s", response.Code, response.Body.String())
+	}
+	var preview previewResponse
+	if err := json.NewDecoder(response.Body).Decode(&preview); err != nil {
+		t.Fatal(err)
+	}
+	image := httptest.NewRecorder()
+	srv.handlePreviewImage(image, httptest.NewRequest(http.MethodGet, preview.URL, nil))
+	if image.Code != http.StatusOK || image.Header().Get("Content-Type") != "image/avif" || image.Body.String() != avif {
+		t.Fatalf("retrieve preview: status=%d type=%q body=%s", image.Code, image.Header().Get("Content-Type"), image.Body.String())
 	}
 }
 
