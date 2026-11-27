@@ -332,7 +332,7 @@ func parseFastPreviewSettingsForPlanet(
 	settings.autoplaceControls[treeControl] = settings.trees
 	settings.autoplaceControls[cliffControl] = settings.cliffs
 	settings.autoplaceControls[enemyControl] = settings.enemyBases
-	if settings.startingArea <= 0 {
+	if settings.startingArea < 0 {
 		settings.startingArea = 1
 	}
 	return settings, nil

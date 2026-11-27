@@ -97,8 +97,8 @@ func (e *factorioFulgoraEvaluator) sample(px, py float64) factorioFulgoraSample 
 	sandBasins := min(mixOil, 0.6-mixOil)
 	elevation := sandBasins*60 + 80 + (noiseBool(sandBasins > 0)-0.5)*20
 	s := factorioFulgoraSample{elevation: elevation, cells: cell.id, pyramids: cell.pyramid, spots: spots, natural: natural, mixOil: mixOil, startingMask: startingMask, vaults: vaultsAndStart, vaultStart: vaultStart, rock: rock, scrap: scrap, basisOil: oil, oilMask: oilMask, mesa: mesa, distance: noiseSqrt(sx*sx + sy*sy)}
-	// The four water probabilities dominate every land score when finite.
-	// Skip NaN (0 * -Inf) independently for each candidate.
+	// Factorio scores the four ocean tiles before the eight land tiles in a
+	// single competition. Strict comparisons skip NaN and retain the first tie.
 	waterBase := func(level, bonus float32) float32 {
 		if elevation > level {
 			return float32(math.Inf(-1))
@@ -109,25 +109,30 @@ func (e *factorioFulgoraEvaluator) sample(px, py float64) factorioFulgoraSample 
 	deep := float32(100) * oilMask * waterBase(20, 2000)
 	scores := [4]float32{water * max(-(scrap+dunes), 0), water * max(scrap+dunes, 0), deep, (-min(0, elevation-60)/100 + max(0, dunes-max(0, elevation/100))) * deep}
 	best := float32(math.Inf(-1))
-	winner := -1
+	oceanWinner := -1
 	for i, score := range scores {
 		if score > best {
-			best, winner = score, i
+			best, oceanWinner = score, i
 		}
-	}
-	if winner >= 0 && best > 0 {
-		names := [4]string{"oil-ocean-shallow", "oil-ocean-shallow-2", "oil-ocean-deep", "oil-ocean-deep-2"}
-		c := color.RGBA{74, 42, 43, 255}
-		if winner >= 2 {
-			c = color.RGBA{56, 35, 40, 255}
-		}
-		s.tile = factorioVulcanusTile{names[winner], c}
-		return s
 	}
 	naturalMask := max(min(noiseBool(natural > mixPyramids), 1-vaultsAndStart), startingMask)
 	naturalMesa := max(naturalMask, mesa)
 	artificial := 1 - max(oilMask, naturalMesa)
-	s.naturalMask, s.artificial = naturalMask, artificial
+	walls, paving := float32(0.66)-noiseAbs(e.walls(x, y)), noiseAbs(e.paving(x, y))
+	dust := scrap + max(0, natural, 2*mesa*cell.pyramid)*2 - 0.9 + rock
+	dune, sand := 1+dunes, 1-dunes
+	rockTile := 0.8 + rock*2 - max(0, mixOil)*6
+	if oceanWinner >= 0 && oilMask == 1 {
+		// Offshore, artificial terrain scores are zero or lower. The road
+		// can add at most 0.9 to dust, and the paving and wall terms can
+		// only shrink from their ungated values. Skip road noise when no
+		// land tile can outscore the ocean.
+		landCeiling := max(dust+float32(0.9*sprawl), dune, sand, rockTile, 3*paving, 2*walls+paving)
+		if best >= landCeiling {
+			s.tile = factorioFulgoraOceanTile(oceanWinner)
+			return s
+		}
+	}
 	road := e.roads.sample(x, y, true)
 	structure := e.structures.sample(x, y*0.8, false)
 	subnoise := e.subnoise(x+10000*structure.id, y)
@@ -138,29 +143,33 @@ func (e *factorioFulgoraEvaluator) sample(px, py float64) factorioFulgoraSample 
 	paving2 = noiseLerp(paving2, noiseBool(structure.facet < 0.2)*0.9, noiseBool(structure.id > 0.8))
 	paving2 = noiseLerp(paving2, noiseBool(preband > 1)*0.9, noiseBool(preband < 1.3))
 	roadDust := noiseBool(road.pyramid < 0.08)*0.9 - paving2
-	walls, paving := float32(0.66)-noiseAbs(e.walls(x, y)), noiseAbs(e.paving(x, y))
 	landScores := [8]float32{
-		scrap + max(0, natural, 2*mesa*cell.pyramid)*2 - 0.9 + rock + roadDust*sprawl,
-		1 + dunes, 1 - dunes, 0.8 + rock*2 - max(0, mixOil)*6,
+		dust + roadDust*sprawl,
+		dune, sand, rockTile,
 		max(naturalMesa*(3*paving*thin-0.5), artificial*(4*paving2+paving-1)),
 		max(naturalMesa*(2*walls+paving-0.5), artificial*(0.25*walls+0.25*subnoise-4*structure.facet-paving2+2.5)),
 		artificial*(walls+subnoise+2*structure.facet-paving2+0.2+0.3*vaultsAndStart) - paving2,
 		artificial*(-walls+1.25*subnoise+2.5*structure.facet-paving2-0.2+0.3*vaultsAndStart+2*noiseBool(preband < 1)) - paving2,
 	}
-	s.machineDensity = max(landScores[5], 2*landScores[6], 3*landScores[7])
 	tiles := [8]factorioVulcanusTile{
 		{"fulgoran-dust", color.RGBA{112, 65, 50, 255}}, {"fulgoran-dunes", color.RGBA{125, 71, 59, 255}},
 		{"fulgoran-sand", color.RGBA{118, 68, 56, 255}}, {"fulgoran-rock", color.RGBA{131, 85, 66, 255}},
 		{"fulgoran-paving", color.RGBA{120, 94, 67, 255}}, {"fulgoran-walls", color.RGBA{114, 75, 65, 255}},
 		{"fulgoran-conduit", color.RGBA{100, 79, 68, 255}}, {"fulgoran-machinery", color.RGBA{89, 79, 68, 255}},
 	}
-	winner = 0
+	winner := -1
 	for i, score := range landScores {
-		if score > landScores[winner] {
-			winner = i
+		if score > best {
+			best, winner = score, i
 		}
 	}
-	s.tile = tiles[winner]
+	if winner == -1 && oceanWinner >= 0 {
+		s.tile = factorioFulgoraOceanTile(oceanWinner)
+		return s
+	}
+	s.tile = tiles[max(0, winner)]
+	s.naturalMask, s.artificial = naturalMask, artificial
+	s.machineDensity = max(landScores[5], 2*landScores[6], 3*landScores[7])
 	s.roadPaving = paving2
 	s.structure = structure.id
 	s.subnoise = subnoise
@@ -172,4 +181,13 @@ func (e *factorioFulgoraEvaluator) sample(px, py float64) factorioFulgoraSample 
 		s.scrapProbability = (1 - startingMask) * min(structural+vault, 0.5) * (1 - paving2)
 	}
 	return s
+}
+
+func factorioFulgoraOceanTile(index int) factorioVulcanusTile {
+	names := [4]string{"oil-ocean-shallow", "oil-ocean-shallow-2", "oil-ocean-deep", "oil-ocean-deep-2"}
+	c := color.RGBA{74, 42, 43, 255}
+	if index >= 2 {
+		c = color.RGBA{56, 35, 40, 255}
+	}
+	return factorioVulcanusTile{names[index], c}
 }

@@ -100,9 +100,9 @@ func TestPlanetReleaseAccuracy(t *testing.T) {
 					// Measured regression ceilings, not claims of parity. The zero ceilings
 					// deliberately require exact matches for these captured cases.
 					limits := map[string]map[string]float64{
-						"terrain": {"nauvis": .002, "vulcanus": .15, "gleba": 0, "fulgora": .003, "aquilo": 0},
-						"cliffs":  {"nauvis": .003, "vulcanus": .274, "gleba": .028, "fulgora": .030, "aquilo": 0},
-						"full":    {"nauvis": .071, "vulcanus": .38, "gleba": .047, "fulgora": .097, "aquilo": .0043},
+						"terrain": {"nauvis": .002, "vulcanus": .15, "gleba": 0, "fulgora": 0, "aquilo": 0},
+						"cliffs":  {"nauvis": .003, "vulcanus": .274, "gleba": .028, "fulgora": .027, "aquilo": 0},
+						"full":    {"nauvis": .071, "vulcanus": .38, "gleba": .047, "fulgora": .055, "aquilo": .0043},
 					}
 					if stats.ChangedPercent > limits[layer][c.Planet] {
 						t.Errorf("%s regression: %.5f%% exceeds %.5f%%", layer, stats.ChangedPercent, limits[layer][c.Planet])

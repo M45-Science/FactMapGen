@@ -68,6 +68,24 @@ func TestFactorioCliffFieldsMatchReferenceOracles(t *testing.T) {
 	}
 }
 
+func TestFactorioCliffGateMatchesGameWithHigherWaterFrequency(t *testing.T) {
+	settings := defaultFactorioNaturalSettings(1)
+	settings.water.frequency = 3
+	evaluator := newFactorioCliffEvaluator(settings, nil)
+	// Factorio 2.1.23 corners from FactorioMapWebUI's cliff-offset gate fixture.
+	for _, sample := range []struct{ x, y, cliffiness float64 }{
+		{1096, 800, 10},
+		{-2336, -3772, 0},
+		{3440, 1152, 10},
+		{3556, -2412, 0},
+		{3648, -1656, 10},
+	} {
+		if got := evaluator.cliffinessAt(sample.x, sample.y); got != sample.cliffiness {
+			t.Errorf("cliffiness at (%g, %g) = %g, want %g", sample.x, sample.y, got, sample.cliffiness)
+		}
+	}
+}
+
 func TestFactorioCliffPlacementMatchesEntityOracle(t *testing.T) {
 	fixture := readNaturalOracle[factorioCliffEntityOracle](t, "oracle-cliff-entities.seed123456.json")
 	for _, testCase := range fixture.Cases {

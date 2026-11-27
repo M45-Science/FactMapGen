@@ -116,11 +116,27 @@ func makeFactorioMultioctaveNoise32(seed, salt uint32, octaves int, persistence,
 	}
 }
 
+// factorioNoiseTrig evaluates Factorio's noise-expression polynomial for radians.
+func factorioNoiseTrig(v float32, cosine bool) float32 {
+	t := float64(v) * 0.15915494309189535
+	if !cosine {
+		t -= 0.25
+	}
+	u := 0.25 - math.Abs(t-math.RoundToEven(t))
+	z := u * u
+	z2 := z * z
+	a := float64(z*-41.34167506665737) + 6.283185269630412
+	b := float64(z*-76.56887678023256) + 81.60201529595571
+	c := float64(z2*b) + a
+	d := float64(float64(z2*z2)*39.65735524898863) + c
+	return float32(d * u)
+}
+
 type factorioNoiseCone struct{ x, y, radius float32 }
 
 func newFactorioNoiseCone(angle, distance, radius float32) factorioNoiseCone {
 	radians := float32(angle/180) * float32(math.Pi)
-	return factorioNoiseCone{distance * float32(math.Sin(float64(radians))), -distance * float32(math.Cos(float64(radians))), radius}
+	return factorioNoiseCone{distance * factorioNoiseTrig(radians, false), -distance * factorioNoiseTrig(radians, true), radius}
 }
 func (c factorioNoiseCone) at(x, y, dx, dy float32) float32 {
 	x = float32(c.x-x) + dx

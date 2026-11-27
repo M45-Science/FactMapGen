@@ -13,7 +13,7 @@ We compared Fast previews with Factorio 2.1.23 using two map seeds per planet at
 | Nauvis | 99.929–99.960% |
 | Vulcanus | 99.621–99.758% |
 | Gleba | 99.954–99.966% |
-| Fulgora | 99.903–99.943% |
+| Fulgora | 99.945–99.950% |
 | Aquilo | 99.996–99.998% |
 
 Fast previews are available to guests. Exact previews use Factorio itself and are available when enabled by the server.

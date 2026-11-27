@@ -25,23 +25,10 @@ func glebaTerrace(v, offset, width, strength float32) float32 {
 	}
 	return (up+f)*width + offset
 }
-func glebaVMTrig(v float32, cosine bool) float32 {
-	t := float64(v) * 0.15915494309189535
-	if !cosine {
-		t -= 0.25
-	}
-	u := 0.25 - math.Abs(t-math.RoundToEven(t))
-	z := u * u
-	z2 := z * z
-	a := float64(z*-41.34167506665737) + 6.283185269630412
-	b := float64(z*-76.56887678023256) + 81.60201529595571
-	c := float64(z2*b) + a
-	d := float64(float64(z2*z2)*39.65735524898863) + c
-	return float32(d * u)
-}
+
 func glebaRotate(x, y, angle float32) (float32, float32) {
 	r := (angle / 180) * float32(math.Pi)
-	s, c := glebaVMTrig(r, false), glebaVMTrig(r, true)
+	s, c := factorioNoiseTrig(r, false), factorioNoiseTrig(r, true)
 	return x*c + y*s, y*c - x*s
 }
 
@@ -160,7 +147,7 @@ func (e *factorioGlebaEvaluator) sample(px, py float64) factorioGlebaSample {
 		rx, ry := glebaRotate(sx, sy, angle)
 		rx += wx * 10
 		ry += wy * 10
-		return min(1-noiseAbs(rx/.7-e.direction*glebaVMTrig(ry/64/.7, false)*64*.7)/110, 2-distance/.7/700)
+		return min(1-noiseAbs(rx/.7-e.direction*factorioNoiseTrig(ry/64/.7, false)*64*.7)/110, 2-distance/.7/700)
 	}
 	spiral := e.direction * (distance/.7/16 - 15)
 	bridges := max(bridge(e.angle-spiral), bridge(e.angle+spiral))

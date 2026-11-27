@@ -109,7 +109,7 @@ func TestFactorioFulgoraPreviewOracle(t *testing.T) {
 		}
 	}
 	t.Logf("Fulgora preview differences: %d/%d", differences, ref.Bounds().Dx()*ref.Bounds().Dy())
-	if differences > 20 {
-		t.Fatalf("too many differences: %d", differences)
+	if differences != 0 {
+		t.Fatalf("Fulgora terrain differs at %d pixels", differences)
 	}
 }

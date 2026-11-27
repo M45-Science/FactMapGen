@@ -141,9 +141,9 @@ func newFactorioVulcanusEvaluator(settings fastPreviewSettings, gridMode ...bool
 	volcanism := 0.3 +
 		0.7*factorioVulcanusSliderRescale(size, 3)/
 			factorioVulcanusSliderRescale(scaleMultiplier, 3)
-	normalizedSeed := float64(float32(float64(settings.seed) / 4294967296.0))
+	normalizedSeed := float32(float64(settings.seed) / math.MaxUint32)
 	startingDirection := float64(-1 + 2*int(settings.seed&1))
-	ashlandsAngle := normalizedSeed * 3600
+	ashlandsAngle := float64(normalizedSeed * 3600)
 
 	e := &factorioVulcanusEvaluator{
 		settings:          settings,
@@ -153,8 +153,8 @@ func newFactorioVulcanusEvaluator(settings fastPreviewSettings, gridMode ...bool
 		scaleMultiplier:   scaleMultiplier,
 		startingDirection: startingDirection,
 		ashlandsAngle:     ashlandsAngle,
-		mountainsAngle:    ashlandsAngle + 120*startingDirection,
-		basaltsAngle:      ashlandsAngle + 240*startingDirection,
+		mountainsAngle:    factorioFloat32(ashlandsAngle + 120*startingDirection),
+		basaltsAngle:      factorioFloat32(ashlandsAngle + 240*startingDirection),
 		volcanism:         volcanism,
 		volcanoRadius:     factorioFloat32(200 * volcanism),
 		volcanoSpacing:    1500 * volcanism,
@@ -263,7 +263,7 @@ func (e *factorioVulcanusEvaluator) plasma(
 	return func(x, y float64) float64 {
 		a := float64(float32(magnitude1) * factorioBasisNoise32(float32(x)*float32(inputScaleA), float32(y)*float32(inputScaleA), &tablesA, e.grid))
 		b := float64(float32(magnitude2) * factorioBasisNoise32(float32(x)*float32(inputScaleB), float32(y)*float32(inputScaleB), &tablesB, e.grid))
-		return math.Abs(a - b)
+		return float64(noiseAbs(float32(a) - float32(b)))
 	}
 }
 
@@ -534,26 +534,25 @@ func (e *factorioVulcanusEvaluator) mountainVolcanoSpotsAt(
 func (e *factorioVulcanusEvaluator) cracksAt(
 	x, y float64,
 ) factorioVulcanusCrackSample {
-	hairline := e.hairlineNoise(x, y)
-	floodA := lerpFloat(
-		min(e.crackA1(x, y), e.crackA2(x, y)),
+	hairline := float32(e.hairlineNoise(x, y))
+	floodA := noiseLerp(
+		float32(min(e.crackA1(x, y), e.crackA2(x, y))),
 		1,
-		clampFloat(e.crackAMix(x, y), 0, 1),
+		min(max(float32(e.crackAMix(x, y)), 0), 1),
 	)
-	floodB := lerpFloat(
+	floodB := noiseLerp(
 		1,
-		min(e.crackB1(x, y), e.crackB2(x, y))-0.5,
-		clampFloat(0.2+e.crackBMix(x, y), 0, 1),
+		float32(min(e.crackB1(x, y), e.crackB2(x, y)))-0.5,
+		min(max(0.2+float32(e.crackBMix(x, y)), 0), 1),
 	)
-	floodPaths := 0.4 - e.pathPlasma(x, y) + min(0, e.pathDetail(x, y))
-	floodBasalt := min(max(floodA-0.125, floodPaths), floodB) +
-		0.3*min(0.5, hairline)
+	floodPaths := float32(0.4-float32(e.pathPlasma(x, y))) + min(0, float32(e.pathDetail(x, y)))
+	floodBasalt := min(max(floodA-0.125, floodPaths), floodB) + float32(0.3*min(0.5, hairline))
 	return factorioVulcanusCrackSample{
-		hairline:    hairline,
-		floodA:      floodA,
-		floodB:      floodB,
-		floodPaths:  floodPaths,
-		floodBasalt: floodBasalt,
+		hairline:    float64(hairline),
+		floodA:      float64(floodA),
+		floodB:      float64(floodB),
+		floodPaths:  float64(floodPaths),
+		floodBasalt: float64(floodBasalt),
 	}
 }
 
@@ -617,19 +616,11 @@ func (e *factorioVulcanusEvaluator) sampleWithStep(x, y, step float64) factorioV
 	)
 
 	cracks := e.cracksAt(x, y)
-	aux := clampFloat(
-		min(math.Abs(e.auxNoise(x, y)), 0.3-0.6*cracks.floodPaths),
-		0,
-		1,
-	)
-	moisture := clampFloat(
-		1-
-			math.Abs(e.moistureNoiseA(x, y))-
-			math.Abs(e.moistureNoiseB(x, y))-
-			0.2*cracks.floodA,
-		0,
-		1,
-	)
+	auxNoise := noiseAbs(float32(e.auxNoise(x, y)))
+	auxLimit := 0.3 - float32(0.6*float32(cracks.floodPaths))
+	aux := float64(max(0, min(1, auxNoise, auxLimit)))
+	moistureBase := 1 - noiseAbs(float32(e.moistureNoiseA(x, y))) - noiseAbs(float32(e.moistureNoiseB(x, y)))
+	moisture := float64(min(max(moistureBase-float32(0.2*float32(cracks.floodA)), 0), 1))
 
 	mountainPlasma := e.mountainPlasma(x, y)
 	mountainBasis := e.mountainBasisNoise(x, y)

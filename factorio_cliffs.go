@@ -33,6 +33,8 @@ type factorioCliffCell struct {
 
 type factorioCliffEvaluator struct {
 	nauvis        *factorioNauvisEvaluator
+	hillsNoise    func(float32, float32) float32
+	offsetScale   float32
 	offsetXTables factorioBasisTables
 	offsetYTables factorioBasisTables
 	lowTables     factorioBasisTables
@@ -55,7 +57,10 @@ func newFactorioCliffEvaluator(
 	continuity := positiveOr(settings.cliffs.size, 1)
 	interval := settings.cliffElevationInterval / frequency
 	richness := settings.cliffRichness * continuity
+	segmentation := float32(1.5 * float32(nauvis.segmentation))
 	evaluator := &factorioCliffEvaluator{
+		hillsNoise:    makeFactorioMultioctaveNoise32(settings.seed, 900, 4, 0.5, segmentation/90, 1),
+		offsetScale:   segmentation / 500,
 		nauvis:        nauvis,
 		offsetXTables: factorioBasisTablesFromSeed(settings.seed, factorioNauvisOffsetXSeed),
 		offsetYTables: factorioBasisTablesFromSeed(settings.seed, factorioNauvisOffsetYSeed),
@@ -80,7 +85,7 @@ func newFactorioCliffEvaluator(
 }
 
 func (e *factorioCliffEvaluator) cliffElevationAt(x, y float64) float64 {
-	hills := math.Abs(e.nauvis.hillsNoise(x, y))
+	hills := float64(noiseAbs(e.hillsNoise(float32(x), float32(y))))
 	return 10 + 30*(hills-e.cliffLevelAt(x, y))
 }
 
@@ -101,7 +106,7 @@ func (e *factorioCliffEvaluator) cliffinessAt(x, y float64) float64 {
 	if !e.enabled {
 		return 0
 	}
-	hills := math.Abs(e.nauvis.hillsNoise(x, y))
+	hills := float64(noiseAbs(e.hillsNoise(float32(x), float32(y))))
 	return e.cliffinessFromHills(x, y, hills)
 }
 
@@ -129,15 +134,15 @@ func (e *factorioCliffEvaluator) cliffinessFromHills(x, y, hills float64) float6
 	if !(4*low >= e.cutoff) {
 		return 0
 	}
-	offsetScale := nauvisSegmentation / 500
-	rawX := factorioBasisNoise(x*offsetScale, y*offsetScale, &e.offsetXTables)
-	rawY := factorioBasisNoise(x*offsetScale, y*offsetScale, &e.offsetYTables)
-	normalizedX := rawX / math.Sqrt(0.001+rawX*rawX+rawY*rawY)
-	normalizedY := rawY / math.Sqrt(0.001+rawY*rawY+rawX*rawX)
-	hillsOffset := math.Abs(e.nauvis.hillsNoise(x+12*normalizedX, y+12*normalizedY))
-	ringbreak := math.Abs(hills - hillsOffset)
-
-	base := (ringbreak - 0.01) * 60
+	xf, yf := float32(x), float32(y)
+	rawX := factorioBasisNoise32(xf*e.offsetScale, yf*e.offsetScale, &e.offsetXTables)
+	rawY := factorioBasisNoise32(xf*e.offsetScale, yf*e.offsetScale, &e.offsetYTables)
+	xSquared, ySquared := float32(rawX*rawX), float32(rawY*rawY)
+	normalizedX := rawX / noiseSqrt(float32(0.001+xSquared)+ySquared)
+	normalizedY := rawY / noiseSqrt(float32(0.001+ySquared)+xSquared)
+	hillsOffset := noiseAbs(e.hillsNoise(xf+float32(12*normalizedX), yf+float32(12*normalizedY)))
+	ringbreak := noiseAbs(float32(hills) - hillsOffset)
+	base := float64((ringbreak - 0.01) * 60)
 	if !(base >= e.cutoff) {
 		return 0
 	}
@@ -149,7 +154,7 @@ func (e *factorioCliffEvaluator) cliffinessFromHills(x, y, hills float64) float6
 }
 
 func (e *factorioCliffEvaluator) cornerAt(x, y float64) factorioCliffCorner {
-	hills := math.Abs(e.nauvis.hillsNoise(x, y))
+	hills := float64(noiseAbs(e.hillsNoise(float32(x), float32(y))))
 	return factorioCliffCorner{
 		elevation:  10 + 30*(hills-e.cliffLevelAt(x, y)),
 		cliffiness: e.cliffinessFromHills(x, y, hills),

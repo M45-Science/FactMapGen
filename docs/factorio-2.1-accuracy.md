@@ -11,10 +11,10 @@ The table shows the percentage of pixels that differed. Each cell lists seed `12
 | Nauvis | 0.00114% / 0.00114% | 0.00114% / 0.00267% | 0.04005% / 0.07057% |
 | Vulcanus | 0.03853% / 0.14381% | 0.18806% / 0.27313% | 0.24223% / 0.37918% |
 | Gleba | 0% / 0% | 0.02747% / 0.02480% | 0.04616% / 0.03357% |
-| Fulgora | 0.00267% / 0.00229% | 0.02518% / 0.02899% | 0.09689% / 0.05684% |
+| Fulgora | 0% / 0% | 0.02289% / 0.02670% | 0.04997% / 0.05455% |
 | Aquilo | 0% / 0% | 0% / 0% | 0.00420% / 0.00229% |
 
-Aquilo’s full-preview differences were all within two pixels of the image edge. Vulcanus had the largest differences of the five planets, including visible differences in terrain and cliffs.
+Fulgora’s terrain also matched a separate 1024×1024 reference pixel for pixel. Aquilo’s full-preview differences were all within two pixels of the image edge. Vulcanus had the largest differences of the five planets, including visible differences in terrain and cliffs.
 
 Separate enemy-marker checks matched Factorio pixel for pixel in all six Nauvis and Gleba samples, including starting areas, distant areas, and settings with doubled enemy size and frequency. These checks used the center of a larger Factorio capture to account for image-edge effects.
 
@@ -38,7 +38,7 @@ All five comparisons use seed `123456`. A is Factorio’s preview, B is FactMapG
 
 ### Fulgora
 
-![Fulgora A/B/DIFF comparison. 254 pixels differ.](accuracy-demo/fulgora.png)
+![Fulgora A/B/DIFF comparison. 131 pixels differ.](accuracy-demo/fulgora.png)
 
 ### Aquilo
 

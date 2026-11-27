@@ -59,7 +59,7 @@ func newFactorioEnemyEvaluator(settings fastPreviewSettings, grid ...bool) *fact
 }
 
 func factorioEnemyStartingAreaRadius(startingArea float64) float64 {
-	return 150 * math.Sqrt(clampFloat(positiveOr(startingArea, 1), 1.0/6.0, 6))
+	return float64(150 * float32(max(0, startingArea)))
 }
 
 func (e *factorioEnemyEvaluator) intensityAtDistance(distance float64) float64 {
@@ -98,6 +98,11 @@ func (e *factorioEnemyEvaluator) baseProbabilityAndDistanceAt(x, y float64) (flo
 	radius := float32(math.Sqrt(max(0, e.control.size))) * (15 + 4*(min(distance, 2400)/325))
 	if radius <= 0 {
 		return -1000, float64(distance)
+	}
+	// A zero starting radius yields an undefined probability at spawn. Keep
+	// that position ineligible so it cannot consume a placement draw.
+	if e.startingAreaRadius == 0 && distance == 0 {
+		return 0, 0
 	}
 	blobs := factorioBasisNoise32(fx*(1.0/8), fy*(1.0/8), &e.noiseTables, e.grid) +
 		factorioBasisNoise32(fx*(1.0/24), fy*(1.0/24), &e.noiseTables, e.grid) +

@@ -40,6 +40,42 @@ var factorioVulcanusKnownTerrainMismatches = map[factorioVulcanusTerrainMismatch
 	{x: -680, y: 1965, gotTile: "volcanic-cracks-warm", expectedTile: "volcanic-cracks-hot"}: {},
 }
 
+func TestFactorioSpaceAgeStartingBearingsMatchGame(t *testing.T) {
+	// Factorio 2.1.23 readings from FactorioMapWebUI's bearing-chain fixture.
+	settings := defaultFactorioTerrainSettings(3526822528)
+	vulcanus := newFactorioVulcanusEvaluator(settings)
+	if got := [3]float64{vulcanus.ashlandsAngle, vulcanus.mountainsAngle, vulcanus.basaltsAngle}; got != [3]float64{2956.148681640625, 2836.148681640625, 2716.148681640625} {
+		t.Errorf("Vulcanus bearings = %v, want Factorio's three starting bearings", got)
+	}
+	basalts := newFactorioNoiseCone(float32(vulcanus.basaltsAngle), 1, 1)
+	if basalts.x != -0.27813220024108887 || basalts.y != 0.9605427980422974 {
+		t.Errorf("Vulcanus basalt bearing offset = (%g, %g), want (-0.2781322, 0.9605428)", basalts.x, basalts.y)
+	}
+	fulgora := newFactorioFulgoraEvaluator(settings)
+	if fulgora.tight.x != 0.7615723013877869 {
+		t.Errorf("Fulgora starting bearing X = %g, want 0.7615723", fulgora.tight.x)
+	}
+}
+
+func TestFactorioVulcanusClimateAndCracksMatchGame(t *testing.T) {
+	// Two points from FactorioMapWebUI's Vulcanus climate and crack fixtures.
+	e := newFactorioVulcanusEvaluator(defaultFactorioTerrainSettings(123456))
+	for _, sample := range []struct {
+		x, y, aux, moisture, floodPaths, floodBasalt float64
+	}{
+		{-29.5, -39.75, 0.5233526229858398, 0.3901686668395996, -1.2808706760406494, 0.053733035922050476},
+		{22.5, 28.25, 0.20753666758537292, 0.5563872456550598, -0.5745949745178223, 0.3279365599155426},
+	} {
+		terrain := e.sample(sample.x, sample.y)
+		cracks := e.cracksAt(sample.x, sample.y)
+		got := [4]float64{terrain.aux, terrain.moisture, cracks.floodPaths, cracks.floodBasalt}
+		want := [4]float64{sample.aux, sample.moisture, sample.floodPaths, sample.floodBasalt}
+		if got != want {
+			t.Errorf("climate and cracks at (%g, %g) = %v, want %v", sample.x, sample.y, got, want)
+		}
+	}
+}
+
 func TestFactorioVulcanusTerrainMatchesReferenceOracle(t *testing.T) {
 	path := filepath.Join(
 		"testdata",

@@ -60,6 +60,43 @@ func TestFactorioEnemyExpressionParameters(t *testing.T) {
 	}
 }
 
+func TestFactorioEnemyStartingAreaMatchesGame(t *testing.T) {
+	// Factorio 2.1.23, seed 123456 at (104.25, 0.25), recorded in
+	// FactorioMapWebUI's oracle-enemy-base-starting-area.seed123456.json.
+	for _, sample := range []struct {
+		area, radius, probability float64
+	}{
+		{0.5, 75, -1000.310791015625},
+		{0.75, 112.5, -1001.7774047851562},
+		{1, 150, -1006.4107666015625},
+		{2, 300, -1013.3607788085938},
+		{3, 450, -1015.6774291992188},
+		{6, 900, -1017.994140625},
+	} {
+		settings := defaultFactorioEnemySettings(123456)
+		settings.startingArea = sample.area
+		e := newFactorioEnemyEvaluator(settings)
+		if e.startingAreaRadius != sample.radius {
+			t.Errorf("starting area %g gives radius %g, want %g", sample.area, e.startingAreaRadius, sample.radius)
+		}
+		if got := e.baseProbabilityAt(104.25, 0.25); math.Abs(got-sample.probability) > .000003 {
+			t.Errorf("starting area %g gives probability %g, want %g", sample.area, got, sample.probability)
+		}
+	}
+
+	settings, err := parseFastPreviewSettingsForPlanet([]byte(`{"starting_area":0}`), "", fastPreviewPlanetNauvis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := newFactorioEnemyEvaluator(settings)
+	if e.startingAreaRadius != 0 {
+		t.Fatalf("explicit zero starting area gives radius %g, want 0", e.startingAreaRadius)
+	}
+	if got := e.baseProbabilityAt(0, 0); !(got <= 0) {
+		t.Errorf("base probability at spawn = %g, want a non-positive value", got)
+	}
+}
+
 func TestFactorioEnemyRegionSpotsAreDeterministicAndControlled(t *testing.T) {
 	settings := defaultFactorioEnemySettings(123456)
 	a := newFactorioEnemyEvaluator(settings)
