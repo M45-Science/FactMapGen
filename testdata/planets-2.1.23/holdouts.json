@@ -1,0 +1,15 @@
+{
+  "factorioVersion": "2.1.23 (build 87750, linux64, headless, space-age)",
+  "cases": [
+    {"planet": "nauvis", "size": 640, "center": [0, 0], "settings": {"seed": 424242}, "sha256": "6b8d095f952578c04d1cae1bcdc2ea092e213998f27abd046000a60ad5b0386e"},
+    {"planet": "vulcanus", "size": 640, "center": [0, 0], "settings": {"seed": 424242}, "sha256": "49ceecbbd7cd1104c896c34ff9fcb6218fdaabdde865df8ef4798a4176219c48"},
+    {"planet": "gleba", "size": 640, "center": [0, 0], "settings": {"seed": 424242}, "sha256": "a5bab95b62784cc8105d12b9a7e34f844acaae04e62aeb600bc582fc4e4bb82d"},
+    {"planet": "fulgora", "size": 640, "center": [0, 0], "settings": {"seed": 424242}, "sha256": "5f50cc497ca33bd604bac127f466dd568b3b018e9c0b561d39f39a2e7fff85a3"},
+    {"planet": "aquilo", "size": 640, "center": [0, 0], "settings": {"seed": 424242}, "sha256": "ce2c6d8caae795303aaded6f559a2652851b22846929466fa3b93f85afcb85f6"},
+    {"planet": "nauvis", "size": 576, "center": [37, -29], "settings": {"seed": 72239527, "autoplace_controls": {"water": {"frequency": 1.5, "size": 2, "richness": 1}, "iron-ore": {"frequency": 1.5, "size": 0.75, "richness": 1.5}, "enemy-base": {"frequency": 1.5, "size": 1.5, "richness": 1}}, "property_expression_names": {"control:moisture:bias": 0.075, "control:aux:bias": -0.1}}, "sha256": "ae474283df4915e21d7a6ee7b0ad9935b45e53a9b7da192cabf1cc489344748a"},
+    {"planet": "vulcanus", "size": 576, "center": [37, -29], "settings": {"seed": 72239527, "autoplace_controls": {"vulcanus_volcanism": {"frequency": 1.25, "size": 0.75, "richness": 1}, "tungsten_ore": {"frequency": 1.5, "size": 1.4, "richness": 1.2}, "calcite": {"frequency": 0.75, "size": 1.5, "richness": 1}}}, "sha256": "18451abcf518b7f027db028951cfd565e86260eb49aa998c53ab21b9202f5beb"},
+    {"planet": "gleba", "size": 576, "center": [37, -29], "settings": {"seed": 72239527, "autoplace_controls": {"gleba_water": {"frequency": 0.75, "size": 1.2, "richness": 1}, "gleba_stone": {"frequency": 1.5, "size": 1.5, "richness": 1}, "gleba_enemy_base": {"frequency": 1.5, "size": 1.5, "richness": 1}}}, "sha256": "05d4591925593be1b9105bb89f8be08aac7b8c3120537000429cc3bdb3d7aef3"},
+    {"planet": "fulgora", "size": 576, "center": [37, -29], "settings": {"seed": 72239527, "autoplace_controls": {"fulgora_islands": {"frequency": 1.5, "size": 0.75, "richness": 1}, "scrap": {"frequency": 1.25, "size": 1.5, "richness": 1.25}, "fulgora_cliff": {"frequency": 1.25, "size": 1.5, "richness": 1}}}, "sha256": "98ae3a8e788cd8c9fb9dedce17aff3c9f64c618b021aa9461a9cc9c0cf761e1d"},
+    {"planet": "aquilo", "size": 576, "center": [37, -29], "settings": {"seed": 72239527, "autoplace_controls": {"aquilo_crude_oil": {"frequency": 1.25, "size": 1.5, "richness": 1}, "lithium_brine": {"frequency": 0.75, "size": 1.25, "richness": 1}, "fluorine_vent": {"frequency": 1.5, "size": 0.75, "richness": 1}}}, "sha256": "ae6d3e8794eb92f9cdfc6e71431cc42a0983933d67f72ec9894197d11e89f07f"}
+  ]
+}

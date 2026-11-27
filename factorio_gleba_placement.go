@@ -128,6 +128,9 @@ func (g *factorioGlebaChart) chunk(ctx context.Context, cx, cy int) ([]factorioC
 			if kind == 16 {
 				box = glebaChartBoxes[15]
 			}
+			if factorioPreviewExcludesEntity(e.settings.entityBounds, x, y, box) {
+				continue
+			}
 			allowed := true
 			for by := int(math.Floor(y + math.Trunc(box[1]*256)/256)); by <= int(math.Floor(y+math.Trunc(box[3]*256)/256)); by++ {
 				for bx := int(math.Floor(x + math.Trunc(box[0]*256)/256)); bx <= int(math.Floor(x+math.Trunc(box[2]*256)/256)); bx++ {

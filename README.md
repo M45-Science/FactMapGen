@@ -6,15 +6,15 @@ Preview Factorio and Space Age maps in your browser. Pick a seed, adjust the map
 
 ## Fast preview accuracy
 
-We compared Fast previews with Factorio 2.1.23 using two map seeds per planet at one tile per pixel. The table shows the average color difference on a scale from 0 to 255. Zero is an exact match. [Full accuracy report](docs/factorio-2.1-accuracy.md)
+Standalone Fast previews matched Factorio 2.1.23 pixel for pixel on all five planets in two 512×512 tests per planet at one tile per pixel. [Full accuracy report](docs/factorio-2.1-accuracy.md)
 
-| Planet | Average color difference |
+| Planet | Total RGB error |
 | --- | ---: |
-| Nauvis | 0.0053–0.0112 |
-| Vulcanus | 0.1394–0.2162 |
-| Gleba | 0.0149–0.0164 |
-| Fulgora | 0.0163–0.0282 |
-| Aquilo | 0.0010–0.0017 |
+| Nauvis | 0 |
+| Vulcanus | 0 |
+| Gleba | 0 |
+| Fulgora | 0 |
+| Aquilo | 0 |
 
 Fast previews are available to guests. Exact previews use Factorio itself and are available when enabled by the server.
 

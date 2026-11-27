@@ -128,7 +128,7 @@ func (f *factorioVulcanusResourceField) at(x, y float64) float64 {
 	}
 	return float64(best)
 }
-func (e *factorioVulcanusEvaluator) resourceRegions(x, y float64, p factorioVulcanusPreVolcanoSample, full [3]float64, volcano, hairline float64) (regions [4]float64, metal float64) {
+func (e *factorioVulcanusEvaluator) resourceRegions(x, y float64, p factorioVulcanusPreVolcanoSample, full [3]float64, volcano, hairline float64) (regions [4]float64, metal, sulfurRegion float64) {
 	r := e.resources
 	wx, wy := p.wobbles.x+0.25*p.wobbles.largeX, p.wobbles.y+0.25*p.wobbles.largeY
 	startingCircle := 1 + factorioVulcanusStartingAreaRadius*(300-p.spawn.distance)/50
@@ -156,9 +156,11 @@ func (e *factorioVulcanusEvaluator) resourceRegions(x, y float64, p factorioVulc
 		}
 		regions[i] = max(start, min(1-startingCircle, placed))
 	}
-	regions[3] = (1+regions[3])*(0.5+0.5*0.8*math.Abs(r.patch(x, y))) - 1
-	if fastSpaceAgeControl(e.settings, "tungsten_ore").size > 0 {
-		metal = max(0, 1000*regions[0])
+	sulfurRegion = regions[3]
+	regions[3] = (1+sulfurRegion)*(0.5+0.5*0.8*math.Abs(r.patch(x, y))) - 1
+	if regions[0] > 0 && fastSpaceAgeControl(e.settings, "tungsten_ore").size > 0 {
+		penalty := float32(factorioRandomPenaltyAt(int64(x), int64(y), 1, .1))
+		metal = float64(max(0, 1000*((1+float32(regions[0]))*penalty-1)))
 	}
 	return
 }

@@ -23,6 +23,9 @@ func fulgoraEntityProbabilities(s factorioFulgoraSample, x, y float32) [13]float
 	every := factorioPlaceEveryN(x, y, 15, 15, 1, 1)
 	penalty := float32(factorioRandomPenaltyAt(int64(x), int64(y), 1, 1))
 	sunk := min(.008, s.oilMask*-min(0, s.elevation-10)/80*max(s.scrap-1, 0))
+	// Scrap richness is proportional to 1 + subnoise. Factorio discards
+	// nonpositive amounts, but the chunk still spends its per-tile roll.
+	scrap := s.scrapProbability * noiseBool(s.subnoise > -1)
 	return [13]float32{
 		min(.1, s.naturalMask*max(0, -s.scrap-s.rock-.8)),
 		noiseBool(min(s.spots, (1-s.vaultStart)/2) < .015) * min(s.vaults, 1-s.startingMask),
@@ -31,7 +34,7 @@ func fulgoraEntityProbabilities(s factorioFulgoraSample, x, y float32) [13]float
 		.0005*a + .004*(d-1.5),
 		.0001*(.1*s.naturalMask) + (.001+.006*(d-.3))*m,
 		.0005*(.1*s.naturalMask+s.mesa) + (.005+.005*(d-.1))*m,
-		s.scrapProbability, sunk * (penalty - .5), sunk * (penalty - .4),
+		scrap, sunk * (penalty - .5), sunk * (penalty - .4),
 		(1 - s.oilMask) * (s.naturalMask + s.mesa) * min(.05, .3-2.4+s.rock-.5*s.mixOil+.7*s.basisOil),
 	}
 }
@@ -77,6 +80,10 @@ func (g *factorioFulgoraChart) chunk(ctx context.Context, cx, cy int) ([]factori
 				y = float64(cy*32+i/32) + float64(rng.next()>>28)/16
 			}
 			half := fulgoraChartHalfBoxes[kind]
+			box := [4]float64{-half[0], -half[1], half[0], half[1]}
+			if factorioPreviewExcludesEntity(g.world.settings.entityBounds, x, y, box) {
+				continue
+			}
 			hx, hy := math.Trunc(half[0]*256)/256, math.Trunc(half[1]*256)/256
 			allowed := true
 			if !sunk {

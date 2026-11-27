@@ -213,7 +213,7 @@ func writeNaturalPreviewGalleryHTML(t *testing.T, path string, rows any) {
 </head>
 <body>
   <h1>Default Trees + Cliffs Preview Comparison</h1>
-  <p class="meta">512px at 2 meters per pixel. Resources, rocks, enemies, fish, and decorations are disabled. Left: cached Factorio headless preview. Middle: FactMapGen fast Go preview. Right: amplified RGB diff.</p>
+  <p class="meta">512px at 2 meters per pixel. Resources, rocks, enemies, fish, and decorations are disabled. Left: cached Factorio headless preview. Middle: FactMapGen fast Go preview. Right: absolute RGB difference.</p>
   <table>
     <thead><tr><th>#</th><th>Seed</th><th>Factorio</th><th>Fast Go</th><th>Diff</th><th>Stats</th></tr></thead>
     <tbody>

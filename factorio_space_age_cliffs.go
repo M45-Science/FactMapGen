@@ -68,6 +68,9 @@ func (e *factorioSpaceAgeEvaluator) cliffCells(ctx context.Context, x0, y0, x1, 
 	tileCache := map[[2]int]bool{}
 	reject := func(c factorioCliffCell) bool {
 		box := factorioCliffCollisionBoxes[factorioCliffCellCode(c.left, c.right, c.top, c.bottom)]
+		if factorioPreviewExcludesEntity(s.entityBounds, c.x, c.y, box) {
+			return true
+		}
 		for y := int(math.Floor(c.y + box[1])); y <= int(math.Floor(c.y+box[3])); y++ {
 			for x := int(math.Floor(c.x + box[0])); x <= int(math.Floor(c.x+box[2])); x++ {
 				if len(tileCache) > 4096 {

@@ -47,6 +47,7 @@ type fastPreviewSettings struct {
 	resourceControls              map[string]fastControl
 	autoplaceControls             map[string]fastControl
 	propertyExpression            map[string]any
+	entityBounds                  image.Rectangle
 }
 
 type fastControl struct {
@@ -129,7 +130,7 @@ var fastScaleValues = map[string]float64{
 }
 
 func (p *previewer) renderFast(ctx context.Context, ref profileRef, mapGen json.RawMessage, req previewRequest) (previewResponse, error) {
-	resp, img, err := p.renderFastImage(ctx, ref, mapGen, req)
+	resp, img, err := p.renderFastEncoded(ctx, ref, mapGen, req, true)
 	if err != nil {
 		return previewResponse{}, err
 	}
@@ -143,6 +144,10 @@ func (p *previewer) renderFast(ctx context.Context, ref profileRef, mapGen json.
 
 // renderFastImage returns an encoded image directly without retaining a transient image URL.
 func (p *previewer) renderFastImage(ctx context.Context, ref profileRef, mapGen json.RawMessage, req previewRequest) (previewResponse, previewEncodedImage, error) {
+	return p.renderFastEncoded(ctx, ref, mapGen, req, false)
+}
+
+func (p *previewer) renderFastEncoded(ctx context.Context, ref profileRef, mapGen json.RawMessage, req previewRequest, standalone bool) (previewResponse, previewEncodedImage, error) {
 	size := req.Size
 	if size == 0 {
 		size = 768
@@ -174,7 +179,14 @@ func (p *previewer) renderFastImage(ctx context.Context, ref profileRef, mapGen 
 		return previewResponse{}, previewEncodedImage{}, invalidPreviewRequest(err)
 	}
 	tpp := fastTilesPerPixel(zoom)
-	img, err := p.fastCache().render(ctx, cacheKey, settings, size, tpp, centerX, centerY)
+	cache := p.fastCache()
+	var img *image.RGBA
+	if standalone && tpp == 1 {
+		centerX, centerY = factorioPreviewChunkCenter(centerX), factorioPreviewChunkCenter(centerY)
+		img, err = cache.renderFrame(ctx, cacheKey, settings, size, centerX, centerY)
+	} else {
+		img, err = cache.render(ctx, cacheKey, settings, size, tpp, centerX, centerY)
+	}
 	if err != nil {
 		return previewResponse{}, previewEncodedImage{}, err
 	}
@@ -738,6 +750,22 @@ func fastPreviewViewportOrigin(center float64, size int, tilesPerPixel float64) 
 		return float64(centerRaster-int64(size/2)) * tilesPerPixel
 	}
 	return center - float64(size)*tilesPerPixel/2
+}
+
+func fastPreviewChunkBounds(size int, tpp, centerX, centerY float64) image.Rectangle {
+	const chunkSize = float64(factorioChunkSize)
+	x := fastPreviewViewportOrigin(centerX, size, tpp)
+	y := fastPreviewViewportOrigin(centerY, size, tpp)
+	span := float64(size) * tpp
+	return image.Rect(
+		int(math.Floor(x/chunkSize)*chunkSize), int(math.Floor(y/chunkSize)*chunkSize),
+		int(math.Ceil((x+span)/chunkSize)*chunkSize), int(math.Ceil((y+span)/chunkSize)*chunkSize),
+	)
+}
+
+func factorioPreviewChunkCenter(center float64) float64 {
+	const chunkSize = float64(factorioChunkSize)
+	return math.Floor(center/chunkSize) * chunkSize
 }
 
 func renderFastNauvisOneTileRows(

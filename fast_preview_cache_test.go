@@ -73,6 +73,36 @@ func TestFastPreviewTileCacheMatchesDirectRenderer(t *testing.T) {
 	}
 }
 
+func TestFastPreviewFrameKeepsBrowserTilesSeamless(t *testing.T) {
+	ctx := context.Background()
+	raw := json.RawMessage(`{"seed":123456}`)
+	settings, err := parseFastPreviewSettingsForPlanet(raw, "", fastPreviewPlanetNauvis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := fastPreviewCacheKeyForPlanet(raw, settings.seed, settings.planet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := newFastPreviewCache(8<<20, 2)
+	frame, err := cache.renderFrame(ctx, key, settings, 512, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tiled, err := cache.render(ctx, key, settings, 512, 1, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	direct, err := newFastPreviewWorld(settings).render(ctx, 512, 1, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(frame.Pix, direct.Pix) {
+		t.Fatal("standalone viewport should reject features that cross its boundary")
+	}
+	assertFastPreviewImagesEqual(t, tiled, direct)
+}
+
 func TestFastPreviewTileCacheAlignedStandardColdAndWarm(t *testing.T) {
 	_, _, _, settings := benchmarkPreviewSettings()
 	const size = 1024

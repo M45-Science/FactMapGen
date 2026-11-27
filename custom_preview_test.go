@@ -189,9 +189,9 @@ func TestRenderPreviewUsesFastEngineWithoutFactorio(t *testing.T) {
 	if resp.Size != 256 || resp.Planet != "nauvis" {
 		t.Fatalf("preview response = %#v", resp)
 	}
-	if resp.CenterX != 12 || resp.CenterY != -9 || resp.TilesPerPixel != 1 {
+	if resp.CenterX != 0 || resp.CenterY != -32 || resp.TilesPerPixel != 1 {
 		t.Fatalf(
-			"preview viewport = (%g,%g) at %g, want (12,-9) at 1",
+			"preview viewport = (%g,%g) at %g, want (0,-32) at 1",
 			resp.CenterX, resp.CenterY, resp.TilesPerPixel,
 		)
 	}

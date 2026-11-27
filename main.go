@@ -1659,6 +1659,9 @@ func (p *previewer) render(ctx context.Context, ref profileRef, mapGenPath strin
 	if err != nil {
 		return previewResponse{}, invalidPreviewRequest(err)
 	}
+	if zoom.tilesPerPixel == 1 {
+		centerX, centerY = factorioPreviewChunkCenter(centerX), factorioPreviewChunkCenter(centerY)
+	}
 	if err := validatePreviewSeedOverride(req.Seed); err != nil {
 		return previewResponse{}, invalidPreviewRequest(err)
 	}

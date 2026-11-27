@@ -3,17 +3,15 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"testing"
-)
-
-const (
-	maxTerrainChangedPercent = 10.0
-	maxWaterChangedPercent   = 1.0
 )
 
 var terrainOnlyAutoplaceControls = []string{
@@ -27,6 +25,40 @@ var terrainOnlyAutoplaceControls = []string{
 	"rocks",
 	"enemy-base",
 	"nauvis_cliff",
+}
+
+func factorioTerrainReferenceMods(t *testing.T, factorioBin string) string {
+	t.Helper()
+	versionOutput, err := exec.Command(factorioBin, "--version").Output()
+	if err != nil {
+		t.Fatalf("read Factorio version: %v", err)
+	}
+	version := regexp.MustCompile(`Version: (\d+\.\d+)\.`).FindSubmatch(versionOutput)
+	if version == nil {
+		t.Fatalf("unexpected Factorio version output: %s", versionOutput)
+	}
+	mods := t.TempDir()
+	mod := filepath.Join(mods, "factmapgen-terrain-reference_1.0.0")
+	if err := os.Mkdir(mod, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Factorio supplies entities and cliffs from the planet prototype when
+	// capture settings omit them. Disable both on the isolated reference planet.
+	files := map[string]string{
+		filepath.Join(mod, "info.json"): fmt.Sprintf(`{"name":"factmapgen-terrain-reference","version":"1.0.0","title":"FactMapGen terrain reference","author":"FactMapGen","factorio_version":%q}`, version[1]),
+		filepath.Join(mod, "data-final-fixes.lua"): `
+local m = data.raw.planet.nauvis.map_gen_settings
+m.autoplace_settings.entity = {treat_missing_as_default = false, settings = {}}
+m.cliff_settings.name = ""
+`,
+		filepath.Join(mods, "mod-list.json"): `{"mods":[{"name":"base","enabled":true},{"name":"factmapgen-terrain-reference","enabled":true}]}`,
+	}
+	for path, content := range files {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return mods
 }
 
 func terrainOnlyMapGenPath(t *testing.T, sourcePath string) string {
@@ -123,27 +155,12 @@ func galleryReferenceImage(t *testing.T, path string, size int, render func() im
 
 func assertFastTerrainCorrectness(t *testing.T, caseName string, want, actual image.Image) {
 	t.Helper()
-	stats, diff, _ := previewImageDiff(want, actual)
-	stats.WaterMaskChangedPercent = previewWaterMaskChangedPercent(want, actual)
+	stats, diff, same := previewImageDiff(want, actual)
 	dir := writePreviewDiffArtifacts(t, caseName, want, actual, diff, stats)
-	if stats.ChangedPercent > maxTerrainChangedPercent || stats.WaterMaskChangedPercent > maxWaterChangedPercent {
-		t.Fatalf(
-			"terrain mismatch for %s: %.2f%% tile colors changed (limit %.2f%%), %.2f%% water mask changed (limit %.2f%%); wrote artifacts to %s",
-			caseName,
-			stats.ChangedPercent,
-			maxTerrainChangedPercent,
-			stats.WaterMaskChangedPercent,
-			maxWaterChangedPercent,
-			dir,
-		)
+	if !same {
+		t.Fatalf("terrain mismatch for %s: total RGB error %d, bounds %v vs %v, artifacts in %s", caseName, stats.TotalAbsDelta, want.Bounds(), actual.Bounds(), dir)
 	}
-	t.Logf(
-		"terrain correctness for %s: %.2f%% tile colors changed, %.2f%% water mask changed; artifacts: %s",
-		caseName,
-		stats.ChangedPercent,
-		stats.WaterMaskChangedPercent,
-		dir,
-	)
+	t.Logf("terrain for %s has zero RGB error, artifacts in %s", caseName, dir)
 }
 
 func previewWaterMaskChangedPercent(want, actual image.Image) float64 {

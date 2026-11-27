@@ -158,6 +158,16 @@ func factorioChartEntityRect(x, y float64, box [4]float64) image.Rectangle {
 	).Intersect(image.Rect(cx, cy, cx+32, cy+32))
 }
 
+func factorioPreviewExcludesEntity(bounds image.Rectangle, x, y float64, box [4]float64) bool {
+	if bounds.Empty() {
+		return false
+	}
+	return x+math.Trunc(box[0]*256)/256 < float64(bounds.Min.X) ||
+		y+math.Trunc(box[1]*256)/256 < float64(bounds.Min.Y) ||
+		x+math.Trunc(box[2]*256)/256 >= float64(bounds.Max.X) ||
+		y+math.Trunc(box[3]*256)/256 >= float64(bounds.Max.Y)
+}
+
 func paintFactorioChartEntity(img *image.RGBA, settings fastPreviewSettings, x, y float64, box [4]float64, ink color.RGBA, originX, originY, tpp float64) {
 	rect := factorioChartEntityRect(x, y, box)
 	if rect.Empty() {

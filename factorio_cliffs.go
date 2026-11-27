@@ -118,11 +118,11 @@ func (e *factorioCliffEvaluator) cliffinessFromHills(x, y, hills float64) float6
 	if !(startingArea >= e.cutoff) {
 		return 0
 	}
-	forest := (math.Abs(e.nauvis.forestPathNoise(x, y)) - 0.03) * 12
+	forest := (float64(noiseAbs(e.nauvis.forestPathNoise(float32(x), float32(y)))) - 0.03) * 12
 	if !(forest >= e.cutoff) {
 		return 0
 	}
-	bridge := (math.Abs(e.nauvis.bridgeNoise(x, y)) - 0.05) * 15
+	bridge := (float64(noiseAbs(e.nauvis.bridgeNoise(float32(x), float32(y)))) - 0.05) * 15
 	if !(bridge >= e.cutoff) {
 		return 0
 	}
@@ -212,12 +212,17 @@ func renderFactorioCliffs(
 	}
 	bounds := img.Bounds()
 	queryPadding := 4.0
-	cells, err := evaluator.placedCells(
+	cells, err := factorioPlaceCliffs(
 		ctx,
 		originX-queryPadding,
 		originY-queryPadding,
 		originX+float64(bounds.Dx())*tilesPerPixel+queryPadding,
 		originY+float64(bounds.Dy())*tilesPerPixel+queryPadding,
+		evaluator.elevation0, evaluator.interval, evaluator.smoothing, evaluator.cornerAt,
+		func(c factorioCliffCell) bool {
+			box := factorioCliffCollisionBoxes[factorioCliffCellCode(c.left, c.right, c.top, c.bottom)]
+			return factorioPreviewExcludesEntity(settings.entityBounds, c.x, c.y, box)
+		},
 	)
 	if err != nil {
 		return err

@@ -21,6 +21,7 @@ type factorioVulcanusTile struct {
 
 type factorioVulcanusSample struct {
 	resources            [4]float64
+	sulfurRegion         float64
 	tile                 factorioVulcanusTile
 	elevation            float64
 	temperature          float64
@@ -458,40 +459,28 @@ func (e *factorioVulcanusEvaluator) spotsForRegion(
 }
 
 func (e *factorioVulcanusEvaluator) rawVolcanoSpotsAt(x, y float64) float64 {
-	radius := e.volcanoRadius
-	cullSquared := radius * radius
-	best := 0.0
-	regionXLow := factorioVulcanusRegionIndex(x - radius)
-	regionXHigh := factorioVulcanusRegionIndex(x + radius)
-	regionYLow := factorioVulcanusRegionIndex(y - radius)
-	regionYHigh := factorioVulcanusRegionIndex(y + radius)
+	radius := float32(e.volcanoRadius)
+	var best float32
+	regionXLow := factorioVulcanusRegionIndex(x - e.volcanoRadius)
+	regionXHigh := factorioVulcanusRegionIndex(x + e.volcanoRadius)
+	regionYLow := factorioVulcanusRegionIndex(y - e.volcanoRadius)
+	regionYHigh := factorioVulcanusRegionIndex(y + e.volcanoRadius)
 	for regionX := regionXLow; regionX <= regionXHigh; regionX++ {
 		for regionY := regionYLow; regionY <= regionYHigh; regionY++ {
 			for _, spot := range e.spotsForRegion(regionX, regionY) {
-				dx := x - spot.x
-				dy := y - spot.y
-				distanceSquared := dx*dx + dy*dy
-				if distanceSquared > cullSquared {
+				dx := float32(x) - float32(spot.x)
+				dy := float32(y) - float32(spot.y)
+				distance := noiseSqrt(float32(dx*dx) + float32(dy*dy))
+				if distance > radius {
 					continue
 				}
-				peak := factorioFloat32(
-					factorioFloat32(3*spot.quantity) /
-						factorioFloat32(factorioFloat32(math.Pi*radius)*radius),
-				)
-				cone := factorioFloat32(
-					peak -
-						factorioFloat32(
-							factorioFloat32(math.Sqrt(distanceSquared))*
-								factorioFloat32(peak/radius),
-						),
-				)
-				if cone > best {
-					best = cone
-				}
+				// The spot-noise primitive uses 3.1416 for the cone volume.
+				peak := float32(3 * spot.quantity / (3.1416 * float64(radius) * float64(radius)))
+				best = max(best, peak-float32(distance*(peak/radius)))
 			}
 		}
 	}
-	return best
+	return float64(best)
 }
 
 func (e *factorioVulcanusEvaluator) mountainVolcanoSpotsAt(
@@ -499,8 +488,10 @@ func (e *factorioVulcanusEvaluator) mountainVolcanoSpotsAt(
 	pre factorioVulcanusPreVolcanoSample,
 ) float64 {
 	r := factorioVulcanusStartingAreaRadius
-	offX := pre.wobbles.x/2 + pre.wobbles.largeX/12 + pre.wobbles.hugeX/80
-	offY := pre.wobbles.y/2 + pre.wobbles.largeY/12 + pre.wobbles.hugeY/80
+	wobbleX, largeX, hugeX := float32(pre.wobbles.x)/2, float32(pre.wobbles.largeX)/12, float32(pre.wobbles.hugeX)/80
+	wobbleY, largeY, hugeY := float32(pre.wobbles.y)/2, float32(pre.wobbles.largeY)/12, float32(pre.wobbles.hugeY)/80
+	offX := float64(wobbleX + largeX + hugeX)
+	offY := float64(wobbleY + largeY + hugeY)
 	startingProtector := clampFloat(
 		factorioVulcanusStartingSpotAtAngle(
 			e.mountainsAngle+180*e.startingDirection,
@@ -527,8 +518,10 @@ func (e *factorioVulcanusEvaluator) mountainVolcanoSpotsAt(
 		0,
 		1,
 	)
-	rawSpots := e.rawVolcanoSpotsAt(x+offX, y+offY)
-	return max(startingVolcanoSpot, rawSpots-startingProtector)
+	qx := float32(x) + wobbleX + largeX + hugeX
+	qy := float32(y) + wobbleY + largeY + hugeY
+	rawSpots := e.rawVolcanoSpotsAt(float64(qx), float64(qy))
+	return max(startingVolcanoSpot, float64(float32(rawSpots)-float32(startingProtector)))
 }
 
 func (e *factorioVulcanusEvaluator) cracksAt(
@@ -673,7 +666,7 @@ func (e *factorioVulcanusEvaluator) sampleWithStep(x, y, step float64) factorioV
 		1,
 	)
 
-	regions, metal := e.resourceRegions(x, y, pre, [3]float64{mountainsBiomeFull, ashlandsBiomeFull, basaltsBiomeFull}, mountainVolcanoSpots, cracks.hairline)
+	regions, metal, sulfurRegion := e.resourceRegions(x, y, pre, [3]float64{mountainsBiomeFull, ashlandsBiomeFull, basaltsBiomeFull}, mountainVolcanoSpots, cracks.hairline)
 	tile := factorioResolveVulcanusTile(factorioVulcanusTileFields{
 		elevation:            elevation,
 		aux:                  aux,
@@ -690,6 +683,7 @@ func (e *factorioVulcanusEvaluator) sampleWithStep(x, y, step float64) factorioV
 	return factorioVulcanusSample{
 		tile:                 tile,
 		resources:            regions,
+		sulfurRegion:         sulfurRegion,
 		elevation:            max(-500, elevation),
 		temperature:          temperature,
 		moisture:             moisture,
@@ -770,14 +764,16 @@ func factorioResolveVulcanusTile(f factorioVulcanusTileFields) factorioVulcanusT
 		0,
 		20,
 	)
-	volcanicCracksWarmRange := f.basaltsBiome*factorioVulcanusRangeSelect(
+	metalBonus := 50000 * float32(f.metal)
+	volcanicCracksWarmBase := f.basaltsBiome*factorioVulcanusRangeSelect(
 		f.elevation,
 		8,
 		22,
 		1,
 		0,
 		5,
-	) + (f.aux - 0.05) + 50000*f.metal
+	) + (f.aux - 0.05)
+	volcanicCracksWarmRange := float64(float32(volcanicCracksWarmBase) + metalBonus)
 	volcanicCracksColdRange := (0.5-f.ashlandsBiome)*factorioVulcanusRangeSelect(
 		f.elevation,
 		20,
@@ -786,14 +782,15 @@ func factorioResolveVulcanusTile(f factorioVulcanusTileFields) factorioVulcanusT
 		0,
 		1,
 	) + (f.aux - 0.3)
-	volcanicSmoothStoneWarmRange := f.basaltsBiome*factorioVulcanusRangeSelect(
+	volcanicSmoothStoneWarmBase := f.basaltsBiome*factorioVulcanusRangeSelect(
 		f.elevation,
 		8,
 		20,
 		1,
 		0,
 		5,
-	) - (f.aux - 0.05) + 50000*f.metal
+	) - (f.aux - 0.05)
+	volcanicSmoothStoneWarmRange := float64(float32(volcanicSmoothStoneWarmBase) + metalBonus)
 	volcanicSmoothStoneRange := (0.5-f.ashlandsBiome)*factorioVulcanusRangeSelect(
 		f.elevation,
 		20,
@@ -868,11 +865,12 @@ func factorioResolveVulcanusTile(f factorioVulcanusTileFields) factorioVulcanusT
 		{"volcanic-ash-soil", color.RGBA{R: 48, G: 48, B: 43, A: 255}, volcanicAshSoilRange},
 	}
 	winner := factorioVulcanusTile{name: tiles[0].name, color: tiles[0].color}
-	winnerProbability := tiles[0].probability
+	winnerProbability := float32(tiles[0].probability)
 	for index := 1; index < len(tiles); index++ {
-		if tiles[index].probability > winnerProbability {
+		probability := float32(tiles[index].probability)
+		if probability > winnerProbability {
 			winner = factorioVulcanusTile{name: tiles[index].name, color: tiles[index].color}
-			winnerProbability = tiles[index].probability
+			winnerProbability = probability
 		}
 	}
 	return winner

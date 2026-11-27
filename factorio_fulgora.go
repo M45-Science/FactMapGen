@@ -25,7 +25,12 @@ type factorioFulgoraSample struct {
 
 func newFactorioFulgoraEvaluator(settings fastPreviewSettings, gridMode ...bool) *factorioFulgoraEvaluator {
 	c := fastSpaceAgeControl(settings, "fulgora_islands")
-	grid := float32(175) - noiseSliderLinear(float32(positiveOr(c.frequency, 1)), -50, 50)
+	frequency := float32(positiveOr(c.frequency, 1))
+	ratio := float32(math.Log2(float64(frequency))) / float32(math.Log2(6))
+	// Keep the slider's operations in expression order. Its last bit affects
+	// the warped noise coordinates used to distinguish shallow and deep oil.
+	linearFrequency := -50 + float32(50*float32(1+ratio))
+	grid := 175 - linearFrequency
 	noise := func(name string, n int, p, scale, out float32) func(float32, float32) float32 {
 		grid := len(gridMode) > 0 && gridMode[0] && name != "fulgora_basis" && name != "fulgora_basis_oil" && name != "fulgora_structure_subnoise"
 		return makeFactorioMultioctaveNoise32(settings.seed, crc32.ChecksumIEEE([]byte(name)), n, p, scale, out, grid)

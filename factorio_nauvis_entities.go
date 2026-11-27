@@ -250,6 +250,9 @@ func (e *factorioNauvisNaturalEvaluator) chunk(ctx context.Context, cx, cy int) 
 				y = float64(cy*32+i/32) + float64(rng.next()>>28)/16
 			}
 			box := factorioNauvisNaturalBox(kind, true)
+			if factorioPreviewExcludesEntity(e.settings.entityBounds, x, y, box) {
+				continue
+			}
 			allowed := true
 			for by := int(math.Floor(y + math.Trunc(box[1]*256)/256)); by <= int(math.Floor(y+math.Trunc(box[3]*256)/256)); by++ {
 				for bx := int(math.Floor(x + math.Trunc(box[0]*256)/256)); bx <= int(math.Floor(x+math.Trunc(box[2]*256)/256)); bx++ {

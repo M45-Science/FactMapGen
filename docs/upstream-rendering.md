@@ -10,6 +10,8 @@ Later upstream changes informed Fulgora’s tile scoring, Nauvis’s enemy start
 
 The Nauvis temperature expression and Vulcanus starting resource cones also use the game’s single-precision arithmetic. [Upstream rounding follow-up](https://github.com/FactoryGameFan/FactorioMapWebUI/pull/533)
 
+Further parity work adapted upstream details for Nauvis terrain scoring and Vulcanus volcano placement. [Nauvis tile scores](https://github.com/FactoryGameFan/FactorioMapWebUI/pull/522) · [Nauvis terrain expressions](https://github.com/FactoryGameFan/FactorioMapWebUI/pull/523) · [Vulcanus volcano expressions](https://github.com/FactoryGameFan/FactorioMapWebUI/blob/e359553a29179bb58fd83813d985658c7f883ed5/crates/fmw-noise/src/expressions/vulcanus_biomes.rs)
+
 ## Reference fixtures
 
 The upstream JSON and PNG fixtures are unmodified copies of `test/fixtures/`. Their metadata records the original Factorio versions and capture settings. The 1024×1024 terrain images use map seed `123456` at one tile per pixel with entities disabled. Space Age surfaces derive their own seeds from the map seed. Point samples use the surface seed `123456` directly. [Upstream fixtures in this repository](../testdata/space-age-upstream)

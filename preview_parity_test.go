@@ -81,11 +81,12 @@ func TestFastPreviewMatchesFactorioPreview(t *testing.T) {
 	}
 	factorioBin := requirePreviewParityFactorio(t)
 	st := newTestStore(t)
+	mods := factorioTerrainReferenceMods(t, factorioBin)
 	for _, tc := range fastTerrainParityCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			_, mapGenPath := previewParityProfile(t, st, tc.profile)
 			terrainMapGenPath := terrainOnlyMapGenPath(t, mapGenPath)
-			wantPNG := renderFactorioPreviewPNG(t, factorioBin, terrainMapGenPath, tc.size, tc.seed)
+			wantPNG := renderFactorioPreviewPNG(t, factorioBin, terrainMapGenPath, tc.size, tc.seed, "--mod-directory", mods)
 			mapGen, err := readNormalizedMapGenJSON(terrainMapGenPath)
 			if err != nil {
 				t.Fatalf("read map-gen settings: %v", err)
@@ -225,6 +226,9 @@ func TestPreviewDiffArtifacts(t *testing.T) {
 	if stats.TotalAbsDelta != 10 || stats.MeanAbsDelta != 10.0/6 {
 		t.Fatalf("diff stats = %#v, want total delta 10 across six channels", stats)
 	}
+	if got := diff.RGBAAt(1, 0); got != (color.RGBA{R: 5, B: 5, A: 255}) {
+		t.Errorf("diff pixel = %v, want unscaled RGB difference", got)
+	}
 	dir := writePreviewDiffArtifacts(t, "artifact-smoke", want, actual, diff, stats)
 	defer os.RemoveAll(filepath.Join("test-output", "preview-diffs", safeArtifactName(t.Name())))
 	for _, name := range []string{"factorio.png", "actual.png", "diff.png", "stats.json"} {
@@ -253,7 +257,7 @@ func writePreviewGalleryHTML(t *testing.T, path string, rows any) {
 </head>
 <body>
   <h1>Default Terrain Preview Comparison</h1>
-  <p class="meta">Resources, trees, rocks, enemies, cliffs, and decorations are disabled. Left: cached Factorio headless terrain. Middle: FactMapGen fast Go terrain. Right: amplified RGB diff.</p>
+  <p class="meta">Resources, trees, rocks, enemies, cliffs, and decorations are disabled. Left: cached Factorio headless terrain. Middle: FactMapGen fast Go terrain. Right: absolute RGB difference.</p>
   <table>
     <thead><tr><th>#</th><th>Seed</th><th>Factorio</th><th>Fast Go</th><th>Diff</th><th>Stats</th></tr></thead>
     <tbody>
@@ -340,10 +344,10 @@ type previewProcessUsage struct {
 	maxRSS int64
 }
 
-func renderFactorioPreviewPNG(t *testing.T, factorioBin, mapGenPath string, size int, seed string) []byte {
+func renderFactorioPreviewPNG(t *testing.T, factorioBin, mapGenPath string, size int, seed string, extraArgs ...string) []byte {
 	t.Helper()
 	body, _ := renderFactorioPlanetPreviewPNGWithUsage(
-		t, factorioBin, mapGenPath, size, seed, fastPreviewPlanetNauvis,
+		t, factorioBin, mapGenPath, size, seed, fastPreviewPlanetNauvis, extraArgs...,
 	)
 	return body
 }
@@ -375,6 +379,7 @@ func renderFactorioPlanetPreviewPNGWithUsage(
 	factorioBin, mapGenPath string,
 	size int,
 	seed, planet string,
+	extraArgs ...string,
 ) ([]byte, previewProcessUsage) {
 	t.Helper()
 	outPath := filepath.Join(t.TempDir(), "factorio-preview.png")
@@ -385,6 +390,7 @@ func renderFactorioPlanetPreviewPNGWithUsage(
 		"--map-preview-planet", planet,
 		"--map-gen-seed", seed,
 	}
+	args = append(args, extraArgs...)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, factorioBin, args...)
@@ -486,12 +492,7 @@ func previewImageDiff(want, actual image.Image) (previewDiffStats, *image.RGBA, 
 			}
 			stats.MaxChannelDelta = maxInt(stats.MaxChannelDelta, maxDelta)
 			stats.TotalAbsDelta += int64(dr + dg + db)
-			diff.SetRGBA(x, y, color.RGBA{
-				R: uint8(clampInt(dr*5, 0, 255)),
-				G: uint8(clampInt(dg*5, 0, 255)),
-				B: uint8(clampInt(db*5, 0, 255)),
-				A: 255,
-			})
+			diff.SetRGBA(x, y, color.RGBA{R: uint8(dr), G: uint8(dg), B: uint8(db), A: 255})
 		}
 	}
 	if stats.TotalPixels > 0 {
@@ -556,14 +557,4 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
-}
-
-func clampInt(value, min, max int) int {
-	if value < min {
-		return min
-	}
-	if value > max {
-		return max
-	}
-	return value
 }

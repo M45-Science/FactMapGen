@@ -19,6 +19,7 @@ var vulcanusChartBoxes = [...][4]float64{
 	{-1.5, -1.1, 1.5, 1.1}, {-.75, -.75, .75, .75},
 	{-.1, -.1, .1, .1}, {-.1, -.1, .1, .1}, {-.1, -.1, .1, .1},
 	{-.5, -.6, .5, .4}, {-.5, -.6, .5, .4}, {-1.4, -1.4, 1.4, 1.4},
+	{-.99, -.49, .99, .49}, // the preview charts each crater's placement marker
 }
 
 func (g *factorioVulcanusChart) probabilities(s factorioVulcanusSample, x, y float64) [14]float32 {
@@ -47,7 +48,7 @@ func (g *factorioVulcanusChart) probabilities(s factorioVulcanusSample, x, y flo
 			if control.enabled && control.size > 0 && control.richness > 0 {
 				p[7+i] = 1000 * ((1+float32(s.resources[i]))*resourcePenalty - 1)
 			}
-		} else if !control.enabled || control.size <= 0 || control.richness <= 0 {
+		} else if !control.enabled || control.size <= 0 || control.richness <= 0 || s.sulfurRegion <= 0 {
 			p[12] = 0
 		}
 	}
@@ -75,16 +76,7 @@ func (g *factorioVulcanusChart) chunk(ctx context.Context, cx, cy int) ([]factor
 		}
 	}
 	rng := newFactorioTaus88State(max(factorioMinSeedWord, uint32(int64(factorioSpotSeedBase)+7919*int64(cx)+7907*int64(cy))))
-	// Crater cliffs have their own entity-autoplace order before all scenery.
-	// Preserve its rolls and off-grid jitter even though crater segment geometry
-	// is not yet drawn. Empty crater chunks still consume every land-tile roll.
-	for i := 1023; i >= 0; i-- {
-		if !water[(i/32+2)*36+i%32+2] && float64(rng.next())/4294967296 < float64(probs[i][13]) {
-			rng.next()
-			rng.next()
-		}
-	}
-	groups := [][]int{{0}, {1}, {2}, {3}, {4}, {5}, {6}, {7, 8, 9}, {10}, {11}, {12}}
+	groups := [][]int{{13}, {0}, {1}, {2}, {3}, {4}, {5}, {6}, {7, 8, 9}, {10}, {11}, {12}}
 	var entities []factorioChartEntity
 	for _, group := range groups {
 		if group[0] < 7 && !g.world.settings.rocks.enabled {
@@ -110,6 +102,9 @@ func (g *factorioVulcanusChart) chunk(ctx context.Context, cx, cy int) ([]factor
 				y = float64(cy*32+i/32) + float64(rng.next()>>28)/16
 			}
 			box := vulcanusChartBoxes[kind]
+			if factorioPreviewExcludesEntity(g.world.settings.entityBounds, x, y, box) {
+				continue
+			}
 			allowed := true
 			for by := int(math.Floor(y + math.Trunc(box[1]*256)/256)); by <= int(math.Floor(y+math.Trunc(box[3]*256)/256)); by++ {
 				for bx := int(math.Floor(x + math.Trunc(box[0]*256)/256)); bx <= int(math.Floor(x+math.Trunc(box[2]*256)/256)); bx++ {
@@ -140,6 +135,8 @@ func (g *factorioVulcanusChart) render(ctx context.Context, img *image.RGBA, x0,
 				ink = color.RGBA{48, 99, 48, 102}
 			} else if ent.kind == 12 {
 				ink = color.RGBA{198, 198, 25, 255}
+			} else if ent.kind == 13 {
+				ink = factorioCliffMapColor
 			}
 			paintFactorioChartEntity(img, g.world.settings, ent.x, ent.y, vulcanusChartBoxes[ent.kind], ink, x0, y0, tpp)
 		}

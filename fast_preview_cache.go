@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -18,7 +19,7 @@ const (
 	defaultFastPreviewCacheBytes  = 2 << 30
 	defaultFastPreviewCacheWorlds = 5
 	fastPreviewMaxRegionsPerField = 64
-	fastPreviewRendererRevision   = "factorio-preview-v10"
+	fastPreviewRendererRevision   = "factorio-preview-v11"
 )
 
 type fastPreviewWorldKey [sha256.Size]byte
@@ -241,6 +242,24 @@ func (c *fastPreviewCache) render(
 		return nil, err
 	}
 	return result, nil
+}
+
+// Include the native missing-neighbor mask in the world key so standalone
+// frames can reuse their tiles without affecting the seamless browser map.
+func (c *fastPreviewCache) renderFrame(ctx context.Context, key fastPreviewWorldKey, settings fastPreviewSettings, size int, centerX, centerY float64) (*image.RGBA, error) {
+	if size%2 != 0 {
+		// Factorio subtracts the integer half-size to find the first tile.
+		centerX += .5
+		centerY += .5
+	}
+	frame := fastPreviewChunkBounds(size, 1, centerX, centerY)
+	settings.entityBounds = frame
+	var framedKey [sha256.Size + 4*8]byte
+	copy(framedKey[:], key[:])
+	for i, v := range [...]int{frame.Min.X, frame.Min.Y, frame.Max.X, frame.Max.Y} {
+		binary.LittleEndian.PutUint64(framedKey[sha256.Size+i*8:], uint64(v))
+	}
+	return c.render(ctx, sha256.Sum256(framedKey[:]), settings, size, 1, centerX, centerY)
 }
 
 func (c *fastPreviewCache) storeAlignedTileBatch(

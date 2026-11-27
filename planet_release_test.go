@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -26,10 +27,58 @@ type planetReleaseOracle struct {
 	}
 }
 
+func TestPlanetStandaloneHoldout(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full five-planet holdout comparison")
+	}
+	data, err := os.ReadFile("testdata/planets-2.1.23/holdouts.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		FactorioVersion string
+		Cases           []struct {
+			Planet   string
+			Size     int
+			Center   [2]float64
+			Settings json.RawMessage
+			SHA256   string
+		}
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(fixture.FactorioVersion, "2.1.23") || len(fixture.Cases) != 10 {
+		t.Fatal("incomplete holdout captures")
+	}
+	cache := newFastPreviewCache(defaultFastPreviewCacheBytes, defaultFastPreviewCacheWorlds)
+	for _, c := range fixture.Cases {
+		t.Run(fmt.Sprintf("%s/%d", c.Planet, c.Size), func(t *testing.T) {
+			s, err := parseFastPreviewSettingsForPlanet(c.Settings, "", c.Planet)
+			if err != nil {
+				t.Fatal(err)
+			}
+			key, err := fastPreviewCacheKeyForPlanet(c.Settings, s.seed, c.Planet)
+			if err != nil {
+				t.Fatal(err)
+			}
+			x, y := factorioPreviewChunkCenter(c.Center[0]), factorioPreviewChunkCenter(c.Center[1])
+			img, err := cache.renderFrame(context.Background(), key, s, c.Size, x, y)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if digest := fmt.Sprintf("%x", sha256.Sum256(img.Pix)); digest != c.SHA256 {
+				t.Errorf("preview hash %s, want %s from Factorio", digest, c.SHA256)
+			}
+		})
+	}
+}
+
 func TestPlanetReleaseAccuracy(t *testing.T) {
 	if testing.Short() {
 		t.Skip("full five-planet image comparison")
 	}
+	cache := newFastPreviewCache(defaultFastPreviewCacheBytes, defaultFastPreviewCacheWorlds)
 	for _, seed := range []uint32{123456, 987654321} {
 		path := fmt.Sprintf("testdata/planets-2.1.23/fields.seed%d.json", seed)
 		b, err := os.ReadFile(path)
@@ -97,14 +146,8 @@ func TestPlanetReleaseAccuracy(t *testing.T) {
 						}
 					}
 					t.Logf("%s: total RGB error %d, average %.6f", layer, stats.TotalAbsDelta, stats.MeanAbsDelta)
-					// Bound total RGB error for the captured cases. Zero requires exact agreement.
-					limits := map[string]map[string]int64{
-						"terrain": {"nauvis": 125, "vulcanus": 48_000, "gleba": 0, "fulgora": 0, "aquilo": 0},
-						"cliffs":  {"nauvis": 1_000, "vulcanus": 118_000, "gleba": 10_500, "fulgora": 9_500, "aquilo": 0},
-						"full":    {"nauvis": 8_900, "vulcanus": 171_000, "gleba": 13_100, "fulgora": 22_500, "aquilo": 1_400},
-					}
-					if limit := limits[layer][c.Planet]; stats.TotalAbsDelta > limit {
-						t.Errorf("%s total RGB error %d exceeds %d", layer, stats.TotalAbsDelta, limit)
+					if stats.TotalAbsDelta != 0 {
+						t.Errorf("%s total RGB error %d, want zero", layer, stats.TotalAbsDelta)
 					}
 					if os.Getenv("FACTMAPGEN_ACCURACY_ARTIFACTS") == "1" {
 						dir := filepath.Join("test-output", "accuracy-2.1.23", fmt.Sprint(seed))
@@ -150,11 +193,13 @@ func TestPlanetReleaseAccuracy(t *testing.T) {
 				}
 
 				compare("terrain", img)
+				s.entityBounds = fastPreviewChunkBounds(512, 1, 0, 0)
 				if cliff != nil {
 					if err := renderFactorioCliffs(context.Background(), img, s, cliff, -256, -256, 1); err != nil {
 						t.Fatal(err)
 					}
 				} else {
+					space.settings.entityBounds = s.entityBounds
 					pixels, err := space.cliffPixels(context.Background(), 512, 512, -256, -256, 1)
 					if err != nil {
 						t.Fatal(err)
@@ -166,7 +211,11 @@ func TestPlanetReleaseAccuracy(t *testing.T) {
 					}
 				}
 				compare("cliffs", img)
-				full, _, err := renderFastMapPreview(context.Background(), s, 512, previewZoom{mode: "normal", tilesPerPixel: 1, renderSize: 512})
+				key, err := fastPreviewCacheKeyForPlanet(c.Settings, c.Seed, c.Planet)
+				if err != nil {
+					t.Fatal(err)
+				}
+				full, err := cache.renderFrame(context.Background(), key, s, 512, 0, 0)
 				if err != nil {
 					t.Fatal(err)
 				}

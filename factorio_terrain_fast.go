@@ -21,7 +21,36 @@ func (e *factorioNauvisEvaluator) terrainTileFast(
 		return factorioTerrainTiles[winnerIndex]
 	}
 
-	bases := [...]float64{
+	bases := factorioNauvisLandTileBases(sample)
+
+	bestBase := 0
+	for index := 1; index < len(bases); index++ {
+		if bases[index] > bases[bestBase] {
+			bestBase = index
+		}
+	}
+	xf, yf := float32(x), float32(y)
+	consider := func(index int) {
+		probability := float64(float32(bases[index]) + e.terrainNoise[index](xf, yf))
+		tileIndex := index + 2
+		if probability > winnerProbability ||
+			(probability == winnerProbability && tileIndex < winnerIndex) {
+			winnerIndex = tileIndex
+			winnerProbability = probability
+		}
+	}
+	consider(bestBase)
+	for index, base := range bases {
+		if index == bestBase || base+factorioTerrainNoiseAbsMax <= winnerProbability {
+			continue
+		}
+		consider(index)
+	}
+	return factorioTerrainTiles[winnerIndex]
+}
+
+func factorioNauvisLandTileBases(sample factorioNauvisSample) [19]float64 {
+	return [19]float64{
 		factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, 0.7, 11, 11),
 		factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.45, 0.45, 11, 0.8),
 		factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, 0.6, 0.65, 0.9),
@@ -63,28 +92,4 @@ func (e *factorioNauvisEvaluator) terrainTileFast(
 		),
 		factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.8, -10, 11, 0.2),
 	}
-
-	bestBase := 0
-	for index := 1; index < len(bases); index++ {
-		if bases[index] > bases[bestBase] {
-			bestBase = index
-		}
-	}
-	consider := func(index int) {
-		probability := bases[index] + e.terrainNoise[index](x, y)
-		tileIndex := index + 2
-		if probability > winnerProbability ||
-			(probability == winnerProbability && tileIndex < winnerIndex) {
-			winnerIndex = tileIndex
-			winnerProbability = probability
-		}
-	}
-	consider(bestBase)
-	for index, base := range bases {
-		if index == bestBase || base+factorioTerrainNoiseAbsMax <= winnerProbability {
-			continue
-		}
-		consider(index)
-	}
-	return factorioTerrainTiles[winnerIndex]
 }

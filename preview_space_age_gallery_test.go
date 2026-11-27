@@ -247,7 +247,7 @@ func writeSpaceAgePreviewGalleryHTML(
         <td><strong>{{.Label}}</strong></td>
         <td><a href="{{.FastPath}}"><img src="{{.FastPath}}" alt="Fast {{.Label}} preview"></a></td>
         <td><a href="{{.FactorioPath}}"><img src="{{.FactorioPath}}" alt="Factorio {{.Label}} preview"></a></td>
-        <td><a href="{{.DiffPath}}"><img src="{{.DiffPath}}" alt="{{.Label}} amplified diff"></a></td>
+        <td><a href="{{.DiffPath}}"><img src="{{.DiffPath}}" alt="{{.Label}} absolute RGB difference"></a></td>
         <td class="meta">map seed {{.MapSeed}}<br>Fast surface seed {{.SurfaceSeed}}<br>{{.ChangedPercent}}% pixels differ<br>max channel delta {{.MaxDelta}}<br>Factorio reference {{.Reference}}</td>
       </tr>
       {{end}}

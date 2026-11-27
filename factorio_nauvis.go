@@ -63,19 +63,19 @@ type factorioNauvisEvaluator struct {
 	basicAux      bool
 	basicMoisture bool
 
-	hillsNoise               func(float64, float64) float64
+	hillsNoise               func(float32, float32) float32
 	cliffLevelTables         factorioBasisTables
-	bridgeNoise              func(float64, float64) float64
-	forestPathNoise          func(float64, float64) float64
+	bridgeNoise              func(float32, float32) float32
+	forestPathNoise          func(float32, float32) float32
 	detailNoise              func(float64, float64, float64) float64
 	persistenceNoise         func(float64, float64) float64
 	macroA                   func(float64, float64) float64
 	macroB                   func(float64, float64) float64
 	startingLakeNoise        func(float64, float64) float64
-	auxNoise                 func(float64, float64) float64
-	moistureNoise            func(float64, float64) float64
+	auxNoise                 func(float32, float32) float32
+	moistureNoise            func(float32, float32) float32
 	temperatureNoise         func(float32, float32) float32
-	terrainNoise             [19]func(float64, float64) float64
+	terrainNoise             [19]func(float32, float32) float32
 	specialPersistenceNoise  func(float64, float64) float64
 	specialTerrainNoise      func(float64, float64, float64) float64
 	specialCoastNoise        func(float64, float64, float64) float64
@@ -100,6 +100,7 @@ func newFactorioNauvisEvaluator(settings fastPreviewSettings) *factorioNauvisEva
 		waterSize = 1
 	}
 	nauvisSegmentation := 1.5 * segmentation
+	gridSegmentation := 1.5 * float32(segmentation)
 	offsetX := 10000 / nauvisSegmentation
 	starts := settings.startingPositions
 	if len(starts) == 0 {
@@ -123,19 +124,10 @@ func newFactorioNauvisEvaluator(settings fastPreviewSettings) *factorioNauvisEva
 	if settings.mapType == "lakes" || settings.mapType == "island" {
 		evaluator.initSpecialElevation(settings.seed)
 	}
-	evaluator.hillsNoise = makeFactorioMultioctaveNoise(factorioMultioctaveParams{
-		seed0: settings.seed, seed1: 900, octaves: 4, persistence: 0.5,
-		inputScale: nauvisSegmentation / 90, outputScale: 1,
-	})
+	evaluator.hillsNoise = makeFactorioMultioctaveNoise32(settings.seed, 900, 4, 0.5, gridSegmentation/90, 1, true)
 	evaluator.cliffLevelTables = factorioBasisTablesFromSeed(settings.seed, 99584)
-	evaluator.bridgeNoise = makeFactorioMultioctaveNoise(factorioMultioctaveParams{
-		seed0: settings.seed, seed1: 700, octaves: 4, persistence: 0.5,
-		inputScale: nauvisSegmentation / 150, outputScale: 1,
-	})
-	evaluator.forestPathNoise = makeFactorioMultioctaveNoise(factorioMultioctaveParams{
-		seed0: settings.seed, seed1: 1800, octaves: 4, persistence: 0.5,
-		inputScale: nauvisSegmentation / 100, outputScale: 1,
-	})
+	evaluator.bridgeNoise = makeFactorioMultioctaveNoise32(settings.seed, 700, 4, 0.5, gridSegmentation/150, 1, true)
+	evaluator.forestPathNoise = makeFactorioMultioctaveNoise32(settings.seed, 1800, 4, 0.5, gridSegmentation/100, 1, true)
 	evaluator.detailNoise = makeFactorioVariablePersistenceNoise(factorioVariablePersistenceParams{
 		seed0: settings.seed, seed1: 600, octaves: 5,
 		inputScale: nauvisSegmentation / 14, outputScale: 0.03, offsetX: offsetX,
@@ -160,92 +152,56 @@ func newFactorioNauvisEvaluator(settings fastPreviewSettings) *factorioNauvisEva
 	})
 
 	moistureFrequency := positiveOr(settings.moistureFrequency, 1)
-	evaluator.moistureNoise = makeFactorioQuickMultioctaveNoise(factorioQuickMultioctaveParams{
-		seed0: settings.seed, seed1: 6, octaves: 4,
-		inputScale: moistureFrequency / 256, outputScale: 0.125,
-		offsetX:                     30000 / moistureFrequency,
-		octaveOutputScaleMultiplier: 1.5,
-		octaveInputScaleMultiplier:  1.0 / 3,
-	})
+	evaluator.moistureNoise = makeFactorioQuickNoise32(settings.seed, 6, 4, float32(moistureFrequency/256), .125, 1.0/3, 1.5, float32(30000/moistureFrequency), true)
 	auxFrequency := positiveOr(settings.auxFrequency, 1)
-	evaluator.auxNoise = makeFactorioQuickMultioctaveNoise(factorioQuickMultioctaveParams{
-		seed0: settings.seed, seed1: 7, octaves: 4,
-		inputScale: auxFrequency / 2048, outputScale: 0.25,
-		offsetX:                     20000 / auxFrequency,
-		octaveOutputScaleMultiplier: 0.5,
-		octaveInputScaleMultiplier:  3,
-	})
+	evaluator.auxNoise = makeFactorioQuickNoise32(settings.seed, 7, 4, float32(auxFrequency/2048), .25, 3, .5, float32(20000/auxFrequency), true)
 	temperatureFrequency := positiveOr(settings.temperatureFreq, 1)
 	evaluator.temperatureNoise = makeFactorioQuickNoise32(settings.seed, 5, 4,
 		float32(temperatureFrequency/32), 1.0/20, 1.0/3, 3, float32(40000/temperatureFrequency), false)
 	for i, seed1 := range factorioTerrainNoiseSeeds {
-		evaluator.terrainNoise[i] = makeFactorioMultioctaveNoise(factorioMultioctaveParams{
-			seed0: settings.seed, seed1: seed1, octaves: 4, persistence: 0.7,
-			inputScale: 1.0 / 6, outputScale: 2.0 / 3,
-		})
+		evaluator.terrainNoise[i] = makeFactorioMultioctaveNoise32(settings.seed, seed1, 4, .7, 1.0/6, 2.0/3, true)
 	}
 	return evaluator
 }
 
 func (e *factorioNauvisEvaluator) sample(x, y float64) factorioNauvisSample {
-	nauvisSegmentation := 1.5 * e.segmentation
-	hills := math.Abs(e.hillsNoise(x, y))
-	cliffLevel := clampFloat(
-		0.65+0.6*factorioBasisNoise(
-			x*nauvisSegmentation/500,
-			y*nauvisSegmentation/500,
-			&e.cliffLevelTables,
-		),
-		0.15,
-		1.15,
-	)
-	plateaus := 0.5 + clampFloat((hills-cliffLevel)*10, -0.5, 0.5)
-	bridgeBillows := math.Abs(e.bridgeNoise(x, y))
-	forestPathBillows := math.Abs(e.forestPathNoise(x, y))
+	seg := float32(1.5*float32(e.segmentation)) / 500
+	xf, yf := float32(x), float32(y)
+	cliffLevel := glebaClamp(.65+float32(.6*factorioBasisNoise32(xf*seg, yf*seg, &e.cliffLevelTables, true)), .15, 1.15)
+	hills := noiseAbs(e.hillsNoise(xf, yf))
+	plateaus := .5 + glebaClamp((hills-cliffLevel)*10, -.5, .5)
+	bridgeBillows := noiseAbs(e.bridgeNoise(xf, yf))
+	forestPathBillows := noiseAbs(e.forestPathNoise(xf, yf))
 	distance := factorioDistanceFromNearestPoint(x, y, e.starts, math.Inf(1))
-	elevation := e.elevationFromShared(x, y, bridgeBillows, distance, 0.1*hills+0.8*plateaus)
+	elevation := e.elevationFromShared(x, y, float64(bridgeBillows), distance, float64(float32(.1*hills)+float32(.8*plateaus)))
 	if e.mapType == "lakes" || e.mapType == "island" {
 		elevation = e.specialElevation(x, y, distance)
 	}
 
-	auxPlateau := 0.06 * (plateaus - 0.4)
+	auxPlateau := float32(.06 * (plateaus - .4))
 	if e.basicAux {
 		auxPlateau = 0
 	}
-	aux := clampFloat(0.5+e.auxBias+auxPlateau+e.auxNoise(x, y), 0, 1)
-
-	startingBiasChange := factorioSliderToLinear(e.startingAreaMoistureSize, -0.5, 0.5)
-	startingBias := lerpFloat(
-		e.moistureBias,
-		startingBiasChange,
-		math.Abs(2*startingBiasChange)*1.1,
-	)
-	startingBiasRegion := clampFloat(
-		2-(e.startingAreaMoistureFreq/400)*distance,
-		0,
-		1,
-	)
-	adjustedBias := lerpFloat(e.moistureBias, startingBias, startingBiasRegion)
-	moistureMain := clampFloat(0.4+adjustedBias+e.moistureNoise(x, y)-0.08*(plateaus-0.6), 0, 1)
+	aux := glebaClamp((.5+float32(e.auxBias))+auxPlateau+e.auxNoise(xf, yf), 0, 1)
+	startingBiasChange := noiseSliderLinear(float32(e.startingAreaMoistureSize), -.5, .5)
+	startingBias := noiseLerp(float32(e.moistureBias), startingBiasChange, noiseAbs(2*startingBiasChange)*1.1)
+	startingBiasRegion := glebaClamp(2-float32((float32(e.startingAreaMoistureFreq)/400)*float32(distance)), 0, 1)
+	adjustedBias := noiseLerp(float32(e.moistureBias), startingBias, startingBiasRegion)
+	moistureNoise := e.moistureNoise(xf, yf)
+	moistureMain := glebaClamp((.4+adjustedBias)+moistureNoise-float32(.08*(plateaus-.6)), 0, 1)
 	if e.basicMoisture {
-		moistureMain = clampFloat(0.45+adjustedBias+e.moistureNoise(x, y), 0, 1)
+		moistureMain = glebaClamp((.45+adjustedBias)+moistureNoise, 0, 1)
 	}
-	forestPathCutout := min(
-		(bridgeBillows-0.07)*5,
-		min((hills-0.1)*3, (forestPathBillows-0.07)*3),
-	)
+	cutout := min((bridgeBillows-.07)*5, (hills-.1)*3, (forestPathBillows-.07)*3)
 	moisture := moistureMain
 	if !e.basicMoisture {
-		moisture = max(
-			min(moistureMain, 0.45),
-			moistureMain-0.2*max(0, 1-forestPathCutout*1.5),
-		)
+		moisture = max(min(moistureMain, .45), moistureMain-float32(.2*max(0, 1-float32(cutout*1.5))))
 	}
 	temperature := max(-20, min(50, e.temperatureBase+e.temperatureNoise(float32(x), float32(y))))
 
 	return factorioNauvisSample{
-		elevation: elevation, aux: aux, moisture: moisture, temperature: float64(temperature),
-		hills: hills, bridge: bridgeBillows, forestPath: forestPathBillows,
+		elevation: elevation, aux: float64(aux), moisture: float64(moisture), temperature: float64(temperature),
+		hills: float64(hills), bridge: float64(bridgeBillows), forestPath: float64(forestPathBillows),
 	}
 }
 
@@ -254,7 +210,7 @@ func (e *factorioNauvisEvaluator) elevationNoCliff(x, y float64) float64 {
 	if e.mapType == "lakes" || e.mapType == "island" {
 		return e.specialElevation(x, y, distance)
 	}
-	return e.elevationFromShared(x, y, math.Abs(e.bridgeNoise(x, y)), distance, 0)
+	return e.elevationFromShared(x, y, float64(noiseAbs(e.bridgeNoise(float32(x), float32(y)))), distance, 0)
 }
 
 func (e *factorioNauvisEvaluator) initSpecialElevation(seed uint32) {
@@ -400,49 +356,9 @@ func (e *factorioNauvisEvaluator) terrainTile(sample factorioNauvisSample, x, y 
 		return factorioTerrainTiles[winnerIndex]
 	}
 
-	probabilities := [...]float64{
-		factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, 0.7, 11, 11) + e.terrainNoise[0](x, y),
-		factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.45, 0.45, 11, 0.8) + e.terrainNoise[1](x, y),
-		factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, 0.6, 0.65, 0.9) + e.terrainNoise[2](x, y),
-		factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, 0.5, 0.55, 0.7) + e.terrainNoise[3](x, y),
-		factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.45, -10, 0.55, 0.35) + e.terrainNoise[4](x, y),
-		max(
-			factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, 0.25, 0.45, 0.3),
-			factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.4, -10, 0.45, 0.25),
-		) + e.terrainNoise[5](x, y),
-		factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, 0.3, 0.45, 0.35) + e.terrainNoise[6](x, y),
-		factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, 0.35, 0.55, 0.4) + e.terrainNoise[7](x, y),
-		max(
-			factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.55, -10, 0.6, 0.35),
-			factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.6, 0.3, 11, 0.35),
-		) + e.terrainNoise[8](x, y),
-		factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, 0.4, 0.55, 0.45) + e.terrainNoise[9](x, y),
-		factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, 0.45, 0.55, 0.5) + e.terrainNoise[10](x, y),
-		factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, 0.5, 0.55, 0.55) + e.terrainNoise[11](x, y),
-		max(
-			factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, -10, 0.25, 0.15),
-			factorioExpressionInRange2(5, math.Inf(1), sample.elevation, sample.aux, -1.5, 0.5, 1.5, 1),
-		) + e.terrainNoise[12](x, y),
-		max(
-			factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, 0.15, 0.3, 0.2),
-			factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.25, -10, 0.3, 0.15),
-		) + e.terrainNoise[13](x, y),
-		max(
-			factorioExpressionInRangeBase(sample.aux, sample.moisture, -10, 0.2, 0.4, 0.25),
-			factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.3, -10, 0.4, 0.2),
-		) + e.terrainNoise[14](x, y),
-		factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.55, 0.35, 11, 0.5) + e.terrainNoise[15](x, y),
-		max(
-			factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.6, -10, 0.7, 0.3),
-			factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.7, 0.25, 11, 0.3),
-		) + e.terrainNoise[16](x, y),
-		max(
-			factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.7, -10, 0.8, 0.25),
-			factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.8, 0.2, 11, 0.25),
-		) + e.terrainNoise[17](x, y),
-		factorioExpressionInRangeBase(sample.aux, sample.moisture, 0.8, -10, 11, 0.2) + e.terrainNoise[18](x, y),
-	}
-	for i, probability := range probabilities {
+	xf, yf := float32(x), float32(y)
+	for i, base := range factorioNauvisLandTileBases(sample) {
+		probability := float64(float32(base) + e.terrainNoise[i](xf, yf))
 		if probability > winnerProbability {
 			winnerIndex = i + 2
 			winnerProbability = probability
@@ -468,9 +384,10 @@ func factorioExpressionInRange2(
 	from1, from2,
 	to1, to2 float64,
 ) float64 {
-	minimum := min(
-		min(value1-from1, to1-value1),
-		min(value2-from2, to2-value2),
-	)
-	return min(peakMaximum, peakMultiplier*minimum)
+	// The game folds the center and half-width before evaluating the range.
+	score := func(value, from, to float64) float64 {
+		center, half := float32((from+to)*0.5), float32((to-from)*0.5)
+		return float64(float32(peakMultiplier) * (half - noiseAbs(float32(value)-center)))
+	}
+	return min(peakMaximum, score(value1, from1, to1), score(value2, from2, to2))
 }

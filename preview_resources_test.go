@@ -549,7 +549,7 @@ func writeResourcePreviewGalleryHTML(t *testing.T, path string, rows any) {
 </head>
 <body>
   <h1>Default Resources + Oil + Rocks Comparison</h1>
-  <p class="meta">512px at 2 meters per pixel. Trees, enemies, cliffs, fish, and decorations are disabled. Solid-resource footprints use Factorio-compatible fields. Oil uses Factorio's chunk-ordered random-penalty stream and chart footprint with an approximated final shared-autoplace roll. Left: cached Factorio headless preview. Middle: FactMapGen fast Go preview. Right: amplified RGB diff.</p>
+  <p class="meta">512px at 2 meters per pixel. Trees, enemies, cliffs, fish, and decorations are disabled. Solid-resource footprints use Factorio-compatible fields. Oil uses Factorio's chunk-ordered random-penalty stream and chart footprint with an approximated final shared-autoplace roll. Left: cached Factorio headless preview. Middle: FactMapGen fast Go preview. Right: absolute RGB difference.</p>
   <table>
     <thead><tr><th>#</th><th>Seed</th><th>Factorio</th><th>Fast Go</th><th>Diff</th><th>Stats</th></tr></thead>
     <tbody>

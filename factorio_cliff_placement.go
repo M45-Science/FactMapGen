@@ -130,31 +130,13 @@ func factorioPlaceCliffs(ctx context.Context, x0, y0, x1, y1, elevation0, interv
 			cell := func(x, y int) factorioCliffCell {
 				return factorioCliffCell{factorioPoint: factorioPoint{x: float64(cx*32+x*4) + 2, y: float64(cy*32+y*4) + 2.5}, left: v[y*9+x], right: v[y*9+x+1], top: h[y*8+x], bottom: h[(y+1)*8+x]}
 			}
-			// Collect before mutating: rejection changes neighbouring orientations,
-			// but does not recursively reject the changed neighbours.
-			if reject != nil {
-				var rejected [64]bool
-				for y := 0; y < 8; y++ {
-					for x := 0; x < 8; x++ {
-						c := cell(x, y)
-						rejected[y*8+x] = factorioCliffCodePlaces(factorioCliffCellCode(c.left, c.right, c.top, c.bottom)) && reject(c)
-					}
-				}
-				for y := 0; y < 8; y++ {
-					for x := 0; x < 8; x++ {
-						if rejected[y*8+x] {
-							v[y*9+x] = 0
-							v[y*9+x+1] = 0
-							h[y*8+x] = 0
-							h[(y+1)*8+x] = 0
-						}
-					}
-				}
-			}
+			// Preview placement tests each segment's collision independently after repair.
 			for y := 0; y < 8; y++ {
 				for x := 0; x < 8; x++ {
 					c := cell(x, y)
-					if c.x >= x0 && c.x < x1 && c.y >= y0 && c.y < y1 && factorioCliffCodePlaces(factorioCliffCellCode(c.left, c.right, c.top, c.bottom)) {
+					if c.x >= x0 && c.x < x1 && c.y >= y0 && c.y < y1 &&
+						factorioCliffCodePlaces(factorioCliffCellCode(c.left, c.right, c.top, c.bottom)) &&
+						(reject == nil || !reject(c)) {
 						cells = append(cells, c)
 					}
 				}

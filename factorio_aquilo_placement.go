@@ -73,6 +73,9 @@ func (e *factorioAquiloEvaluator) entityCandidates(ctx context.Context, x0, y0, 
 						py = float64(y) + float64(rng.next()>>28)/16
 					}
 					box := factorioAquiloEntityHalfBoxes[kind]
+					if factorioPreviewExcludesEntity(e.settings.entityBounds, px, py, [4]float64{-box[0], -box[1], box[0], box[1]}) {
+						continue
+					}
 					allowed := true
 					for by := int(math.Floor(py - box[1])); by <= int(math.Floor(py+box[1])); by++ {
 						for bx := int(math.Floor(px - box[0])); bx <= int(math.Floor(px+box[0])); bx++ {
